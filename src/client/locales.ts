@@ -7,13 +7,15 @@
 
 /** 简体中文字典（key 集真源）。 */
 export const zh = {
-  // Sidebar trigger
+  // Sidebar trigger（当前由 sidebar-entry.ts hardcode 'Hello'，
+  // 文案保留以备后续动态切换 locale）
   'entry.label': '打个招呼',
-  'entry.tooltip': '点击打开 hello 面板',
+  'entry.tooltip': '点击打开 hello 页面',
 
-  // Dialog shell
-  'dialog.title': 'Hello 面板',
-  'dialog.close': '关闭',
+  // 完整页面（占主列）
+  'page.title': 'Hello, world 👋',
+  'page.subtitle': '一个塞在 DSH 里的 hello 页面',
+  'page.close': '返回会话',
 
   // Section 1: greeting
   'section.greeting.title': '问候',
@@ -43,11 +45,12 @@ export type HelloKey = keyof typeof zh
 export const en: Record<HelloKey, string> = {
   // Sidebar trigger
   'entry.label': 'Say hello',
-  'entry.tooltip': 'Click to open the hello panel',
+  'entry.tooltip': 'Click to open the hello page',
 
-  // Dialog shell
-  'dialog.title': 'Hello Panel',
-  'dialog.close': 'Close',
+  // 完整页面（占主列）
+  'page.title': 'Hello, world 👋',
+  'page.subtitle': 'A hello page embedded inside DSH',
+  'page.close': 'Back to chat',
 
   // Section 1: greeting
   'section.greeting.title': 'Greeting',

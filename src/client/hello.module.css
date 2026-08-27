@@ -1,138 +1,9 @@
-/* Hello 插件的 sidebar 底部 trigger 与多功能面板样式。
-   仅使用设计令牌（--dsw-alias-*），不写死颜色或尺寸。 */
+/* Hello 插件 4 个 section 内部样式 —— widgets 引用。
+   整页布局（page / hero / main 网格）见 HelloPage.module.css；
+   弹窗卡片样式已废弃，删除。
+   颜色全部走 --dsw-* 设计令牌。 */
 
-/* ── Sidebar footer trigger ── */
-
-.trigger {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  padding: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  order: 2;
-  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
-}
-
-.trigger:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.trigger:active:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.trigger:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
-}
-
-/* ── 弹窗遮罩 ── */
-
-.mask {
-  position: fixed;
-  inset: 0;
-  background: var(--dsw-alias-overlay-scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-/* ── 弹窗卡片（牛奶白 + 磨砂玻璃） ── */
-
-.card {
-  width: 460px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 64px);
-  /* 牛奶白半透明（中性偏冷、几乎纯白）：让遮罩色透出，
-     再叠 saturate 让背后颜色更"润"；blur 提供磨砂质感 */
-  background-color: rgba(245, 247, 250, 0.72);
-  /* 兼容 Webkit 旧版 Safari */
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  color: var(--dsw-alias-label-primary);
-  border-radius: 12px;
-  /* 玻璃质感：内层高光描边 + 外层漫射阴影 */
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 8px 32px var(--dsw-alias-shadow-modal);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  display: flex;
-  flex-direction: column;
-}
-
-/* 暗色模式：牛奶白改为冷调玻璃（保留玻璃质感） */
-@media (prefers-color-scheme: dark) {
-  .card {
-    background-color: rgba(40, 44, 52, 0.62);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-}
-
-/* ── 头部 ── */
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--dsw-alias-border-subtle);
-}
-
-.title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--dsw-alias-label-primary);
-}
-
-.iconClose {
-  border: none;
-  background: transparent;
-  font-size: 22px;
-  line-height: 1;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.iconClose:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.iconClose:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
-}
-
-/* ── 可滚动内容区 ── */
-
-.scrollArea {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* ── Section 卡片 ── */
+/* ─ Section 卡片 ── */
 
 .section {
   background: var(--dsw-alias-surface-default);
@@ -162,7 +33,7 @@
   gap: 12px;
 }
 
-/* ── Section 1: greeting 大字 ── */
+/* ─ Section 1: greeting 大字 ── */
 
 .greetingBody {
   margin: 0;
@@ -176,7 +47,7 @@
   letter-spacing: 0.02em;
 }
 
-/* ── Section 2: clock key/value 列表 ── */
+/* ─ Section 2: clock key/value 列表 ── */
 
 .kv {
   margin: 0;
@@ -208,7 +79,7 @@
   font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
 }
 
-/* ── Section 3: session ── */
+/* ─ Section 3: session ── */
 
 .sessionTitle {
   margin: 0;
@@ -228,7 +99,7 @@
   font-style: italic;
 }
 
-/* ── Section 4: quote ── */
+/* ─ Section 4: quote ── */
 
 .quote {
   margin: 0;
@@ -268,35 +139,6 @@
 }
 
 .refreshBtn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
-}
-
-/* ── 底部 ── */
-
-.footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--dsw-alias-border-subtle);
-  display: flex;
-  justify-content: flex-end;
-}
-
-.close {
-  border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  background: var(--dsw-alias-interactive-bg-default);
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.close:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.close:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
 }

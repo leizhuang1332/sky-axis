@@ -1,0 +1,124 @@
+/* Hello 完整页面样式 —— 在主列整页渲染。
+   沿用 hello.module.css 中的 section 内部样式（kv / sessionTitle / quote /
+   refreshBtn / close），这里只负责整页布局（page / hero / main 网格）。
+   颜色全部走 --dsw-* 设计令牌。 */
+
+/* --- 整页铺底 --- */
+
+.page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+/* ── Center column takeover ── */
+/* 与 dsh-ssh / dsh-task-board 同协议：默认 hidden，激活态显示，
+   同时把 conversation 内容隐藏（让出主列）。 */
+
+[data-dsh-hello-view] {
+  position: absolute;
+  inset: 0;
+  /* 默认隐藏 —— 只有 <html> 同时持有 ACTIVE_ATTR 且没有兄弟 panel attr 时才显示 */
+  display: none;
+  /* 高于 conversation composer（z-index 7 in 0.1.0-rc.6 shell），
+     与 task-board 一致 */
+  z-index: 60;
+}
+
+/* 激活态：自己 active 且 task-board / ssh 都没 active */
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-hello-view] {
+  display: flex;
+}
+
+/* 激活时把 conversation 容器里非 hello-view 的子节点全部隐藏 */
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-hello-view]),
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-hello-view]) {
+  display: none !important;
+}
+
+/* --- hero header --- */
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 32px 48px 24px;
+  flex: none;
+  border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  /* hero 自身作为大字号区，无需背景色，沿用 page 透出底层 */
+}
+
+.heroBody {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--dsw-alias-label-primary);
+  letter-spacing: -0.01em;
+  /* 与 section.greeting.body 同字体家族以保视觉一致 */
+  font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
+}
+
+.heroSubtitle {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.heroClose {
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 28px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.heroClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.heroClose:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
+}
+
+/* --- 主区 2×2 grid --- */
+
+.main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 32px 48px 48px;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: minmax(180px, auto);
+  gap: 16px;
+}
+
+/* 较宽视口切到 2 列 */
+@media (min-width: 900px) {
+  .main {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: minmax(220px, auto);
+  }
+}
