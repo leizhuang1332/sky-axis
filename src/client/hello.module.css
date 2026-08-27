@@ -47,18 +47,35 @@
   z-index: 1000;
 }
 
-/* ── 弹窗卡片 ── */
+/* ── 弹窗卡片（牛奶白 + 磨砂玻璃） ── */
 
 .card {
   width: 460px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 64px);
-  background: var(--dsw-alias-surface-raised);
+  /* 牛奶白半透明（中性偏冷、几乎纯白）：让遮罩色透出，
+     再叠 saturate 让背后颜色更"润"；blur 提供磨砂质感 */
+  background-color: rgba(245, 247, 250, 0.72);
+  /* 兼容 Webkit 旧版 Safari */
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   color: var(--dsw-alias-label-primary);
   border-radius: 12px;
-  box-shadow: 0 8px 32px var(--dsw-alias-shadow-modal);
+  /* 玻璃质感：内层高光描边 + 外层漫射阴影 */
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 8px 32px var(--dsw-alias-shadow-modal);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   display: flex;
   flex-direction: column;
+}
+
+/* 暗色模式：牛奶白改为冷调玻璃（保留玻璃质感） */
+@media (prefers-color-scheme: dark) {
+  .card {
+    background-color: rgba(40, 44, 52, 0.62);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
 }
 
 /* ── 头部 ── */
