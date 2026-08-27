@@ -1,0 +1,23 @@
+# Build artifacts
+node_modules/
+lib/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Test output
+coverage/
+.vitest/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# pnpm
+.pnpm-store/

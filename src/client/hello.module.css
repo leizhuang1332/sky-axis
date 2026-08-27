@@ -1,0 +1,111 @@
+/* Hello 插件的 sidebar 底部 trigger 与居中弹窗样式。
+   仅使用设计令牌（--dsw-alias-*），不写死颜色或尺寸。 */
+
+/* ── Sidebar footer trigger ── */
+
+.trigger {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  /* 在共享 footer.action 席位的最后；与 ui-sidebar 的 Settings/Settings 同列。
+     order 决定 wide 行内与 rail 中心列的渲染顺序。 */
+  order: 2;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.trigger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.trigger:active:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
+}
+
+/* ── 弹窗遮罩 ── */
+
+.mask {
+  position: fixed;
+  inset: 0;
+  background: var(--dsw-alias-overlay-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  /* 让 ESC/遮罩点击立即响应，弹出/关闭靠 React 状态管理。 */
+}
+
+/* ── 弹窗卡片 ── */
+
+.card {
+  min-width: 320px;
+  max-width: 480px;
+  padding: 24px 28px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-label-primary);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px var(--dsw-alias-shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-primary);
+}
+
+.body {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  padding: 24px 0;
+  color: var(--dsw-alias-accent-primary);
+  font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.close {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  background: var(--dsw-alias-interactive-bg-default);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
+}
