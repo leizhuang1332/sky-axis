@@ -5,8 +5,8 @@
  */
 import { useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { QUOTES, type Quote } from '../locales.ts'
-import css from '../hello.module.css'
+import { QUOTES, type Quote } from '../../locales.ts'
+import css from './sections.module.css'
 
 export interface QuoteSectionProps {
   t: PropsLocale<'hello'>['t']

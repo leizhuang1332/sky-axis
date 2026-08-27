@@ -13,8 +13,8 @@
  * 做法一致：sidebar row 的 label 在 shell 启动时即写入 innerHTML，locale
  * 动态切换不会回流更新 DOM）。面板内部仍然跟随 locale。
  */
-import type { HelloController } from './hello-controller.ts'
-import { mountSidebarEntry as mountSharedSidebarEntry } from './sidebar-entry-core.ts'
+import type { HelloController } from '../controller/hello-controller.ts'
+import { mountSidebarEntry as mountSharedSidebarEntry } from '../shared/sidebar-entry-core.ts'
 import css from './sidebar-entry.module.css'
 
 /** Stable data attribute identifying the injected entry row. */

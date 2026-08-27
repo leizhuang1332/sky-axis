@@ -10,11 +10,11 @@
  * 回调）。locale 跟随 dsh 整体设置，本组件不持有 locale 切换逻辑。
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { GreetingSection } from './widgets/GreetingSection.tsx'
-import { ClockSection } from './widgets/ClockSection.tsx'
-import { SessionSection } from './widgets/SessionSection.tsx'
-import { QuoteSection } from './widgets/QuoteSection.tsx'
-import type { SessionListReadSource } from './widgets/types.ts'
+import { GreetingSection } from './sections/GreetingSection.tsx'
+import { ClockSection } from './sections/ClockSection.tsx'
+import { SessionSection } from './sections/SessionSection.tsx'
+import { QuoteSection } from './sections/QuoteSection.tsx'
+import type { SessionListReadSource } from './sections/types.ts'
 import css from './HelloPage.module.css'
 
 export interface HelloPageProps {

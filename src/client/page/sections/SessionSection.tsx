@@ -8,7 +8,7 @@
 import { useSyncExternalStore } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListReadSource } from './types.ts'
-import css from '../hello.module.css'
+import css from './sections.module.css'
 
 export interface SessionSectionProps {
   t: PropsLocale<'hello'>['t']

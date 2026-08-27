@@ -16,11 +16,11 @@
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型导入：拉取 locale 插件的 ctx.locale 合并
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { createHelloController } from './hello-controller.ts'
-import { mountSidebarEntry } from './sidebar-entry.ts'
-import { mountHelloPage } from './hello-page-mount.tsx'
+import { createHelloController } from './controller/hello-controller.ts'
+import { mountSidebarEntry } from './mount/sidebar-entry.ts'
+import { mountHelloPage } from './mount/hello-page-mount.tsx'
 import { en, zh, type HelloKey } from './locales.ts'
-import type { SessionListReadSource } from './widgets/types.ts'
+import type { SessionListReadSource } from './page/sections/types.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -81,6 +81,6 @@ export function apply(ctx: ClientContext): void {
 
 // 包表面：cordis 加载所需的 apply + 命名空间 key 类型
 export type { HelloKey }
-export type { HelloController, HelloSnapshot } from './hello-controller.ts'
-export { ENTRY_SELECTOR } from './sidebar-entry.ts'
-export { HELLO_VIEW_SELECTOR } from './hello-page-mount.tsx'
+export type { HelloController, HelloSnapshot } from './controller/hello-controller.ts'
+export { ENTRY_SELECTOR } from './mount/sidebar-entry.ts'
+export { HELLO_VIEW_SELECTOR } from './mount/hello-page-mount.tsx'

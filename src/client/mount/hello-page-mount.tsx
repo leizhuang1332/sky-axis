@@ -14,10 +14,10 @@
  */
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { HelloController } from './hello-controller.ts'
-import { HelloPage } from './HelloPage.tsx'
-import type { SessionListReadSource } from './widgets/types.ts'
-import css from './HelloPage.module.css'
+import type { HelloController } from '../controller/hello-controller.ts'
+import { HelloPage } from '../page/HelloPage.tsx'
+import type { SessionListReadSource } from '../page/sections/types.ts'
+import css from '../page/HelloPage.module.css'
 
 /** 注入的 hello view 容器选择器（自身可见性 + takeover CSS 都用它）。 */
 export const HELLO_VIEW_SELECTOR = '[data-dsh-hello-view]'

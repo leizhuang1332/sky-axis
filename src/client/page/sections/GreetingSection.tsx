@@ -3,7 +3,7 @@
  * 仅渲染一行 hello world 卡片，保留原插件的核心语义。
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import css from '../hello.module.css'
+import css from './sections.module.css'
 
 export interface GreetingSectionProps {
   /** Locale 文案函数（'hello' 命名空间）。 */

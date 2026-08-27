@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import css from '../hello.module.css'
+import css from './sections.module.css'
 
 export interface ClockSectionProps {
   t: PropsLocale<'hello'>['t']
