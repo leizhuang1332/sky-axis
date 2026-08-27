@@ -1,59 +1,68 @@
-/* Hello 插件 4 个 section 内部样式 —— widgets 引用。
-   整页布局（page / hero / main 网格）见 HelloPage.module.css；
-   弹窗卡片样式已废弃，删除。
-   颜色全部走 --dsw-* 设计令牌。 */
+/* Hello 插件 4 个 section 内部样式 —— 与 dsh-task-board 的 .column /
+   .card 视觉一致；颜色全部走 --dsw-* 设计令牌。
+   整页布局（page / header / main / footer）见 HelloPage.module.css。 */
 
-/* ─ Section 卡片 ── */
+/* ── Section 卡片（对应 task-board 的 .column）── */
 
 .section {
-  background: var(--dsw-alias-surface-default);
-  border: 1px solid var(--dsw-alias-border-subtle);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.2;
-  color: var(--dsw-alias-label-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  min-height: 0;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .sectionHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
+  padding: 10px 12px;
+  flex: none;
+  /* column header 与 column body 视觉分层 */
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-/* ─ Section 1: greeting 大字 ── */
+.sectionTitle {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Section 1: greeting 大字（hero 风格） ── */
 
 .greetingBody {
   margin: 0;
-  font-size: 28px;
-  font-weight: 500;
-  line-height: 1.2;
+  padding: 32px 16px;
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.15;
   text-align: center;
-  padding: 12px 0;
-  color: var(--dsw-alias-accent-primary);
+  color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
+  /* 在 column 内部居中 */
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* ─ Section 2: clock key/value 列表 ── */
+/* ── Section 2: clock key/value 列表 ── */
 
 .kv {
   margin: 0;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  flex: 1;
 }
 
 .kvRow {
@@ -61,17 +70,23 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--dsw-alias-separator-primary);
+}
+
+.kvRow:last-child {
+  border-bottom: none;
 }
 
 .kvKey {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
   margin: 0;
 }
 
 .kvVal {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--dsw-alias-label-primary);
 }
 
@@ -79,14 +94,15 @@
   font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
 }
 
-/* ─ Section 3: session ── */
+/* ── Section 3: session ── */
 
 .sessionTitle {
   margin: 0;
-  font-size: 14px;
+  padding: 10px 12px;
+  font-size: 13px;
   line-height: 1.4;
   color: var(--dsw-alias-label-primary);
-  /* 长标题截断显示 + tooltip 显示完整 id */
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -94,51 +110,59 @@
 
 .sessionNone {
   margin: 0;
-  font-size: 13px;
+  padding: 16px 12px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
   font-style: italic;
+  flex: 1;
 }
 
-/* ─ Section 4: quote ── */
+/* ── Section 4: quote ── */
 
 .quote {
   margin: 0;
-  padding: 0;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
 }
 
 .quoteBody {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--dsw-alias-label-primary);
 }
 
 .quoteAuthor {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
   text-align: right;
 }
 
+/* 换一句按钮 —— ghostButton 风格（对应 task-board 的 .ghostButton） */
 .refreshBtn {
-  border: 1px solid var(--dsw-alias-border-subtle);
-  border-radius: 4px;
-  padding: 4px 10px;
-  background: var(--dsw-alias-surface-raised);
-  color: var(--dsw-alias-label-secondary);
+  padding: 5px 12px;
   font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .refreshBtn:hover {
   background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
 }
 
 .refreshBtn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.refreshBtn:active:not(:disabled) {
+  transform: translateY(1px);
 }

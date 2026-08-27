@@ -1,124 +1,212 @@
-/* Hello 完整页面样式 —— 在主列整页渲染。
-   沿用 hello.module.css 中的 section 内部样式（kv / sessionTitle / quote /
-   refreshBtn / close），这里只负责整页布局（page / hero / main 网格）。
-   颜色全部走 --dsw-* 设计令牌。 */
+/* Hello 完整页面 —— 视觉契约与 dsh-task-board 的 board 完全一致。
+   颜色全部走 --dsw-* 设计令牌，自动跟随 light/dark/skins。
+   整页布局（page / header / main / footer）+ center-column takeover。
 
-/* --- 整页铺底 --- */
+   ⚠️ 顺序约束：本文件必须把 .page / .header / .backButton 等组件规则
+   放在前面，把中心列 takeover 规则放在文件最后。接管规则依赖位置后
+   出 + 高 specificity 永远胜过 .page 的 display: flex —— 否则 container
+   会一直显示，「关闭」按钮看似没反应。 */
+
+/* ── 整页框架（对应 task-board 的 .board）── */
 
 .page {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
-  background: transparent;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  gap: 12px;
+  background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
-  overflow: hidden;
+  font-family: var(--dsw-font-family);
 }
 
-/* ── Center column takeover ── */
-/* 与 dsh-ssh / dsh-task-board 同协议：默认 hidden，激活态显示，
-   同时把 conversation 内容隐藏（让出主列）。 */
+/* ── 顶栏（对应 .boardHeader）── */
 
-[data-dsh-hello-view] {
-  position: absolute;
-  inset: 0;
-  /* 默认隐藏 —— 只有 <html> 同时持有 ACTIVE_ATTR 且没有兄弟 panel attr 时才显示 */
-  display: none;
-  /* 高于 conversation composer（z-index 7 in 0.1.0-rc.6 shell），
-     与 task-board 一致 */
-  z-index: 60;
-}
-
-/* 激活态：自己 active 且 task-board / ssh 都没 active */
-html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-hello-view] {
-  display: flex;
-}
-
-/* 激活时把 conversation 容器里非 hello-view 的子节点全部隐藏 */
-html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-hello-view]),
-html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-hello-view]) {
-  display: none !important;
-}
-
-/* --- hero header --- */
-
-.hero {
+.header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 32px 48px 24px;
+  gap: 10px;
   flex: none;
-  border-bottom: 1px solid var(--dsw-alias-border-subtle);
-  /* hero 自身作为大字号区，无需背景色，沿用 page 透出底层 */
+  /* 与 sidebar nav item 视觉节奏对齐：高度 36px */
+  min-height: 36px;
 }
 
-.heroBody {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.heroTitle {
-  margin: 0;
-  font-size: 40px;
-  font-weight: 600;
-  line-height: 1.15;
-  color: var(--dsw-alias-label-primary);
-  letter-spacing: -0.01em;
-  /* 与 section.greeting.body 同字体家族以保视觉一致 */
-  font-family: var(--dsw-alias-font-mono, ui-monospace, monospace);
-}
-
-.heroSubtitle {
-  margin: 6px 0 0;
-  font-size: 14px;
-  line-height: 1.4;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.heroClose {
-  flex: none;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 28px;
-  line-height: 1;
-  width: 40px;
-  height: 40px;
+.backButton {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.heroClose:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  gap: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
   color: var(--dsw-alias-label-primary);
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.heroClose:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-focus-ring);
+.backButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* --- 主区 2×2 grid --- */
+.backButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.backButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerSpacer {
+  flex: 1;
+}
+
+/* 顶栏右侧徽章（与 dsh-task-board 的 .statusBadge 同视觉） */
+.badge {
+  flex: none;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-secondary);
+  white-space: nowrap;
+}
+
+/* ── 主区 2×2 grid（对应 .columns，但改为响应式 2 列）── */
 
 .main {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 32px 48px 48px;
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
   grid-auto-rows: minmax(180px, auto);
-  gap: 16px;
+  gap: 12px;
+  overflow-y: auto;
+  /* 滚动条配色 —— 与 task-board 一致 */
+  scrollbar-color: var(--dsw-alias-border-l3) var(--dsw-alias-interactive-bg-hover);
+  scrollbar-width: thin;
 }
 
-/* 较宽视口切到 2 列 */
 @media (min-width: 900px) {
   .main {
     grid-template-columns: 1fr 1fr;
     grid-auto-rows: minmax(220px, auto);
   }
+}
+
+.main::-webkit-scrollbar {
+  width: 10px;
+}
+
+.main::-webkit-scrollbar-track {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 999px;
+}
+
+.main::-webkit-scrollbar-thumb {
+  background: var(--dsw-alias-border-l3);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.main::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-border-l4);
+  background-clip: content-box;
+}
+
+/* ── 底部状态条（对应 .detailFooter 视觉）── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--dsw-alias-separator-primary);
+  flex: none;
+  /* 嵌入主面板里的状态条：往内缩 + 上下圆角 */
+  margin: 0 -16px -16px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 0 0 0 0;
+}
+
+.footerMeta {
+  flex: 1;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 底部 close 按钮（对应 .primaryButton） */
+.closeButton {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease;
+}
+
+.closeButton:hover {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.closeButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* ============================================================
+   Center column takeover（必须放文件末尾 —— 顺序胜出 .page）
+   ============================================================ */
+
+/* 让 conversation 列成为定位上下文（hello-view 是 absolute） */
+[data-pane='conversation'],
+[class*='centerCol'] {
+  position: relative;
+}
+
+/* 默认隐藏 —— specificity (0,1,0) 与 .page 相同，但位置靠后胜出 */
+[data-dsh-hello-view] {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 60;
+  /* opaque backdrop：与 task-board 同处理（issue #100） */
+  background: var(--dsw-alias-bg-base);
+}
+
+/* 激活态：specificity (0,3,2) 远胜 .page (0,1,0)，同时把
+   conversation 内容压住以保证只显示 hello 页 */
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-hello-view] {
+  display: flex;
+}
+
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-hello-view]),
+html[data-dsh-hello-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-hello-view]) {
+  display: none !important;
 }

@@ -16,6 +16,9 @@ export const zh = {
   'page.title': 'Hello, world 👋',
   'page.subtitle': '一个塞在 DSH 里的 hello 页面',
   'page.close': '返回会话',
+  'page.back': '返回',
+  'page.badge': '插件',
+  'page.footerMeta': '由 hello 插件提供 · 占用主列',
 
   // Section 1: greeting
   'section.greeting.title': '问候',
@@ -51,6 +54,9 @@ export const en: Record<HelloKey, string> = {
   'page.title': 'Hello, world 👋',
   'page.subtitle': 'A hello page embedded inside DSH',
   'page.close': 'Back to chat',
+  'page.back': 'Back',
+  'page.badge': 'plugin',
+  'page.footerMeta': 'Provided by the hello plugin · occupies the main column',
 
   // Section 1: greeting
   'section.greeting.title': 'Greeting',
