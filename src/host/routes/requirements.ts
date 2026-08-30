@@ -36,7 +36,7 @@ interface Route {
 }
 
 /** 写 JSON 响应的 helper。 */
-function jsonResponse(res: ServerResponse, code: number, body: unknown): void {
+export function jsonResponse(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(body))
 }
@@ -53,7 +53,7 @@ function sseResponse(res: ServerResponse): void {
 }
 
 /** 把 SkyAxisHostError → ApiError 响应。 */
-function translateError(res: ServerResponse, error: unknown): void {
+export function translateError(res: ServerResponse, error: unknown): void {
   if (error instanceof Error && 'code' in error) {
     const skyAxisErr = error as SkyAxisHostError
     const status = mapStatus(skyAxisErr.code)
@@ -67,12 +67,13 @@ function translateError(res: ServerResponse, error: unknown): void {
 }
 
 /** SkyAxisErrorCode → HTTP status code。 */
-function mapStatus(code: SkyAxisErrorCode): number {
+export function mapStatus(code: SkyAxisErrorCode): number {
   switch (code) {
     case 'validation-failed':       return 400
     case 'workspace-not-found':
     case 'requirement-not-found':
-    case 'artifact-not-found':      return 404
+    case 'artifact-not-found':
+    case 'material-not-found':      return 404
     case 'stage-invalid':           return 422
     case 'workspace-list-failed':
     case 'ai-event-failed':         return 502
@@ -84,8 +85,8 @@ function mapStatus(code: SkyAxisErrorCode): number {
 }
 
 /** 安全读 body（限制 64KB，避免恶意大 body OOM host 进程）。 */
-const BODY_LIMIT_BYTES = 64 * 1024
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+export const BODY_LIMIT_BYTES = 64 * 1024
+export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let total = 0
@@ -115,7 +116,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /** zod safeParse 失败的统一包装。 */
-function zodParseOrThrow<T>(schema: { safeParse: (input: unknown) => { success: true; data: T } | { success: false; error: { issues?: unknown } } }, input: unknown, errorCode: SkyAxisErrorCode = 'validation-failed'): T {
+export function zodParseOrThrow<T>(schema: { safeParse: (input: unknown) => { success: true; data: T } | { success: false; error: { issues?: unknown } } }, input: unknown, errorCode: SkyAxisErrorCode = 'validation-failed'): T {
   const result = schema.safeParse(input)
   if (!result.success) {
     const issueText = JSON.stringify(result.error.issues ?? result.error, null, 0).slice(0, 500)
@@ -125,7 +126,7 @@ function zodParseOrThrow<T>(schema: { safeParse: (input: unknown) => { success: 
 }
 
 /** 解析 query 参数。 */
-function getQueryParam(req: IncomingMessage, name: string): string | undefined {
+export function getQueryParam(req: IncomingMessage, name: string): string | undefined {
   const url = req.url
   if (url === undefined) return undefined
   const queryIndex = url.indexOf('?')

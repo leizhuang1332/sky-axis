@@ -91,8 +91,8 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 11 个错误码（Phase 1.2 加 5 个 AI / 详情 / 产物 / 阶段错误码）', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(11)
+  it('正好包含 12 个错误码（Phase 2.5 加 material-not-found）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(12)
   })
 
   it('错误码集合稳定', () => {
@@ -103,6 +103,7 @@ describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
       'artifact-not-found',
       'internal-error',
       'invalid-record',
+      'material-not-found',
       'requirement-not-found',
       'stage-invalid',
       'validation-failed',
@@ -389,6 +390,7 @@ describe('MaterialsSchema（需求物料）', () => {
       id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
       filename: 'prd.pdf', mimeType: 'application/pdf', size: 1024,
       uploadedAt: now, uploadedBy: 'user-1',
+      path: '.sky-axis/req-x/prdFiles/a1b2c3d4-e5f6-7890-abcd-ef0123456789-prd.pdf',
     })).not.toThrow()
   })
 

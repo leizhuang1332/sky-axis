@@ -19,16 +19,26 @@
  *   - 不存 workspace 元数据快照：仅存 workspaceId（FK），展示标题由 client
  *     端 ctx.workspaces.list 实时 join
  */
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import type { WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import {
+  AddDesignLinkRequest,
+  AddExternalLinkRequest,
+  AddPrdLinkRequest,
+  AddSourceRepoRequest,
+  Attachment,
+  MaterialItemId,
+  MaterialSection,
   NewRequirement,
+  PrdFile,
   Requirement,
   RequirementId,
+  UserId,
   WorkspaceId as SkyAxisWorkspaceId,
   SkyAxisErrorCode,
   defaultRequirementFields,
@@ -38,6 +48,9 @@ import { requirementDomain } from './storage/requirement-domain.ts'
 
 /** sky-axis 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
 const SKY_AXIS_ARTIFACT_NAMESPACE = '.sky-axis'
+
+/** 物料每 section 数量上限（业务约束，zod 不管 —— 服务层校验）。 */
+const MAX_MATERIALS_PER_SECTION = 50
 
 /** sky-axis 自定义错误（host routes 捕获并翻译为 ApiError 响应）。 */
 export class SkyAxisHostError extends Error {
@@ -57,9 +70,79 @@ function makeRequirementId(): RequirementId {
   return `${ts}-${rand}` as RequirementId
 }
 
+/** 物料 itemId：UUID v4（与 protocol MaterialItemIdSchema 对齐）。 */
+function makeMaterialItemId(): MaterialItemId {
+  return randomUUID() as MaterialItemId
+}
+
 /** sky-axis 半区产物根目录（不实际创建，返回路径供 lazy 创建）。 */
 function artifactRoot(workspacePath: string, requirementId: RequirementId): string {
   return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, requirementId)
+}
+
+/** 某 section 的产物子目录路径（不实际创建）。 */
+function sectionArtifactDir(
+  workspacePath: string,
+  requirementId: RequirementId,
+  section: MaterialSection,
+): string {
+  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, requirementId, section)
+}
+
+/**
+ * 防御性 sanitize 文件名：
+ *   - 剔除 path traversal 字符（/ 与 \）
+ *   - 剔除 .. 序列
+ *   - 剔除控制字符（ASCII 0x00-0x1F + DEL）
+ *   - 剔除开头的点（避免 .bashrc / .ssh 等隐藏文件）
+ *   - 空串兜底为 'unnamed'
+ *   - 截取最后 200 字符（过长文件名对文件系统不友好）
+ */
+function sanitizeFilename(name: string): string {
+  const cleaned = name
+    .replace(/[/\\]/g, '_')
+    .replace(/\.\.+/g, '_')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/^\.+/, '')
+    .trim()
+  return cleaned === '' ? 'unnamed' : cleaned.slice(-200)
+}
+
+/** 写 PrdFile / Attachment 文件到磁盘，返回相对 workspace 的 path 与绝对路径。 */
+async function writeMaterialFile(args: {
+  workspacePath: string
+  requirementId: RequirementId
+  section: MaterialSection
+  itemId: MaterialItemId
+  filename: string
+  content: Buffer
+}): Promise<{ relativePath: string; absolutePath: string }> {
+  const dir = sectionArtifactDir(args.workspacePath, args.requirementId, args.section)
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  const sanitized = sanitizeFilename(args.filename)
+  const filename = `${args.itemId}-${sanitized}`
+  const absolutePath = join(dir, filename)
+  await writeFile(absolutePath, args.content, { mode: 0o600 })
+  const relativePath = join(SKY_AXIS_ARTIFACT_NAMESPACE, args.requirementId, args.section, filename)
+  return { relativePath, absolutePath }
+}
+
+/**
+ * best-effort 删物料文件：
+ *   - ENOENT（已被删）视为成功（caller 不需关心）
+ *   - 其它错误 console.warn（不影响 KV 操作的语义）
+ */
+async function unlinkMaterialFile(workspacePath: string, relativePath: string): Promise<void> {
+  const absolute = join(workspacePath, relativePath)
+  try {
+    await unlink(absolute)
+  } catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException
+    if (err.code !== 'ENOENT') {
+      // eslint-disable-next-line no-console
+      console.warn(`[sky-axis] unlink ${absolute} failed: ${err.code ?? 'unknown'}`)
+    }
+  }
 }
 
 /**
@@ -179,6 +262,283 @@ export class RequirementHostService {
     this.closed = true
     const domain = await this.domainPromise
     await domain.close()
+  }
+
+  /* ── Phase 2.5：物料 CRUD ── */
+
+  /**
+   * 上传一个 PRD 文件（multipart 走 PrdFile / Attachment 服务方法）。
+   * 写入顺序：**先落盘成功 → 再写 KV**（避免 KV 有记录但磁盘没文件）。
+   * 失败回滚：落盘失败 → KV 不动；KV 写失败 → best-effort unlink 已落盘文件。
+   *
+   * @throws SkyAxisHostError
+   *   - 'requirement-not-found'：requirementId 不存在
+   *   - 'validation-failed'：超 MAX_MATERIALS_PER_SECTION（50）
+   *   - 'internal-error'：文件 IO 失败
+   */
+  async addPrdFile(reqId: RequirementId, file: {
+    content: Buffer
+    filename: string
+    mimeType: string
+    size: number
+    uploadedBy: UserId
+  }): Promise<Requirement> {
+    return await this.addFileSection('prdFiles', reqId, file)
+  }
+
+  async addAttachment(reqId: RequirementId, file: {
+    content: Buffer
+    filename: string
+    mimeType: string
+    size: number
+    uploadedBy: UserId
+  }): Promise<Requirement> {
+    return await this.addFileSection('attachments', reqId, file)
+  }
+
+  /** 内部共用：文件类 section（prdFiles / attachments）上传。 */
+  private async addFileSection(
+    section: Extract<MaterialSection, 'prdFiles' | 'attachments'>,
+    reqId: RequirementId,
+    file: {
+      content: Buffer
+      filename: string
+      mimeType: string
+      size: number
+      uploadedBy: UserId
+    },
+  ): Promise<Requirement> {
+    const table = await this.ready()
+    const current = await this.get(reqId)
+    if (current === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found`)
+    }
+    const workspacePath = await this.resolveWorkspacePath(current.workspaceId)
+    const itemId = makeMaterialItemId()
+    const { relativePath } = await writeMaterialFile({
+      workspacePath,
+      requirementId: reqId,
+      section,
+      itemId,
+      filename: file.filename,
+      content: file.content,
+    })
+    const now = new Date().toISOString()
+    const newItem: PrdFile | Attachment = section === 'prdFiles'
+      ? {
+          id: itemId,
+          filename: file.filename,
+          mimeType: file.mimeType,
+          size: file.size,
+          uploadedAt: now,
+          uploadedBy: file.uploadedBy,
+          path: relativePath,
+        }
+      : {
+          id: itemId,
+          filename: file.filename,
+          mimeType: file.mimeType,
+          size: file.size,
+          uploadedAt: now,
+          uploadedBy: file.uploadedBy,
+          path: relativePath,
+        }
+
+    try {
+      const updated = await table.update(
+        reqId as unknown as SkyAxisWorkspaceId & string,
+        (prev) => {
+          const materials = prev.materials
+          const nextList = section === 'prdFiles'
+            ? [...materials.prdFiles, newItem as PrdFile]
+            : [...materials.attachments, newItem as Attachment]
+          if (nextList.length > MAX_MATERIALS_PER_SECTION) {
+            throw new SkyAxisHostError(
+              'validation-failed',
+              `${section} exceeds ${MAX_MATERIALS_PER_SECTION} items limit`,
+            )
+          }
+          return {
+            ...prev,
+            materials: section === 'prdFiles'
+              ? { ...materials, prdFiles: nextList }
+              : { ...materials, attachments: nextList },
+            updatedAt: now,
+          }
+        },
+      )
+      if (updated === undefined) {
+        await unlinkMaterialFile(workspacePath, relativePath)
+        throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found during update`)
+      }
+      return updated
+    } catch (e) {
+      // 数量超限 / KV 写失败：回滚已落盘文件
+      await unlinkMaterialFile(workspacePath, relativePath)
+      throw e
+    }
+  }
+
+  /**
+   * 添加一个 PRD 链接（JSON 入参 —— url / title / source）。
+   * 不需要落盘，直接更新 KV。
+   */
+  async addPrdLink(
+    reqId: RequirementId,
+    input: AddPrdLinkRequest,
+    addedBy: UserId,
+  ): Promise<Requirement> {
+    const now = new Date().toISOString()
+    return await this.addJsonSection('prdLinks', reqId, (id) => ({
+      id,
+      url: input.url,
+      title: input.title,
+      source: input.source,
+      addedAt: now,
+      addedBy,
+    }))
+  }
+
+  async addSourceRepo(
+    reqId: RequirementId,
+    input: AddSourceRepoRequest,
+    addedBy: UserId,
+  ): Promise<Requirement> {
+    const now = new Date().toISOString()
+    return await this.addJsonSection('sourceRepos', reqId, (id) => ({
+      id,
+      url: input.url,
+      branch: input.branch,
+      lastCommitSha: input.lastCommitSha,
+      description: input.description,
+      addedAt: now,
+      addedBy,
+    }))
+  }
+
+  async addDesignLink(
+    reqId: RequirementId,
+    input: AddDesignLinkRequest,
+    addedBy: UserId,
+  ): Promise<Requirement> {
+    const now = new Date().toISOString()
+    return await this.addJsonSection('designLinks', reqId, (id) => ({
+      id,
+      url: input.url,
+      kind: input.kind,
+      title: input.title,
+      thumbnailUrl: input.thumbnailUrl,
+      addedAt: now,
+      addedBy,
+    }))
+  }
+
+  async addExternalLink(
+    reqId: RequirementId,
+    input: AddExternalLinkRequest,
+    addedBy: UserId,
+  ): Promise<Requirement> {
+    const now = new Date().toISOString()
+    return await this.addJsonSection('externalLinks', reqId, (id) => ({
+      id,
+      url: input.url,
+      title: input.title,
+      kind: input.kind,
+      description: input.description,
+      addedAt: now,
+      addedBy,
+    }))
+  }
+
+  /**
+   * 内部共用：JSON 类 section（prdLinks / sourceRepos / designLinks /
+   * externalLinks）添加。直接更新 KV，不需要落盘。
+   *
+   * @param makeItem - 构造新 item（id 由 host 生成，section 由 factory 决定）
+   */
+  private async addJsonSection<
+    S extends Exclude<MaterialSection, 'prdFiles' | 'attachments'>,
+  >(
+    section: S,
+    reqId: RequirementId,
+    makeItem: (id: MaterialItemId) => Requirement['materials'][S][number],
+  ): Promise<Requirement> {
+    const table = await this.ready()
+    const itemId = makeMaterialItemId()
+    const now = new Date().toISOString()
+    const updated = await table.update(
+      reqId as unknown as SkyAxisWorkspaceId & string,
+      (prev) => {
+        const list = prev.materials[section]
+        const nextList = [...list, makeItem(itemId)]
+        if (nextList.length > MAX_MATERIALS_PER_SECTION) {
+          throw new SkyAxisHostError(
+            'validation-failed',
+            `${section} exceeds ${MAX_MATERIALS_PER_SECTION} items limit`,
+          )
+        }
+        return {
+          ...prev,
+          materials: { ...prev.materials, [section]: nextList },
+          updatedAt: now,
+        }
+      },
+    )
+    if (updated === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found`)
+    }
+    return updated
+  }
+
+  /**
+   * 移除一个物料项。
+   * 顺序：**先 KV 后 unlink** —— UI 列表立刻一致优先；unlink 失败 best-effort
+   * （残留文件不影响功能，留待人工清理）。
+   *
+   * @throws SkyAxisHostError
+   *   - 'requirement-not-found'：requirementId 不存在
+   *   - 'material-not-found'：itemId 不在指定 section 内
+   */
+  async removeMaterial(
+    reqId: RequirementId,
+    section: MaterialSection,
+    itemId: MaterialItemId,
+  ): Promise<Requirement> {
+    const table = await this.ready()
+    const current = await this.get(reqId)
+    if (current === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found`)
+    }
+    const workspacePath = await this.resolveWorkspacePath(current.workspaceId)
+    const list = current.materials[section]
+    const targetIdx = list.findIndex((it) => (it as { id: string }).id === itemId)
+    if (targetIdx === -1) {
+      throw new SkyAxisHostError(
+        'material-not-found',
+        `material ${itemId} not in ${section}`,
+      )
+    }
+    const target = list[targetIdx] as { id: string; path?: string }
+    const nextList = [...list.slice(0, targetIdx), ...list.slice(targetIdx + 1)]
+    const now = new Date().toISOString()
+    const updated = await table.update(
+      reqId as unknown as SkyAxisWorkspaceId & string,
+      (prev) => ({
+        ...prev,
+        materials: { ...prev.materials, [section]: nextList },
+        updatedAt: now,
+      }),
+    )
+    if (updated === undefined) {
+      throw new SkyAxisHostError(
+        'requirement-not-found',
+        `requirement ${reqId} not found during remove`,
+      )
+    }
+    if (target.path !== undefined) {
+      await unlinkMaterialFile(workspacePath, target.path)
+    }
+    return updated
   }
 
   /**

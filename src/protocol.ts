@@ -41,6 +41,12 @@ export const SkyAxisEndpoints = {
   requirementEvents: `${SKY_AXIS_API_PREFIX}/requirements/events`,
   /** 客户端拉取 workspace 元数据快照（sky-axis 专用 API，不直接代理 DSH apiProxy —— 避免 host 二次转发；客户端应优先用 ctx.workspaces.list）。 */
   workspaceList: `${SKY_AXIS_API_PREFIX}/workspaces`,
+
+  /* ── 物料 CRUD（Phase 2.5）── */
+  /** 6 section × 3 op = 18 个 exact route 的模式字面量（实际 host 注册时按 section 展开）。 */
+  materialAdd:    `${SKY_AXIS_API_PREFIX}/materials/{section}/add`,
+  materialUpload: `${SKY_AXIS_API_PREFIX}/materials/{section}/upload`,
+  materialRemove: `${SKY_AXIS_API_PREFIX}/materials/{section}/remove`,
 } as const
 
 /* ── 共享子 schema ── */
@@ -102,7 +108,10 @@ export type UserId = z.infer<typeof UserIdSchema>
 
 /* ── 6 个物料 section 子项 schema ── */
 
-/** PRD 文档 —— 上传的产品 PRD 文件。 */
+/** PRD 文档 —— 上传的产品 PRD 文件。
+ *  Phase 2.5 新增 `path` required —— host 落盘相对路径（基 = workspace.path），
+ *  形态：`.sky-axis/${requirementId}/${section}/${id}-${sanitized-filename}`。
+ *  required 是 fail loud 决策 —— 旧 v2 record 无 path，DSH backend 升 v3 直接 reject。 */
 export const PrdFileSchema = z.object({
   id:         MaterialItemIdSchema,
   filename:   z.string().min(1).max(255),
@@ -111,6 +120,7 @@ export const PrdFileSchema = z.object({
   size:       z.number().int().nonnegative(),
   uploadedAt: z.string().datetime(),
   uploadedBy: UserIdSchema,
+  path:       z.string().min(1).max(1024),
 })
 export type PrdFile = z.infer<typeof PrdFileSchema>
 
@@ -156,7 +166,8 @@ export type DesignLink = z.infer<typeof DesignLinkSchema>
 
 /** 附件 —— 任意文件（图片 / PDF / 文档 / 压缩包等）。
  *  schema 与 PrdFile 一致 —— 但业务语义不同（PRD 是产品需求文档，附件是补充材料），
- *  保持分开便于未来各自扩展字段。 */
+ *  保持分开便于未来各自扩展字段。
+ *  Phase 2.5 新增 `path` required —— 同 PrdFileSchema。 */
 export const AttachmentSchema = z.object({
   id:         MaterialItemIdSchema,
   filename:   z.string().min(1).max(255),
@@ -164,6 +175,7 @@ export const AttachmentSchema = z.object({
   size:       z.number().int().nonnegative(),
   uploadedAt: z.string().datetime(),
   uploadedBy: UserIdSchema,
+  path:       z.string().min(1).max(1024),
 })
 export type Attachment = z.infer<typeof AttachmentSchema>
 
@@ -235,6 +247,63 @@ export function countMaterials(m: Materials): number {
     + m.externalLinks.length
   )
 }
+
+/* ── 物料 CRUD（Phase 2.5）── */
+
+/** 6 个物料 section 的字面量联合 —— host routes 按此枚举展开 18 个 exact 路由。 */
+export const MaterialSectionSchema = z.enum([
+  'prdFiles', 'prdLinks', 'sourceRepos', 'designLinks', 'attachments', 'externalLinks',
+])
+export type MaterialSection = z.infer<typeof MaterialSectionSchema>
+
+/**
+ * 4 个 JSON add 请求 schema —— 故意省略服务端生成字段
+ * （id / addedAt / addedBy / uploadedBy / path）。
+ * 字段语义：
+ *   - url：受限 http/https（UrlSchema）
+ *   - title / description：长度上限的字符串
+ *   - source / kind：受控枚举（避免脏数据污染 UI 图标 / 提取策略）
+ */
+export const AddPrdLinkRequestSchema = z.object({
+  url:    UrlSchema,
+  title:  z.string().min(1).max(200),
+  source: z.enum(['yuque', 'notion', 'confluence', 'feishu', 'custom']),
+})
+export type AddPrdLinkRequest = z.infer<typeof AddPrdLinkRequestSchema>
+
+export const AddSourceRepoRequestSchema = z.object({
+  url:           UrlSchema,
+  branch:        z.string().max(255),
+  lastCommitSha: z.string().regex(/^[a-f0-9]{7,40}$/).optional(),
+  description:   z.string().max(500),
+})
+export type AddSourceRepoRequest = z.infer<typeof AddSourceRepoRequestSchema>
+
+export const AddDesignLinkRequestSchema = z.object({
+  url:          UrlSchema,
+  kind:         z.enum(['figma', 'sketch', 'image', 'embed']),
+  title:        z.string().min(1).max(200),
+  thumbnailUrl: UrlSchema.optional(),
+})
+export type AddDesignLinkRequest = z.infer<typeof AddDesignLinkRequestSchema>
+
+export const AddExternalLinkRequestSchema = z.object({
+  url:         UrlSchema,
+  title:       z.string().min(1).max(200),
+  kind:        z.enum(['api-doc', 'meeting', 'research', 'incident', 'other']),
+  description: z.string().max(500),
+})
+export type AddExternalLinkRequest = z.infer<typeof AddExternalLinkRequestSchema>
+
+/**
+ * PrdFile / Attachment 上传的 multipart metadata 校验 schema。
+ * size 上限 100MB —— 大于该值应走客户端预校验 + busboy `limits.fileSize` 兜底。 */
+export const UploadedFileMetadataSchema = z.object({
+  filename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(127),
+  size:     z.number().int().nonnegative().max(100 * 1024 * 1024),
+})
+export type UploadedFileMetadata = z.infer<typeof UploadedFileMetadataSchema>
 
 /* ── 详情页扩展（Phase 1.2：开发意图工作台 schema）── */
 
@@ -545,6 +614,14 @@ export const RequirementEventSchema = z.discriminatedUnion('operation', [
 ])
 export type RequirementEvent = z.infer<typeof RequirementEventSchema>
 
+/** 删除物料响应 —— 返回被删 itemId + 删除后的完整 requirement（让 client 走 SSE put 通道前也能拿到最新值）。 */
+export const RemoveMaterialResponseSchema = z.object({
+  ok:   z.literal(true),
+  id:   MaterialItemIdSchema,
+  item: RequirementSchema,
+})
+export type RemoveMaterialResponse = z.infer<typeof RemoveMaterialResponseSchema>
+
 /* ── 统一响应包装 + 错误码 ── */
 
 /**
@@ -576,6 +653,9 @@ export const SKY_AXIS_ERROR_CODES = [
   'ai-event-failed',
   'artifact-not-found',
   'stage-invalid',
+  // ── Phase 2.5 新增 ──
+  /** material CRUD：itemId 不在指定 section 内（可能已被删除）。 */
+  'material-not-found',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

@@ -174,6 +174,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
                 detailLoading={detailLoading}
                 detailError={detailError}
                 detailTabKey={detailTabKey}
+                controller={controller}
                 onBack={handleBackFromDetail}
                 onTabChange={handleDetailTabChange}
               />

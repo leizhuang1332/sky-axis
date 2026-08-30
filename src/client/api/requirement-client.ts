@@ -13,12 +13,22 @@
  */
 import { z } from 'zod'
 import {
+  AddDesignLinkRequestSchema,
+  AddExternalLinkRequestSchema,
+  AddPrdLinkRequestSchema,
+  AddSourceRepoRequestSchema,
   SKY_AXIS_API_PREFIX,
   NewRequirementSchema,
   RequirementSchema,
   RequirementsListResponseSchema,
   RequirementResponseSchema,
+  RemoveMaterialResponseSchema,
   WorkspacesListResponseSchema,
+  type AddDesignLinkRequest,
+  type AddExternalLinkRequest,
+  type AddPrdLinkRequest,
+  type AddSourceRepoRequest,
+  type MaterialSection,
   type SkyAxisErrorCode,
   type NewRequirement,
   type Requirement,
@@ -110,6 +120,127 @@ export class RequirementClient {
     const parsed = await parseJson(res, WorkspacesListResponseSchema)
     if (!parsed.ok) return parsed
     return { ok: true, value: parsed.value.items }
+  }
+
+  /* ── Phase 2.5：物料 CRUD ── */
+
+  /**
+   * 上传一个 PRD 文件（multipart）。file.content 是 File / Blob。
+   * 100MB 上限由 host busboy `limits.fileSize` 兜底；客户端应预校验避免发大请求。
+   */
+  async uploadPrdFile(
+    requirementId: RequirementId,
+    file: { content: Blob; filename: string; mimeType: string; size: number },
+    uploadedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.uploadFile('prdFiles', requirementId, file, uploadedBy)
+  }
+
+  /** 上传一个附件（multipart）。 */
+  async uploadAttachment(
+    requirementId: RequirementId,
+    file: { content: Blob; filename: string; mimeType: string; size: number },
+    uploadedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.uploadFile('attachments', requirementId, file, uploadedBy)
+  }
+
+  private async uploadFile(
+    section: Extract<MaterialSection, 'prdFiles' | 'attachments'>,
+    requirementId: RequirementId,
+    file: { content: Blob; filename: string; mimeType: string; size: number },
+    uploadedBy?: string,
+  ): Promise<Result<Requirement>> {
+    const form = new FormData()
+    form.append('file', file.content, file.filename)
+    if (uploadedBy !== undefined) form.append('uploadedBy', uploadedBy)
+    const res = await fetch(
+      `${this.baseUrl}/materials/${section}/upload?requirementId=${encodeURIComponent(requirementId)}`,
+      { method: 'POST', body: form, credentials: 'same-origin' },
+    )
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.item }
+  }
+
+  /** 添加一个 PRD 链接（JSON）。 */
+  async addPrdLink(
+    requirementId: RequirementId,
+    input: AddPrdLinkRequest,
+    addedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.addJson('prdLinks', requirementId, input, addedBy, AddPrdLinkRequestSchema)
+  }
+
+  /** 添加一个源码仓库（JSON）。 */
+  async addSourceRepo(
+    requirementId: RequirementId,
+    input: AddSourceRepoRequest,
+    addedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.addJson('sourceRepos', requirementId, input, addedBy, AddSourceRepoRequestSchema)
+  }
+
+  /** 添加一个设计稿链接（JSON）。 */
+  async addDesignLink(
+    requirementId: RequirementId,
+    input: AddDesignLinkRequest,
+    addedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.addJson('designLinks', requirementId, input, addedBy, AddDesignLinkRequestSchema)
+  }
+
+  /** 添加一个外部链接（JSON）。 */
+  async addExternalLink(
+    requirementId: RequirementId,
+    input: AddExternalLinkRequest,
+    addedBy?: string,
+  ): Promise<Result<Requirement>> {
+    return await this.addJson('externalLinks', requirementId, input, addedBy, AddExternalLinkRequestSchema)
+  }
+
+  private async addJson<S extends Exclude<MaterialSection, 'prdFiles' | 'attachments'>>(
+    section: S,
+    requirementId: RequirementId,
+    input: unknown,
+    addedBy: string | undefined,
+    schema: z.ZodType,
+  ): Promise<Result<Requirement>> {
+    const check = schema.safeParse(input)
+    if (!check.success) {
+      return { ok: false, code: 'validation-failed', detail: `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}` }
+    }
+    const body: Record<string, unknown> = {
+      ...(check.data as Record<string, unknown>),
+      addedBy: addedBy ?? '',
+    }
+    const res = await fetch(
+      `${this.baseUrl}/materials/${section}/add?requirementId=${encodeURIComponent(requirementId)}`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    )
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.item }
+  }
+
+  /** 删除一个物料项（任意 section）。 */
+  async removeMaterial(
+    requirementId: RequirementId,
+    section: MaterialSection,
+    itemId: string,
+  ): Promise<Result<{ id: string; item: Requirement }>> {
+    const res = await fetch(
+      `${this.baseUrl}/materials/${section}/remove?requirementId=${encodeURIComponent(requirementId)}&itemId=${encodeURIComponent(itemId)}`,
+      { method: 'DELETE', credentials: 'same-origin' },
+    )
+    const parsed = await parseJson(res, RemoveMaterialResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: { id: parsed.value.id, item: parsed.value.item } }
   }
 }
 

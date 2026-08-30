@@ -1,13 +1,9 @@
-/* NewRequirementModal —— 仅保留 Modal 抽象未覆盖的样式。
-   .overlay / .root / .header / .title / .closeButton / .footer / fadeIn 已迁到 ui/Modal.module.css。
-   .field / .fieldLabel / .fieldHint / .required / .fieldError 已迁到 ui/Field.module.css。
-   .form / .errorBar / .warningBar / .input / .select / .textarea / .linkButton /
-   .cancelButton / .submitButton 仍在此处 —— form 内部布局与本组件专属样式。 */
+/* forms —— 6 个 AddXxxForm 共享样式。form 容器、错误条、输入控件、按钮、文件选择。 */
 
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .errorBar {
@@ -31,15 +27,6 @@
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: #6b1a15;
   word-break: break-all;
-}
-
-.warningBar {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(255, 193, 7, 0.08);
-  border: 1px solid rgba(255, 193, 7, 0.35);
-  color: #8a6d00;
-  font-size: 13px;
 }
 
 .input,
@@ -76,27 +63,6 @@
 .textarea:disabled {
   background: var(--dsw-alias-bg-secondary, #f5f6f8);
   color: var(--dsw-alias-label-secondary, #5b6470);
-  cursor: not-allowed;
-}
-
-/* workspace select 下方的「+ 创建工作区」链接 —— 蓝字小号，不抢主表单视觉 */
-.linkButton {
-  align-self: flex-start;
-  margin-top: 4px;
-  padding: 2px 0;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--dsw-alias-state-business-primary, #3b6ef5);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: color 120ms ease;
-}
-.linkButton:hover:not(:disabled) {
-  text-decoration: underline;
-}
-.linkButton:disabled {
-  color: var(--dsw-alias-label-tertiary, #8a8f99);
   cursor: not-allowed;
 }
 
@@ -137,6 +103,51 @@
   cursor: not-allowed;
 }
 
+/* ── 文件选择器 ── */
+
+.fileDropZone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--dsw-alias-bg-secondary, #f5f6f8);
+  border: 1px dashed var(--dsw-alias-border-secondary, #d0d4dc);
+  border-radius: 6px;
+}
+
+.fileInput {
+  display: none;
+}
+
+.fileButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--dsw-alias-bg-primary, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border: 1px solid var(--dsw-alias-border-secondary, #d0d4dc);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.fileButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #f3f5f8);
+}
+
+.fileMeta {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
 @media (prefers-color-scheme: dark) {
   .errorBar {
     background: rgba(248, 81, 73, 0.12);
@@ -144,9 +155,5 @@
   }
   .errorDetail {
     color: #f0b4b1;
-  }
-  .warningBar {
-    background: rgba(255, 193, 7, 0.12);
-    color: #f5d563;
   }
 }

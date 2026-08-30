@@ -2,45 +2,64 @@
  * MaterialsPane —— 详情页 tab「需求物料」内容区。
  *
  * Phase 2.1 增量：读 requirement.materials 真实数据。
- *   - 6 个 section 各自渲染对应子项列表（prdFiles / prdLinks / sourceRepos /
- *     designLinks / attachments / externalLinks）
- *   - 每个 section 显示计数 + 折叠/展开
- *   - 每个 item 展示关键元数据（filename / url / branch / source 等）
- *   - 空 section 显示「未配置」空状态（带 Phase 2.5 待实现提示）
- *   - 总数 = prdFiles.length + prdLinks.length + ...
+ * Phase 2.5 增量：上传 / 添加 / 删除交互。
+ *   - 头部右上角「+ 添加物料」按钮 → 打开 MaterialPickerModal
+ *   - picker 选 section → 切到 AddMaterialFormModal（dispatcher）
+ *   - 每个列表项末尾加 TrashIcon 删除按钮 —— 三态：
+ *       default → hover 红 → 二次点击确认 → 3s 自动 revert
+ *   - section 配置数组保留 typing 严格性：section → section.icon / renderItem
+ *     强绑定，TS 推断避免 cast unknown
  *
- * Phase 2.5 待实现：上传按钮 + 链接/源码表单 + 删除（路由 + UI）。
- *
- * 数据来源：完全受控 props（parent 传 t + requirement）。
+ * 数据来源：完全受控 props（parent 传 t + requirement + controller）。
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { useState, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import {
   AttachmentIcon, DesignIcon, GlobeIcon, PrdFileIcon, PrdLinkIcon,
-  WarningTriangleIcon,
+  GitBranchIcon, PlusIcon, TrashIcon,
 } from '../../icons/icons.tsx'
-import type {
-  RequirementEntry, RequirementMaterials,
-  RequirementPrdFile, RequirementPrdLink, RequirementSourceRepo,
-  RequirementDesignLink, RequirementAttachment, RequirementExternalLink,
-} from '../../controller/sky-axis-controller.ts'
-import { countRequirementMaterials } from '../../controller/sky-axis-controller.ts'
 import type { IconComponent } from '../../icons/icons.tsx'
+import {
+  countRequirementMaterials,
+  type RequirementAttachment,
+  type RequirementDesignLink,
+  type RequirementEntry,
+  type RequirementExternalLink,
+  type RequirementMaterials,
+  type RequirementMaterialSection,
+  type RequirementPrdFile,
+  type RequirementPrdLink,
+  type RequirementSourceRepo,
+  type SkyAxisController,
+} from '../../controller/sky-axis-controller.ts'
+import { MaterialPickerModal } from './MaterialPickerModal.tsx'
+import { AddMaterialFormModal } from './AddMaterialFormModal.tsx'
 import css from './MaterialsPane.module.css'
 
 export interface MaterialsPaneProps {
   t: PropsLocale<'sky-axis'>['t']
   requirement: RequirementEntry
+  controller: SkyAxisController
 }
 
-/* ── Section 配置：titleKey + section icon + 渲染 item 函数 ── */
+/* ── Section 配置：section key → icon + renderItem 强绑定（保留 typing） ── */
 
-interface SectionConfig<T> {
-  titleKey: string
-  emptyKey: string
-  icon: IconComponent
-  items: T[]
-  renderItem: (item: T, t: (k: string) => string) => JSX.Element
+type AnyMaterialItem =
+  | RequirementPrdFile
+  | RequirementPrdLink
+  | RequirementSourceRepo
+  | RequirementDesignLink
+  | RequirementAttachment
+  | RequirementExternalLink
+
+const SOURCE_LABEL: Record<RequirementPrdLink['source'], string> = {
+  yuque: '语雀', notion: 'Notion', confluence: 'Confluence', feishu: '飞书', custom: '其他',
+}
+const DESIGN_KIND_LABEL: Record<RequirementDesignLink['kind'], string> = {
+  figma: 'Figma', sketch: 'Sketch', image: '图片', embed: '嵌入',
+}
+const EXTERNAL_KIND_LABEL: Record<RequirementExternalLink['kind'], string> = {
+  'api-doc': 'API 文档', meeting: '会议纪要', research: '调研报告', incident: '故障复盘', other: '其他',
 }
 
 function bytesHuman(n: number): string {
@@ -49,42 +68,111 @@ function bytesHuman(n: number): string {
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
-
 function dateShort(iso: string): string {
   try {
     const d = new Date(iso)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  } catch {
-    return iso
-  }
+  } catch { return iso }
 }
 
-const SOURCE_LABEL: Record<RequirementPrdLink['source'], string> = {
-  yuque: '语雀',
-  notion: 'Notion',
-  confluence: 'Confluence',
-  feishu: '飞书',
-  custom: '其他',
+/** 强类型 section 配置：每条目 type-narrow 到对应 item + icon + renderer。 */
+interface SectionDef<K extends RequirementMaterialSection, T extends AnyMaterialItem> {
+  key: K
+  titleKey: string
+  emptyKey: string
+  icon: IconComponent
+  items: T[]
+  renderItem: (item: T, pendingDeleteId: string | null, onDeleteClick: (id: string) => void, t: (k: string) => string) => JSX.Element
 }
 
-const DESIGN_KIND_LABEL: Record<RequirementDesignLink['kind'], string> = {
-  figma: 'Figma',
-  sketch: 'Sketch',
-  image: '图片',
-  embed: '嵌入',
+function buildSections(m: RequirementMaterials): SectionDef<RequirementMaterialSection, AnyMaterialItem>[] {
+  return [
+    {
+      key: 'prdFiles',
+      titleKey: 'requirement.detail.materials.section.prd.title',
+      emptyKey: 'requirement.detail.materials.section.prd.empty',
+      icon: PrdFileIcon,
+      items: m.prdFiles,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderFileItem('prdFiles', item as RequirementPrdFile, pendingDeleteId, onDeleteClick, t),
+    },
+    {
+      key: 'prdLinks',
+      titleKey: 'requirement.detail.materials.section.prdLinks.title',
+      emptyKey: 'requirement.detail.materials.section.prdLinks.empty',
+      icon: PrdLinkIcon,
+      items: m.prdLinks,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderLinkItem('prdLinks', item as RequirementPrdLink, pendingDeleteId, onDeleteClick, t),
+    },
+    {
+      key: 'sourceRepos',
+      titleKey: 'requirement.detail.materials.section.sourceRepos.title',
+      emptyKey: 'requirement.detail.materials.section.sourceRepos.empty',
+      icon: GitBranchIcon,
+      items: m.sourceRepos,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderRepoItem(item as RequirementSourceRepo, pendingDeleteId, onDeleteClick, t),
+    },
+    {
+      key: 'designLinks',
+      titleKey: 'requirement.detail.materials.section.design.title',
+      emptyKey: 'requirement.detail.materials.section.design.empty',
+      icon: DesignIcon,
+      items: m.designLinks,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderDesignItem(item as RequirementDesignLink, pendingDeleteId, onDeleteClick, t),
+    },
+    {
+      key: 'attachments',
+      titleKey: 'requirement.detail.materials.section.attachments.title',
+      emptyKey: 'requirement.detail.materials.section.attachments.empty',
+      icon: AttachmentIcon,
+      items: m.attachments,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderFileItem('attachments', item as RequirementAttachment, pendingDeleteId, onDeleteClick, t),
+    },
+    {
+      key: 'externalLinks',
+      titleKey: 'requirement.detail.materials.section.externalLinks.title',
+      emptyKey: 'requirement.detail.materials.section.externalLinks.empty',
+      icon: GlobeIcon,
+      items: m.externalLinks,
+      renderItem: (item, pendingDeleteId, onDeleteClick, t) => renderExternalItem(item as RequirementExternalLink, pendingDeleteId, onDeleteClick, t),
+    },
+  ]
 }
 
-const EXTERNAL_KIND_LABEL: Record<RequirementExternalLink['kind'], string> = {
-  'api-doc': 'API 文档',
-  meeting: '会议纪要',
-  research: '调研报告',
-  incident: '故障复盘',
-  other: '其他',
+/* ── 三态删除按钮：default / hover red / 二次点击确认 / 3s 自动 revert ── */
+
+interface DeleteItemButtonProps {
+  itemId: string
+  pendingDeleteId: string | null
+  onClick: (id: string) => void
+  t: (k: string) => string
 }
 
-/* ── 6 个 section 的渲染器 ── */
+function DeleteItemButton({ itemId, pendingDeleteId, onClick, t }: DeleteItemButtonProps): JSX.Element {
+  const isPending = pendingDeleteId === itemId
+  return (
+    <button
+      type="button"
+      className={`${css.deleteButton} ${isPending ? css.deleteButtonPending : ''}`}
+      onClick={(): void => { onClick(itemId) }}
+      title={isPending ? t('requirement.detail.materials.confirmDeleteHint') : t('requirement.detail.materials.deleteItem')}
+      aria-label={isPending ? t('requirement.detail.materials.confirmDelete') : t('requirement.detail.materials.deleteItem')}
+    >
+      {isPending
+        ? <span className={css.deleteConfirmText}>{t('requirement.detail.materials.confirmDeleteShort')}</span>
+        : <TrashIcon size={12} />}
+    </button>
+  )
+}
 
-function renderPrdFile(item: RequirementPrdFile, t: (k: string) => string): JSX.Element {
+/* ── 6 个 item 渲染器：共享 base + section 特定 meta ── */
+
+function renderFileItem(
+  _section: 'prdFiles' | 'attachments',
+  item: RequirementPrdFile | RequirementAttachment,
+  pendingDeleteId: string | null,
+  onDeleteClick: (id: string) => void,
+  t: (k: string) => string,
+): JSX.Element {
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
@@ -94,11 +182,18 @@ function renderPrdFile(item: RequirementPrdFile, t: (k: string) => string): JSX.
         </span>
       </div>
       <span className={css.itemAside}>{dateShort(item.uploadedAt)}</span>
+      <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
 }
 
-function renderPrdLink(item: RequirementPrdLink, t: (k: string) => string): JSX.Element {
+function renderLinkItem(
+  _section: 'prdLinks',
+  item: RequirementPrdLink,
+  pendingDeleteId: string | null,
+  onDeleteClick: (id: string) => void,
+  t: (k: string) => string,
+): JSX.Element {
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
@@ -109,11 +204,17 @@ function renderPrdLink(item: RequirementPrdLink, t: (k: string) => string): JSX.
         </span>
       </div>
       <span className={css.itemAside}>{dateShort(item.addedAt)}</span>
+      <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
 }
 
-function renderSourceRepo(item: RequirementSourceRepo, t: (k: string) => string): JSX.Element {
+function renderRepoItem(
+  item: RequirementSourceRepo,
+  pendingDeleteId: string | null,
+  onDeleteClick: (id: string) => void,
+  t: (k: string) => string,
+): JSX.Element {
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
@@ -129,11 +230,17 @@ function renderSourceRepo(item: RequirementSourceRepo, t: (k: string) => string)
         </span>
       </div>
       <span className={css.itemAside}>{dateShort(item.addedAt)}</span>
+      <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
 }
 
-function renderDesignLink(item: RequirementDesignLink, t: (k: string) => string): JSX.Element {
+function renderDesignItem(
+  item: RequirementDesignLink,
+  pendingDeleteId: string | null,
+  onDeleteClick: (id: string) => void,
+  t: (k: string) => string,
+): JSX.Element {
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
@@ -144,25 +251,17 @@ function renderDesignLink(item: RequirementDesignLink, t: (k: string) => string)
         </span>
       </div>
       <span className={css.itemAside}>{dateShort(item.addedAt)}</span>
+      <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
 }
 
-function renderAttachment(item: RequirementAttachment, t: (k: string) => string): JSX.Element {
-  return (
-    <li key={item.id} className={css.item}>
-      <div className={css.itemMain}>
-        <span className={css.itemTitle}>{item.filename}</span>
-        <span className={css.itemMeta}>
-          {bytesHuman(item.size)} · {item.mimeType}
-        </span>
-      </div>
-      <span className={css.itemAside}>{dateShort(item.uploadedAt)}</span>
-    </li>
-  )
-}
-
-function renderExternalLink(item: RequirementExternalLink, t: (k: string) => string): JSX.Element {
+function renderExternalItem(
+  item: RequirementExternalLink,
+  pendingDeleteId: string | null,
+  onDeleteClick: (id: string) => void,
+  t: (k: string) => string,
+): JSX.Element {
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
@@ -174,73 +273,51 @@ function renderExternalLink(item: RequirementExternalLink, t: (k: string) => str
         </span>
       </div>
       <span className={css.itemAside}>{dateShort(item.addedAt)}</span>
+      <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
 }
 
 /* ── 主组件 ── */
 
-export function MaterialsPane({ t, requirement }: MaterialsPaneProps): JSX.Element {
+export function MaterialsPane({ t, requirement, controller }: MaterialsPaneProps): JSX.Element {
   const tAny = t as unknown as (k: string) => string
-  // 默认展开 PRD + 源码关联（AI 工作台高频依赖这两个）
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set([0, 1]))
-  const toggle = (idx: number): void => {
+  const [expanded, setExpanded] = useState<Set<RequirementMaterialSection>>(() => new Set(['prdFiles', 'prdLinks']))
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false)
+  const [formSection, setFormSection] = useState<RequirementMaterialSection | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+
+  // 3 秒自动 revert pending delete
+  useEffect(() => {
+    if (pendingDeleteId === null) return
+    const timer = setTimeout(() => { setPendingDeleteId(null) }, 3000)
+    return () => { clearTimeout(timer) }
+  }, [pendingDeleteId])
+
+  const toggle = (key: RequirementMaterialSection): void => {
     setExpanded(prev => {
       const next = new Set(prev)
-      if (next.has(idx)) next.delete(idx)
-      else next.add(idx)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
+  }
+
+  // 三态删除：第 1 次 hover 进入「pending」状态；第 2 次点击真实调用 controller.removeMaterial
+  // 用 section 绑定的删除点击 —— 真正传到 controller
+  const handleDeleteClickFor = (section: RequirementMaterialSection) => (id: string): void => {
+    if (pendingDeleteId === id) {
+      void controller.removeMaterial(requirement.id, section, id)
+      setPendingDeleteId(null)
+    } else {
+      setPendingDeleteId(id)
+    }
   }
 
   const m: RequirementMaterials = requirement.materials
   const total = countRequirementMaterials(m)
   const isEmpty = total === 0
-
-  const sections: SectionConfig<unknown>[] = [
-    {
-      titleKey: 'requirement.detail.materials.section.prd.title',
-      emptyKey: 'requirement.detail.materials.section.prd.empty',
-      icon: PrdFileIcon,
-      items: m.prdFiles,
-      renderItem: renderPrdFile as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-    {
-      titleKey: 'requirement.detail.materials.section.prdLinks.title',
-      emptyKey: 'requirement.detail.materials.section.prdLinks.empty',
-      icon: PrdLinkIcon,
-      items: m.prdLinks,
-      renderItem: renderPrdLink as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-    {
-      titleKey: 'requirement.detail.materials.section.sourceRepos.title',
-      emptyKey: 'requirement.detail.materials.section.sourceRepos.empty',
-      icon: WarningTriangleIcon, // 没有现成 GitBranchIcon，复用 WarningTriangle 是兜底
-      items: m.sourceRepos,
-      renderItem: renderSourceRepo as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-    {
-      titleKey: 'requirement.detail.materials.section.design.title',
-      emptyKey: 'requirement.detail.materials.section.design.empty',
-      icon: DesignIcon,
-      items: m.designLinks,
-      renderItem: renderDesignLink as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-    {
-      titleKey: 'requirement.detail.materials.section.attachments.title',
-      emptyKey: 'requirement.detail.materials.section.attachments.empty',
-      icon: AttachmentIcon,
-      items: m.attachments,
-      renderItem: renderAttachment as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-    {
-      titleKey: 'requirement.detail.materials.section.externalLinks.title',
-      emptyKey: 'requirement.detail.materials.section.externalLinks.empty',
-      icon: GlobeIcon,
-      items: m.externalLinks,
-      renderItem: renderExternalLink as (i: unknown, t: (k: string) => string) => JSX.Element,
-    },
-  ]
+  const sections = buildSections(m)
 
   return (
     <div className={css.pane}>
@@ -250,38 +327,37 @@ export function MaterialsPane({ t, requirement }: MaterialsPaneProps): JSX.Eleme
           <h3 className={css.title}>{t('requirement.detail.materials.title')}</h3>
           <p className={css.subtitle}>{t('requirement.detail.materials.subtitle')}</p>
         </div>
-        <span className={`${css.badge} ${isEmpty ? css.badgeEmpty : css.badgeConfigured}`}>
-          {isEmpty
-            ? t('requirement.detail.materials.unconfiguredBadge')
-            : t('requirement.detail.materials.configuredBadge', { count: total })
-          }
-        </span>
+        <div className={css.headerActions}>
+          <span className={`${css.badge} ${isEmpty ? css.badgeEmpty : css.badgeConfigured}`}>
+            {isEmpty
+              ? t('requirement.detail.materials.unconfiguredBadge')
+              : t('requirement.detail.materials.configuredBadge', { count: total })}
+          </span>
+          <button
+            type="button"
+            className={css.headerAddButton}
+            onClick={(): void => { setPickerOpen(true) }}
+            aria-label={t('requirement.detail.materials.addButton')}
+          >
+            <PlusIcon size={12} />
+            <span>{t('requirement.detail.materials.addButton')}</span>
+          </button>
+        </div>
       </header>
-
-      {/* 引导提示：物料为空 / 已配物料 */}
-      <section className={css.guidance}>
-        <WarningTriangleIcon size={14} className={css.guidanceIcon} />
-        <p className={css.guidanceText}>
-          {isEmpty
-            ? t('requirement.detail.materials.guidanceEmpty')
-            : t('requirement.detail.materials.guidanceConfigured')
-          }
-        </p>
-      </section>
 
       {/* 6 个 section 折叠列表 */}
       <ol className={css.sectionList}>
-        {sections.map((section, idx) => {
-          const isOpen = expanded.has(idx)
+        {sections.map((section) => {
+          const isOpen = expanded.has(section.key)
           const count = section.items.length
           const SectionIcon = section.icon
           return (
-            <li key={section.titleKey} className={css.sectionItem}>
+            <li key={section.key} className={css.sectionItem} data-sky-axis-section={section.key}>
               <button
                 type="button"
                 className={css.sectionHeader}
                 aria-expanded={isOpen}
-                onClick={(): void => { toggle(idx) }}
+                onClick={(): void => { toggle(section.key) }}
               >
                 <span className={css.sectionHeaderMain}>
                   <SectionIcon size={13} className={css.sectionIcon} />
@@ -301,7 +377,7 @@ export function MaterialsPane({ t, requirement }: MaterialsPaneProps): JSX.Eleme
                     </div>
                   ) : (
                     <ul className={css.itemList}>
-                      {section.items.map(item => section.renderItem(item, tAny))}
+                      {section.items.map(item => section.renderItem(item, pendingDeleteId, handleDeleteClickFor(section.key), tAny))}
                     </ul>
                   )}
                 </div>
@@ -311,10 +387,26 @@ export function MaterialsPane({ t, requirement }: MaterialsPaneProps): JSX.Eleme
         })}
       </ol>
 
-      {/* 底部 Phase 2.5 占位 */}
-      <footer className={css.footer}>
-        <p className={css.footerText}>{t('requirement.detail.materials.phaseHint')}</p>
-      </footer>
+      {/* Picker / Form modal 状态机 */}
+      {pickerOpen && (
+        <MaterialPickerModal
+          t={t}
+          onClose={(): void => { setPickerOpen(false) }}
+          onPick={(section): void => {
+            setPickerOpen(false)
+            setFormSection(section)
+          }}
+        />
+      )}
+      {formSection !== null && (
+        <AddMaterialFormModal
+          t={t}
+          requirement={requirement}
+          controller={controller}
+          section={formSection}
+          onClose={(): void => { setFormSection(null) }}
+        />
+      )}
     </div>
   )
 }

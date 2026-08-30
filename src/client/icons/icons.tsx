@@ -417,3 +417,36 @@ export function GlobeIcon({ size = 14, className }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/* ── Phase 2.5 物料 CRUD icon（3 个）── */
+
+/** 垃圾桶 —— MaterialsPane 列表项 inline 删除按钮。 */
+export function TrashIcon({ size = 12, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M3 4h10M5.5 4V2.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5V4M4 4l.6 8.5a.5.5 0 0 0 .5.5h4.8a.5.5 0 0 0 .5-.5L11 4M6.5 6.5v5M9.5 6.5v5" />
+    </svg>
+  )
+}
+
+/** 向上箭头 —— AddMaterialForm 文件上传按钮。 */
+export function UploadIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)} strokeWidth={1.8}>
+      <path d="M8 11V3M5.5 6L8 3.5 10.5 6M3 12.5h10" />
+    </svg>
+  )
+}
+
+/** 分支 + 3 圆 —— MaterialPickerModal「源码关联」tile；替换旧 sourceRepo section 的 WarningTriangle 兜底。 */
+export function GitBranchIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <circle cx="4" cy="3" r="1.4" />
+      <circle cx="4" cy="13" r="1.4" />
+      <circle cx="12" cy="6" r="1.4" />
+      <path d="M4 4.5v7" />
+      <path d="M4 10c0-3 4-3 4-2" />
+    </svg>
+  )
+}

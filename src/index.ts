@@ -29,6 +29,7 @@ import { mountOnce } from './host/shared/mount-once.ts'
 import { SkyAxisPingService } from './host/ping-service.ts'
 import { RequirementHostService } from './host/requirement-service.ts'
 import { makeRequirementRoutes } from './host/routes/requirements.ts'
+import { makeMaterialRoutes } from './host/routes/materials.ts'
 import {
   SkyAxisEndpoints,
   type PingResponse,
@@ -52,6 +53,8 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   // 业务服务：构造时启动 storage domain 异步初始化，effect 退出时关闭
   const reqSvc = new RequirementHostService(ctx, ctx.apiProxy, ctx.storageDomain)
   const requirementRoutes = makeRequirementRoutes(reqSvc)
+  // Phase 2.5：物料 CRUD 路由（18 个 exact route，6 section × 3 op）
+  const materialRoutes = makeMaterialRoutes(reqSvc)
 
   ctx.effect(() => {
     const disposers: (() => void)[] = [
@@ -79,6 +82,9 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       }),
     ]
     for (const route of requirementRoutes) {
+      disposers.push(ctx.webServer.register(route))
+    }
+    for (const route of materialRoutes) {
       disposers.push(ctx.webServer.register(route))
     }
     return () => {

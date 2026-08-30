@@ -15,14 +15,17 @@
  * 关闭策略：
  *   - 提交成功后自动关闭
  *   - 提交失败不关闭（让用户修改后重试）
- *   - 取消按钮 / 遮罩点击 / Esc 关闭
+ *   - 取消按钮 / 遮罩点击 / Esc 关闭（Modal 抽象已处理）
  *
  * 注意：本组件纯受控（props.in / props.out），不持有任何业务状态。
+ * Step 7 改造：移除内联 modal 样式和本地 Field 函数，改用 Modal + ui/Field 抽象。
  */
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/sky-axis-controller.ts'
 import type { WorkspaceOps } from '../../index.ts'
+import { Modal } from '../../ui/Modal.tsx'
+import { Field } from '../../ui/Field.tsx'
 import css from './new-requirement-modal.module.css'
 
 export type Priority = RequirementEntry['priority']
@@ -53,17 +56,6 @@ export interface NewRequirementModalProps {
   onClose: () => void
 }
 
-/** 简单 input 标签组件（统一样式）。 */
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }): JSX.Element {
-  return (
-    <label className={css.field}>
-      <span className={css.fieldLabel}>{label}</span>
-      {children}
-      {hint !== undefined && <span className={css.fieldHint}>{hint}</span>}
-    </label>
-  )
-}
-
 const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent']
 
 /** 把 priority key 翻译为本地化标签。 */
@@ -84,20 +76,12 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   const [workspaceError, setWorkspaceError] = useState<RequirementError | null>(null)
 
   const titleRef = useRef<HTMLInputElement | null>(null)
-  // 打开时聚焦第一个表单字段（workspace select）
+  // 打开时聚焦第一个表单字段（workspace select）。Modal 抽象用 [role="dialog"] 标识。
   useEffect(() => {
-    const firstFocusable = document.querySelector<HTMLElement>(`.${css.root} select, .${css.root} input`)
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    const firstFocusable = dialog?.querySelector<HTMLElement>('select, input')
     firstFocusable?.focus()
   }, [])
-
-  // Esc 关闭
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handler)
-    return () => { document.removeEventListener('keydown', handler) }
-  }, [onClose])
 
   const noWorkspaces = workspaces.length === 0
   const titleInvalid = title.trim().length === 0 || title.length > 120
@@ -147,143 +131,128 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   }
 
   return (
-    <div
-      className={css.overlay}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('requirement.new.title')}
-    >
-      <div className={css.root}>
-        <header className={css.header}>
-          <h2 className={css.title}>{t('requirement.new.title')}</h2>
+    <Modal
+      title={t('requirement.new.title')}
+      onClose={onClose}
+      footer={
+        <>
           <button
             type="button"
-            className={css.closeButton}
+            className={css.cancelButton}
             onClick={onClose}
-            aria-label={t('requirement.new.cancel')}
+            disabled={submitting}
           >
-            ×
+            {t('requirement.new.cancel')}
           </button>
-        </header>
+          <button
+            type="submit"
+            form="new-requirement-form"
+            className={css.submitButton}
+            disabled={!canSubmit}
+          >
+            {submitting ? t('requirement.new.submitting') : t('requirement.new.submit')}
+          </button>
+        </>
+      }
+    >
+      <form id="new-requirement-form" className={css.form} onSubmit={handleSubmit}>
+        {submitError !== undefined && submitError !== null && (
+          <div className={css.errorBar} role="alert">
+            <strong>{t('requirement.new.errorPrefix')}</strong>
+            <span>{t(`requirement.error.${submitError.code}` as never)}</span>
+            {submitError.detail !== undefined && <code className={css.errorDetail}>{submitError.detail}</code>}
+          </div>
+        )}
 
-        <form className={css.form} onSubmit={handleSubmit}>
-          {submitError !== undefined && submitError !== null && (
-            <div className={css.errorBar} role="alert">
-              <strong>{t('requirement.new.errorPrefix')}</strong>
-              <span>{t(`requirement.error.${submitError.code}` as never)}</span>
-              {submitError.detail !== undefined && <code className={css.errorDetail}>{submitError.detail}</code>}
-            </div>
-          )}
+        {workspaceError !== null && (
+          <div className={css.errorBar} role="alert">
+            <strong>{t('requirement.new.errorPrefix')}</strong>
+            <span>{t(`requirement.error.${workspaceError.code}` as never)}</span>
+            {workspaceError.detail !== undefined && <code className={css.errorDetail}>{workspaceError.detail}</code>}
+          </div>
+        )}
 
-          {workspaceError !== null && (
-            <div className={css.errorBar} role="alert">
-              <strong>{t('requirement.new.errorPrefix')}</strong>
-              <span>{t(`requirement.error.${workspaceError.code}` as never)}</span>
-              {workspaceError.detail !== undefined && <code className={css.errorDetail}>{workspaceError.detail}</code>}
-            </div>
-          )}
+        {noWorkspaces && (
+          <div className={css.warningBar}>
+            {t('requirement.new.noWorkspace')}
+          </div>
+        )}
 
-          {noWorkspaces && (
-            <div className={css.warningBar}>
-              {t('requirement.new.noWorkspace')}
-            </div>
-          )}
-
-          <Field label={t('requirement.new.workspace')} hint={t('requirement.new.workspaceHint')}>
-            <select
-              className={css.select}
-              value={workspaceId}
-              onChange={(e) => { setWorkspaceId(e.target.value) }}
-              required
-            >
-              <option value="" disabled>— {t('requirement.new.workspacePlaceholder')} —</option>
-              {workspaces.map(ws => (
-                <option key={ws.id} value={ws.id}>{ws.title}</option>
-              ))}
-            </select>
-            {/* DSH 平台 workspace 创建入口 —— 复用 ctx.workspaces.pickDirectory + create。
-                apply(ctx) 还没跑完时 workspaceOps 为 undefined，链接隐藏。 */}
-            {workspaceOps !== undefined && (
-              <button
-                type="button"
-                className={css.linkButton}
-                onClick={() => { void handleCreateWorkspace() }}
-                disabled={creatingWorkspace}
-                title={t('requirement.new.createWorkspaceHint')}
-              >
-                {creatingWorkspace
-                  ? t('requirement.new.creatingWorkspace')
-                  : `+ ${t('requirement.new.createWorkspace')}`}
-              </button>
-            )}
-          </Field>
-
-          <Field label={t('requirement.new.titleLabel')} hint={t('requirement.new.titleHint')}>
-            <input
-              ref={titleRef}
-              type="text"
-              className={css.input}
-              value={title}
-              maxLength={120}
-              onChange={(e) => { setTitle(e.target.value) }}
-              placeholder={t('requirement.new.titlePlaceholder')}
-              required
-            />
-          </Field>
-
-          <Field label={t('requirement.new.descriptionLabel')} hint={t('requirement.new.descriptionHint')}>
-            <textarea
-              className={css.textarea}
-              value={description}
-              maxLength={4000}
-              rows={4}
-              onChange={(e) => { setDescription(e.target.value) }}
-              placeholder={t('requirement.new.descriptionPlaceholder')}
-            />
-          </Field>
-
-          <Field label={t('requirement.new.priorityLabel')}>
-            <select
-              className={css.select}
-              value={priority}
-              onChange={(e) => { setPriority(e.target.value as Priority) }}
-            >
-              {PRIORITIES.map(p => (
-                <option key={p} value={p}>{priorityLabel(t, p)}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label={t('requirement.new.tagsLabel')} hint={t('requirement.new.tagsHint')}>
-            <input
-              type="text"
-              className={css.input}
-              value={tagsInput}
-              onChange={(e) => { handleTagsChange(e.target.value) }}
-              placeholder={t('requirement.new.tagsPlaceholder')}
-            />
-          </Field>
-
-          <footer className={css.footer}>
+        <Field label={t('requirement.new.workspace')} hint={t('requirement.new.workspaceHint')}>
+          <select
+            className={css.select}
+            value={workspaceId}
+            onChange={(e) => { setWorkspaceId(e.target.value) }}
+            required
+          >
+            <option value="" disabled>— {t('requirement.new.workspacePlaceholder')} —</option>
+            {workspaces.map(ws => (
+              <option key={ws.id} value={ws.id}>{ws.title}</option>
+            ))}
+          </select>
+          {/* DSH 平台 workspace 创建入口 —— 复用 ctx.workspaces.pickDirectory + create。
+              apply(ctx) 还没跑完时 workspaceOps 为 undefined，链接隐藏。 */}
+          {workspaceOps !== undefined && (
             <button
               type="button"
-              className={css.cancelButton}
-              onClick={onClose}
-              disabled={submitting}
+              className={css.linkButton}
+              onClick={() => { void handleCreateWorkspace() }}
+              disabled={creatingWorkspace}
+              title={t('requirement.new.createWorkspaceHint')}
             >
-              {t('requirement.new.cancel')}
+              {creatingWorkspace
+                ? t('requirement.new.creatingWorkspace')
+                : `+ ${t('requirement.new.createWorkspace')}`}
             </button>
-            <button
-              type="submit"
-              className={css.submitButton}
-              disabled={!canSubmit}
-            >
-              {submitting ? t('requirement.new.submitting') : t('requirement.new.submit')}
-            </button>
-          </footer>
-        </form>
-      </div>
-    </div>
+          )}
+        </Field>
+
+        <Field label={t('requirement.new.titleLabel')} hint={t('requirement.new.titleHint')}>
+          <input
+            ref={titleRef}
+            type="text"
+            className={css.input}
+            value={title}
+            maxLength={120}
+            onChange={(e) => { setTitle(e.target.value) }}
+            placeholder={t('requirement.new.titlePlaceholder')}
+            required
+          />
+        </Field>
+
+        <Field label={t('requirement.new.descriptionLabel')} hint={t('requirement.new.descriptionHint')}>
+          <textarea
+            className={css.textarea}
+            value={description}
+            maxLength={4000}
+            rows={4}
+            onChange={(e) => { setDescription(e.target.value) }}
+            placeholder={t('requirement.new.descriptionPlaceholder')}
+          />
+        </Field>
+
+        <Field label={t('requirement.new.priorityLabel')}>
+          <select
+            className={css.select}
+            value={priority}
+            onChange={(e) => { setPriority(e.target.value as Priority) }}
+          >
+            {PRIORITIES.map(p => (
+              <option key={p} value={p}>{priorityLabel(t, p)}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label={t('requirement.new.tagsLabel')} hint={t('requirement.new.tagsHint')}>
+          <input
+            type="text"
+            className={css.input}
+            value={tagsInput}
+            onChange={(e) => { handleTagsChange(e.target.value) }}
+            placeholder={t('requirement.new.tagsPlaceholder')}
+          />
+        </Field>
+      </form>
+    </Modal>
   )
 }

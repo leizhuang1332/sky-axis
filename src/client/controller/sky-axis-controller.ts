@@ -142,6 +142,8 @@ export interface RequirementPrdFile extends RequirementMaterialItemBase {
   size: number
   uploadedAt: string
   uploadedBy: string
+  /** Phase 2.5 落盘相对路径（基 = workspace.path）；UI 不展示。 */
+  path: string
 }
 
 /** PRD 链接镜像。 */
@@ -180,6 +182,8 @@ export interface RequirementAttachment extends RequirementMaterialItemBase {
   size: number
   uploadedAt: string
   uploadedBy: string
+  /** Phase 2.5 落盘相对路径（基 = workspace.path）；UI 不展示。 */
+  path: string
 }
 
 /** 外部链接镜像。 */
@@ -200,6 +204,56 @@ export interface RequirementMaterials {
   designLinks: RequirementDesignLink[]
   attachments: RequirementAttachment[]
   externalLinks: RequirementExternalLink[]
+}
+
+/* ── Phase 2.5：物料 CRUD 镜像 type（client 不依赖 protocol.ts zod）── */
+
+/** 6 个物料 section 的字面量（与 host schema 同源）。 */
+export type RequirementMaterialSection =
+  | 'prdFiles'
+  | 'prdLinks'
+  | 'sourceRepos'
+  | 'designLinks'
+  | 'attachments'
+  | 'externalLinks'
+
+/** AddPrdLink 入参镜像。 */
+export interface AddPrdLinkInput {
+  url: string
+  title: string
+  source: RequirementPrdLink['source']
+}
+
+/** AddSourceRepo 入参镜像。 */
+export interface AddSourceRepoInput {
+  url: string
+  branch: string
+  lastCommitSha?: string
+  description: string
+}
+
+/** AddDesignLink 入参镜像。 */
+export interface AddDesignLinkInput {
+  url: string
+  kind: RequirementDesignLink['kind']
+  title: string
+  thumbnailUrl?: string
+}
+
+/** AddExternalLink 入参镜像。 */
+export interface AddExternalLinkInput {
+  url: string
+  title: string
+  kind: RequirementExternalLink['kind']
+  description: string
+}
+
+/** 上传文件时携带的元数据。 */
+export interface UploadFileInput {
+  content: Blob
+  filename: string
+  mimeType: string
+  size: number
 }
 
 /** 物料总数（client 镜像版本 —— 不依赖 protocol.ts zod，保持 client bundle 体积最小）。 */
@@ -263,6 +317,8 @@ export interface RequirementError {
     | 'ai-event-failed'
     | 'artifact-not-found'
     | 'stage-invalid'
+    /* ── Phase 2.5 新增（物料 CRUD）── */
+    | 'material-not-found'
   detail?: string
 }
 
@@ -357,6 +413,29 @@ export interface SkyAxisController {
 
   /** 当前详情 tab key。 */
   getDetailTab(): DetailTabKey
+
+  /* ── Phase 2.5：物料 CRUD ── */
+
+  /** 上传一个 PRD 文件（multipart）。乐观插入 tempItem，成功后被服务端 record 替换。 */
+  addPrdFile(requirementId: string, file: UploadFileInput, uploadedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 上传一个附件（multipart）。 */
+  addAttachment(requirementId: string, file: UploadFileInput, uploadedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 添加一个 PRD 链接（JSON）。 */
+  addPrdLink(requirementId: string, payload: AddPrdLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 添加一个源码仓库（JSON）。 */
+  addSourceRepo(requirementId: string, payload: AddSourceRepoInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 添加一个设计稿链接（JSON）。 */
+  addDesignLink(requirementId: string, payload: AddDesignLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 添加一个外部链接（JSON）。 */
+  addExternalLink(requirementId: string, payload: AddExternalLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+
+  /** 删除一个物料项（任意 section）。 */
+  removeMaterial(requirementId: string, section: RequirementMaterialSection, itemId: string): Promise<{ ok: boolean; error?: RequirementError }>
 }
 
 /**
@@ -379,6 +458,21 @@ export function createSkyAxisController(deps: {
   deleteImpl?: (id: string) => Promise<{ ok: boolean; error?: RequirementError }>
   /** Phase 1.2 增量：单条详情 GET（host /requirements/get?id=...）。 */
   detailImpl?: (id: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+  /* ── Phase 2.5：物料 CRUD deps ── */
+  /** JSON add：4 种 section（prdLinks / sourceRepos / designLinks / externalLinks）。 */
+  addMaterialImpl?: (input:
+    | { section: 'prdLinks'; requirementId: string; payload: AddPrdLinkInput; addedBy: string }
+    | { section: 'sourceRepos'; requirementId: string; payload: AddSourceRepoInput; addedBy: string }
+    | { section: 'designLinks'; requirementId: string; payload: AddDesignLinkInput; addedBy: string }
+    | { section: 'externalLinks'; requirementId: string; payload: AddExternalLinkInput; addedBy: string }
+  ) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+  /** Multipart upload：2 种 section（prdFiles / attachments）。 */
+  uploadMaterialImpl?: (input:
+    | { section: 'prdFiles'; requirementId: string; file: UploadFileInput; uploadedBy: string }
+    | { section: 'attachments'; requirementId: string; file: UploadFileInput; uploadedBy: string }
+  ) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+  /** DELETE 移除：6 section 共用。 */
+  removeMaterialImpl?: (requirementId: string, section: RequirementMaterialSection, itemId: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
@@ -421,6 +515,51 @@ export function createSkyAxisController(deps: {
 
   const projectError = (code: RequirementError['code'], detail?: string): RequirementError =>
     detail === undefined ? { code } : { code, detail }
+
+  /**
+   * 物料添加类 mutation 的共用骨架：
+   *   1. 用乐观更新把 tempId 临时塞进 snapshot（UI 立刻可见）
+   *   2. 调用 impl（注入 / fetch）
+   *   3. 成功：用服务端真实 record 替换整条（tempId 自动消失）
+   *   4. 失败（result.ok === false）：snapshot 回滚到 before
+   *   5. 异常（throw）：捕获后写 network-error + snapshot 回滚到 before
+   *
+   * @param tempId 乐观插入时用的临时 id；服务端 record 替换整条时自然消失
+   * @param callImpl 调注入的 fetch 实现
+   * @param patchWithTempItem 在 requirement 上应用乐观修改（把 tempItem 加到正确 section）
+   */
+  const runMaterialMutation = async (
+    requirementId: string,
+    _tempId: string,
+    callImpl: () => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>,
+    patchWithTempItem: (req: RequirementEntry) => RequirementEntry,
+    now: string,
+  ): Promise<{ ok: boolean; error?: RequirementError }> => {
+    const before = snapshot
+    snapshot = {
+      ...snapshot,
+      requirements: snapshot.requirements.map(r =>
+        r.id === requirementId ? patchWithTempItem({ ...r, updatedAt: now }) : r
+      ),
+    }
+    notify()
+    try {
+      const result = await callImpl()
+      if (result.ok && result.item !== undefined) {
+        // 用 server record 覆盖（包含真实 id / uploadedAt / path 等所有字段）
+        snapshot = { ...snapshot, requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr) }
+        notify()
+        return { ok: true }
+      }
+      snapshot = before
+      notify()
+      return { ok: false, error: result.error ?? projectError('internal-error') }
+    } catch (e) {
+      snapshot = before
+      notify()
+      return { ok: false, error: projectError('network-error', e instanceof Error ? e.message : String(e)) }
+    }
+  }
 
   return {
     subscribe(listener) {
@@ -677,6 +816,161 @@ export function createSkyAxisController(deps: {
         }
       }
       notify()
+    },
+
+    /* ── Phase 2.5：物料 CRUD（乐观更新 + SSE put 兜底）── */
+
+    async addPrdFile(requirementId, file, uploadedBy = '') {
+      if (deps.uploadMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'uploadMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementPrdFile = {
+        id: tempId, filename: file.filename, mimeType: file.mimeType,
+        size: file.size, uploadedAt: now, uploadedBy,
+        path: '', // temp —— 服务端 record 会覆盖；UI 不展示 path
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.uploadMaterialImpl!({ section: 'prdFiles', requirementId, file, uploadedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, prdFiles: [...req.materials.prdFiles, tempItem] } }),
+        now,
+      )
+    },
+
+    async addAttachment(requirementId, file, uploadedBy = '') {
+      if (deps.uploadMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'uploadMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementAttachment = {
+        id: tempId, filename: file.filename, mimeType: file.mimeType,
+        size: file.size, uploadedAt: now, uploadedBy,
+        path: '',
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.uploadMaterialImpl!({ section: 'attachments', requirementId, file, uploadedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, attachments: [...req.materials.attachments, tempItem] } }),
+        now,
+      )
+    },
+
+    async addPrdLink(requirementId, payload, addedBy = '') {
+      if (deps.addMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementPrdLink = {
+        id: tempId, url: payload.url, title: payload.title, source: payload.source,
+        addedAt: now, addedBy,
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.addMaterialImpl!({ section: 'prdLinks', requirementId, payload, addedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, prdLinks: [...req.materials.prdLinks, tempItem] } }),
+        now,
+      )
+    },
+
+    async addSourceRepo(requirementId, payload, addedBy = '') {
+      if (deps.addMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementSourceRepo = {
+        id: tempId, url: payload.url, branch: payload.branch,
+        lastCommitSha: payload.lastCommitSha, description: payload.description,
+        addedAt: now, addedBy,
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.addMaterialImpl!({ section: 'sourceRepos', requirementId, payload, addedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, sourceRepos: [...req.materials.sourceRepos, tempItem] } }),
+        now,
+      )
+    },
+
+    async addDesignLink(requirementId, payload, addedBy = '') {
+      if (deps.addMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementDesignLink = {
+        id: tempId, url: payload.url, kind: payload.kind, title: payload.title,
+        thumbnailUrl: payload.thumbnailUrl,
+        addedAt: now, addedBy,
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.addMaterialImpl!({ section: 'designLinks', requirementId, payload, addedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, designLinks: [...req.materials.designLinks, tempItem] } }),
+        now,
+      )
+    },
+
+    async addExternalLink(requirementId, payload, addedBy = '') {
+      if (deps.addMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+      }
+      const now = new Date().toISOString()
+      const tempId = crypto.randomUUID()
+      const tempItem: RequirementExternalLink = {
+        id: tempId, url: payload.url, title: payload.title, kind: payload.kind,
+        description: payload.description,
+        addedAt: now, addedBy,
+      }
+      return await runMaterialMutation(
+        requirementId,
+        tempId,
+        () => deps.addMaterialImpl!({ section: 'externalLinks', requirementId, payload, addedBy }),
+        (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, externalLinks: [...req.materials.externalLinks, tempItem] } }),
+        now,
+      )
+    },
+
+    async removeMaterial(requirementId, section, itemId) {
+      if (deps.removeMaterialImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'removeMaterialImpl not injected') }
+      }
+      const before = snapshot
+      const now = new Date().toISOString()
+      // 乐观移除：找到 section 数组，filter 掉该 itemId
+      snapshot = {
+        ...snapshot,
+        requirements: snapshot.requirements.map(r => {
+          if (r.id !== requirementId) return r
+          const list = r.materials[section] as Array<{ id: string }>
+          return { ...r, materials: { ...r.materials, [section]: list.filter(it => it.id !== itemId) }, updatedAt: now }
+        }),
+      }
+      notify()
+      try {
+        const result = await deps.removeMaterialImpl(requirementId, section, itemId)
+        if (result.ok && result.item !== undefined) {
+          // 服务端返回整 requirement（含完整 materials），用 server record 覆盖
+          snapshot = { ...snapshot, requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr) }
+          notify()
+          return { ok: true }
+        }
+        snapshot = before
+        notify()
+        return { ok: false, error: result.error ?? projectError('internal-error') }
+      } catch (e) {
+        snapshot = before
+        notify()
+        return { ok: false, error: projectError('network-error', e instanceof Error ? e.message : String(e)) }
+      }
     },
   }
 }

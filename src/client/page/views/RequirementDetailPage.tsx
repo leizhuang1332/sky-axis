@@ -28,9 +28,10 @@ import {
 import type {
   DetailTabKey,
   RequirementEntry,
+  RequirementOption,
   RequirementStage,
 } from '../../controller/sky-axis-controller.ts'
-import type { RequirementOption } from '../../controller/sky-axis-controller.ts'
+import type { SkyAxisController } from '../../controller/sky-axis-controller.ts'
 import { Stepper, type StepperItem } from '../../ui/Stepper.tsx'
 import { countRequirementMaterials } from '../../controller/sky-axis-controller.ts'
 import { AiConductorPane } from '../sections/AiConductorPane.tsx'
@@ -46,13 +47,14 @@ export interface RequirementDetailPageProps {
   detailLoading: boolean
   detailError: { code: string; detail?: string } | null
   detailTabKey: DetailTabKey
+  controller: SkyAxisController
   onBack: () => void
   onTabChange: (tab: DetailTabKey) => void
 }
 
 export function RequirementDetailPage({
   t, requirement, workspaces, detailLoading, detailError,
-  detailTabKey, onBack, onTabChange,
+  detailTabKey, controller, onBack, onTabChange,
 }: RequirementDetailPageProps): JSX.Element {
   // t 强转为 (k: string) => string —— 模板字符串是动态 key
   const tAny = t as unknown as (k: string) => string
@@ -147,7 +149,7 @@ export function RequirementDetailPage({
       {/* Tab Body —— 按 detailTabKey 分支渲染 */}
       {detailTabKey === 'materials' ? (
         <main className={css.tabBody}>
-          <MaterialsPane t={t} requirement={requirement} />
+          <MaterialsPane t={t} requirement={requirement} controller={controller} />
         </main>
       ) : (
         <>

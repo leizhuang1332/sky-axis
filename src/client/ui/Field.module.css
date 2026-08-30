@@ -1,0 +1,29 @@
+/* Field —— 表单字段包装样式。label + children + hint/error。 */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.required {
+  color: #d73a49;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.fieldHint {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+}
+
+.fieldError {
+  font-size: 11px;
+  color: #b3261e;
+}

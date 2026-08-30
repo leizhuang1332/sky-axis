@@ -126,6 +126,40 @@ export function apply(ctx: ClientContext): void {
       if (r.ok) return { ok: true }
       return { ok: false, error: { code: r.code, detail: r.detail } }
     },
+    // Phase 2.5：物料 CRUD 三个新 impl（与 controller 的 7 mutation 方法对接）
+    addMaterialImpl: async (input) => {
+      // discriminated union：4 个 JSON section 之一
+      let r
+      switch (input.section) {
+        case 'prdLinks':
+          r = await reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
+          break
+        case 'sourceRepos':
+          r = await reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy)
+          break
+        case 'designLinks':
+          r = await reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
+          break
+        case 'externalLinks':
+          r = await reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
+          break
+      }
+      if (r.ok) return { ok: true, item: { ...r.value } }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+    uploadMaterialImpl: async (input) => {
+      // discriminated union：2 个 upload section 之一
+      const r = input.section === 'prdFiles'
+        ? await reqClient.uploadPrdFile(input.requirementId as never, input.file, input.uploadedBy)
+        : await reqClient.uploadAttachment(input.requirementId as never, input.file, input.uploadedBy)
+      if (r.ok) return { ok: true, item: { ...r.value } }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+    removeMaterialImpl: async (reqId, section, itemId) => {
+      const r = await reqClient.removeMaterial(reqId as never, section, itemId as never)
+      if (r.ok) return { ok: true, item: { ...r.value.item } }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
   })
 
   // 4. Sidebar 主树 entry —— DOM 直挂。
