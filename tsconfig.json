@@ -19,7 +19,11 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "types": []
+    // host 半区在 src/index.ts 用 node:http 的 IncomingMessage / ServerResponse
+    // （与 dsh-task-board 双半区插件对齐）；client 半区走 fetch 不需要 node
+    // 类型，但加 node types 不会污染 client bundle（tsdown externals 由
+    // shared/tsdown.client.ts 单独控制）。
+    "types": ["node"]
   },
   "include": [
     "src/**/*.ts",
