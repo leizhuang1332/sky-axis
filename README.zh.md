@@ -31,7 +31,7 @@ host 半区的需求 CRUD + SSE 同步。挂在 sidebar 主树 entry 席位（�
 ### 从本地仓库（开发态）
 
 ```sh
-dsh plugin --profile web add link:/Users/Ray/TraeProjects/dsh-hello
+dsh plugin --profile web add link:/Users/Ray/TraeProjects/sky-axis
 ```
 
 重启 `dsh web`（或等待热重载），在 sidebar 主树即可看到 `SkyAxis`

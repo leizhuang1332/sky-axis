@@ -33,7 +33,7 @@ host's UI side beyond the routes it registers.
 ### From the repository (development)
 
 ```sh
-dsh plugin --profile web add link:/Users/Ray/TraeProjects/dsh-hello
+dsh plugin --profile web add link:/Users/Ray/TraeProjects/sky-axis
 ```
 
 Restart `dsh web` (or wait for the hot-reload) and look for the SkyAxis

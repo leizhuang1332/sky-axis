@@ -1,6 +1,6 @@
 # SkyAxis 插件 bundle patch —— 将插件行插入 web profile 角色表。
 # 作为 bundle 层被自动加载（package.json 的 dsh.bundle.patch 字段）。
-# 安装命令：dsh plugin --profile web add link:/Users/Ray/TraeProjects/dsh-hello
+# 安装命令：dsh plugin --profile web add link:/Users/Ray/TraeProjects/sky-axis
 - insert:
     - id: ui-sky-axis
       name: '@leizhuang/sky-axis'
