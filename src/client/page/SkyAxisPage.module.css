@@ -142,6 +142,14 @@
    - 本插件活跃：<html data-sky-axis-active>
    - 兄弟 panel 的 active 属性（task-board / ssh）会被 mountSkyAxisPage evict */
 
+/* 让 conversation 列成为定位上下文（sky-axis-view 是 absolute） —— 不补这条
+   会向上冒泡到 body / sidebar，覆盖范围扩散到整页。沿用 dsh-task-board / dsh-ssh
+   的同名规则 */
+[data-pane='conversation'],
+[class*='centerCol'] {
+  position: relative;
+}
+
 [data-sky-axis-view] {
   display: none;
   position: absolute;
