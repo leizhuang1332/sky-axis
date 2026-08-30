@@ -107,6 +107,19 @@ export function PersonalIcon({ size = 16, className }: IconProps): JSX.Element {
   )
 }
 
+/** 仪表盘（半圆弧 + 指针）—— sidebar「个人 → 概览」二级子项专用。
+    与 PersonalIcon（人头）区分：概览 = 个人工作概览视图（速度计意象）。 */
+export function PersonalOverviewIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M3 11a5 5 0 0 1 10 0" />
+      <path d="M3 11h10" />
+      <circle cx="8" cy="11" r="0.8" fill="currentColor" stroke="none" />
+      <path d="M8 11l3.2-2.8" />
+    </svg>
+  )
+}
+
 /** 柱状图 —— sidebar「报表」。 */
 export function ReportsIcon({ size = 16, className }: IconProps): JSX.Element {
   return (

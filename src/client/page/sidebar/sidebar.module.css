@@ -191,8 +191,9 @@
 .subListExpanded {
   /* 一级 entry padding-left: 10px + icon 16px + gap 10px ≈ 36px；
      子项再缩进 12px 让视觉上明显属于「子级」。
-     单子项 ~32px 高度，max-height 给 80px 留余量 + 不被截断。 */
-  max-height: 80px;
+     2 子项（概览 / 需求列表）~64px + margin 4px + 子项 gap 2px ≈ 70px，
+     max-height 给 130px 留余量 + 不被截断。 */
+  max-height: 130px;
   opacity: 1;
 }
 

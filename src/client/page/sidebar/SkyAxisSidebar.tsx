@@ -1,19 +1,22 @@
 /**
- * 内部 sidebar —— 工作台 6 个视图入口（5 一级 + 个人下 1 二级）。
+ * 内部 sidebar —— 工作台 7 个视图入口（5 一级 + 个人下 2 二级）。
  *
  * 结构（自上而下）：
  *   - 顶部：sidebar 折叠/展开 toggle 按钮
  *   - 5 个一级 entry（首页 / 团队 / 个人 / 报表 / 设置）
  *     - 「个人」是 group entry：点击切换二级菜单展开 / 收起，不进视图
- *     - 「个人」展开时，下方缩进显示子项「需求列表」
+ *     - 「个人」展开时，下方缩进显示 2 个子项「概览」+「需求列表」（同级）
+ *     - 「概览」是 leaf entry：点击进 viewKey='personal'（PersonalView）
  *     - 「需求列表」是 leaf entry：点击进 viewKey='requirements'
  *   - 分隔线
  *   - 「快捷操作」标题 + QuickActions 区
  *
  * 高亮规则：
- *   - viewKey === 'personal'       → 「个人」一级 entry 高亮
- *   - viewKey === 'requirements'   → 「需求列表」二级子项高亮
- *   - 其它 viewKey               → 对应一级 entry 高亮
+ *   - leaf entry（一级非 group：首页 / 团队 / 报表 / 设置）：viewKey 命中时高亮
+ *   - group entry（「个人」）：永远不高亮 —— group 只切二级菜单展开/收起，不进视图；
+ *                                即便 viewKey 恰好等于 group.key 也不画边框，
+ *                                当前选中态由其子项「概览 / 需求列表」承担
+ *   - 二级子项：viewKey 命中时高亮（subActive = sub.key === viewKey）
  *
  * 折叠态（sidebarCollapsed）行为：
  *   - sidebar 缩成 48px icon rail
@@ -35,7 +38,7 @@ import type { SkyAxisViewKey } from '../../controller/sky-axis-controller.ts'
 import type { IconComponent } from '../../icons/icons.tsx'
 import type { SkyAxisKey } from '../../locales.ts'
 import {
-  HomeIcon, TeamIcon, PersonalIcon, ReportsIcon, SettingsIcon,
+  HomeIcon, TeamIcon, PersonalIcon, PersonalOverviewIcon, ReportsIcon, SettingsIcon,
   ChevronLeftIcon, ChevronDownIcon, RequirementIcon,
 } from '../../icons/icons.tsx'
 import { QuickActions } from '../sections/QuickActions.tsx'
@@ -52,7 +55,7 @@ interface SidebarEntry {
   children?: readonly SidebarSubEntry[]
 }
 
-/** sidebar 二级子项 —— 当前只在「个人」下挂「需求列表」。
+/** sidebar 二级子项 —— 当前只在「个人」下挂「概览」+「需求列表」两个同级 leaf。
  *  leaf：点击进对应视图。 */
 interface SidebarSubEntry {
   key: SkyAxisViewKey
@@ -69,7 +72,8 @@ const ENTRIES: readonly SidebarEntry[] = [
     Icon: PersonalIcon,
     labelKey: 'sidebar.personal.label',
     children: [
-      { key: 'requirements', Icon: RequirementIcon, labelKey: 'sidebar.requirements.label' },
+      { key: 'personal',     Icon: PersonalOverviewIcon, labelKey: 'sidebar.personalOverview.label' },
+      { key: 'requirements', Icon: RequirementIcon,      labelKey: 'sidebar.requirements.label' },
     ],
   },
   { key: 'reports',  Icon: ReportsIcon,  labelKey: 'sidebar.reports.label' },
@@ -126,7 +130,10 @@ export function SkyAxisSidebar({
         {ENTRIES.map((e) => {
           const Icon = e.Icon
           const isGroup = e.children !== undefined && e.children.length > 0
-          const active = e.key === viewKey
+          // group entry 是 toggle，不进视图 —— 任何时候都不高亮（哪怕 viewKey 恰好等于
+          // group.key，例如 viewKey='personal' 让「个人」group 也被框成蓝色是 bug）。
+          // 只有 leaf entry 才参与 active 计算；子项高亮由下面 subActive 处理。
+          const active = !isGroup && e.key === viewKey
           return (
             <li key={e.key} className={css.entryItem}>
               {isGroup ? (

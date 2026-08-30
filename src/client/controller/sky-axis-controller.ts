@@ -22,8 +22,8 @@
  */
 
 /** sky-axis 内部视图 key。
- *  'personal' 保留作为 PersonalView 的入口（通过个人 entry 子项「个人主页」触发，本轮未暴露 sidebar 入口）；
- *  'requirements' 作为 sidebar「个人」下的二级目录入口对应的独立视图。 */
+ *  'personal' 是 sidebar「个人 → 概览」二级子项对应的视图（PersonalView）；
+ *  'requirements' 是 sidebar「个人 → 需求列表」二级子项对应的视图。 */
 export type SkyAxisViewKey = 'home' | 'team' | 'personal' | 'requirements' | 'reports' | 'settings'
 
 /** workspace 摘要（client UI 展示用）。 */
