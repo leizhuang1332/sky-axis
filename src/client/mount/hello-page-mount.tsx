@@ -16,7 +16,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { HelloController } from '../controller/hello-controller.ts'
 import { HelloPage } from '../page/HelloPage.tsx'
-import type { SessionListReadSource } from '../page/sections/types.ts'
 import css from '../page/HelloPage.module.css'
 
 /** 注入的 hello view 容器选择器（自身可见性 + takeover CSS 都用它）。 */
@@ -48,8 +47,6 @@ function conversationColumn(): HTMLElement | undefined {
 export interface MountHelloOptions {
   /** 控制器（持有 pageOpen 状态）。 */
   controller: HelloController
-  /** sessions.list 只读面（供 SessionSection 订阅）。 */
-  sessions: SessionListReadSource
   /** locale t 函数（HelloPage 内 section 引用）。 */
   t: PropsLocale<'hello'>['t']
 }
@@ -57,11 +54,11 @@ export interface MountHelloOptions {
 /**
  * Mount the Hello page React tree into the center column and bind its
  * visibility to the controller's pageOpen state.
- * @param opts - controller / sessions / t 三件套。
+ * @param opts - controller / t 两件套。
  * @returns disposer unmounting the tree and restoring the column.
  */
 export function mountHelloPage(opts: MountHelloOptions): () => void {
-  const { controller, sessions, t } = opts
+  const { controller, t } = opts
   let root: Root | undefined
   let container: HTMLDivElement | undefined
 
@@ -83,7 +80,7 @@ export function mountHelloPage(opts: MountHelloOptions): () => void {
     container.className = css.page
     column.appendChild(container)
     root = createRoot(container)
-    root.render(<HelloPage t={t} onClose={() => { controller.closePage() }} list={sessions} />)
+    root.render(<HelloPage t={t} onClose={() => { controller.closePage() }} />)
   }
 
   // 框架在 boot 之后才挂主列；MutationObserver 等待它出现。

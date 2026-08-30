@@ -1,0 +1,368 @@
+/* Dashboard 4 个区块视觉样式（MetricCards / ActivityStream / TeamOverview / QuickActions）。
+   全部走 --dsw-alias-* 设计令牌，自动跟随 light/dark/skins。
+   卡片基础样式沿用原 sections/.section：bg-layer-2 + border-l1 + radius 12px。 */
+
+/* ── 顶部指标卡行 ── */
+
+.metricRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .metricRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.metricCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  min-height: 88px;
+  box-sizing: border-box;
+}
+
+.metricIcon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-size: 22px;
+  line-height: 1;
+  background: var(--dsw-alias-state-business-secondary);
+  border-radius: 10px;
+}
+
+.metricBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metricLabel {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.metricNumber {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+}
+
+.metricNumberMain {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.metricNumberUnit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── 主区 2 列网格（动态流 + 团队概览）── */
+
+.dashboardGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .dashboardGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 通用 section 卡片（动态流 / 团队概览共用）*/
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  box-sizing: border-box;
+  min-height: 280px;
+  overflow-y: auto;
+  scrollbar-color: var(--dsw-alias-border-l3) transparent;
+  scrollbar-width: thin;
+}
+
+.section::-webkit-scrollbar {
+  width: 8px;
+}
+
+.section::-webkit-scrollbar-thumb {
+  background: var(--dsw-alias-border-l3);
+  border-radius: 999px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── ActivityStream ── */
+
+.activityList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.activityItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.activityItemIcon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 6px;
+  background: var(--dsw-alias-state-business-secondary);
+}
+
+.activityItemText {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-word;
+}
+
+.activityItemTime {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* ── TeamOverview ── */
+
+.teamBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teamBlockTitle {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.teamBlock:first-of-type .teamBlockTitle {
+  margin-top: 0;
+}
+
+/* 团队成员 */
+.memberList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.memberItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.memberAvatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+  font-weight: 700;
+  font-size: 12px;
+  position: relative;
+}
+
+.memberStatusDot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 2px solid var(--dsw-alias-bg-layer-2);
+}
+
+.memberStatusOnline .memberStatusDot { background: #22c55e; }
+.memberStatusAway   .memberStatusDot { background: #eab308; }
+.memberStatusOffline .memberStatusDot { background: #9ca3af; }
+
+.memberName {
+  white-space: nowrap;
+}
+
+/* Sprint 进度 */
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.progressPct {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+}
+
+.progressBar {
+  height: 8px;
+  background: var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
+.progressDesc {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 最近合并的 MR 列表 */
+.mrList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mrItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  font-size: 12px;
+}
+
+.mrId {
+  flex: none;
+  font-family: var(--dsw-font-family-mono, monospace);
+  color: var(--dsw-alias-state-business-primary);
+  font-weight: 600;
+}
+
+.mrTitle {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── QuickActions ── */
+
+.quickActions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .quickActions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.quickButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.quickButton:hover {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.quickButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.quickButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.quickButtonIcon {
+  font-size: 16px;
+  line-height: 1;
+}

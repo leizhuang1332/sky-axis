@@ -13,14 +13,13 @@
  *
  * 旧的 sidebar.footer.action slot 注册已废弃（弹窗卡片形态被整页取代）。
  */
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型导入：拉取 locale 插件的 ctx.locale 合并
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createHelloController } from './controller/hello-controller.ts'
 import { mountSidebarEntry } from './mount/sidebar-entry.ts'
 import { mountHelloPage } from './mount/hello-page-mount.tsx'
 import { en, zh, type HelloKey } from './locales.ts'
-import type { SessionListReadSource } from './page/sections/types.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -32,8 +31,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** 本插件拥有的字典命名空间。 */
 const NS = 'hello'
 
-/** 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。 */
-export const inject = ['locale', 'sessions']
+/** 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
+ *  注意：不再 inject sessions，因为新仪表板不订阅会话数据。 */
+export const inject = ['locale']
 
 /**
  * 挂载 sidebar entry + 主列 page。
@@ -46,13 +46,8 @@ export function apply(ctx: ClientContext): void {
   // 1. 注册 zh / en 字典（effect 等待 locale 服务就绪）。
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'hello: dictionaries')
 
-  // 2. 构造控制器 + sessions.list 只读面（apply 阶段同步可用）。
+  // 2. 构造控制器（pageOpen 状态机）。
   const controller = createHelloController()
-  const sessions = ctx.get('sessions') as unknown as ISessions
-  const list: SessionListReadSource = {
-    getSnapshot: () => sessions.list.getSnapshot(),
-    subscribe: (fn) => sessions.list.subscribe(fn),
-  }
 
   // 3. Sidebar 主树 entry —— DOM 直挂。
   //    mountSidebarEntry 内部自带 MutationObserver 等待 sidebar 渲染，
@@ -69,7 +64,7 @@ export function apply(ctx: ClientContext): void {
     const t = ctx.locale.bind(NS)
     let dispose: (() => void) | undefined
     try {
-      dispose = mountHelloPage({ controller, sessions: list, t })
+      dispose = mountHelloPage({ controller, t })
     } catch (error) {
       console.error('[dsh-hello] page mount failed:', error)
     }
