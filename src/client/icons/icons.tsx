@@ -362,3 +362,58 @@ export function CommentIcon({ size = 14, className }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/* ── Phase 2.1 物料 section icon（6 个）── */
+
+/** 文档 + 折角 —— MaterialsPane「PRD 文档」section 专用。 */
+export function PrdFileIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M4 2.5h5.5L13 6v7.5a.5.5 0 0 1-.5.5h-8.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5z" />
+      <path d="M9.5 2.5V6H13" />
+      <path d="M6 9h4M6 11h3" />
+    </svg>
+  )
+}
+
+/** 锁链 + 文档 —— MaterialsPane「PRD 链接」section 专用。 */
+export function PrdLinkIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M5.5 10.5l5-5" />
+      <path d="M7.5 5.5l1-1a2.1 2.1 0 0 1 3 3l-1 1" />
+      <path d="M8.5 10.5l-1 1a2.1 2.1 0 0 1-3-3l1-1" />
+    </svg>
+  )
+}
+
+/** 画笔 + 矩形 —— MaterialsPane「设计稿」section 专用（Figma/Sketch/图片）。 */
+export function DesignIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <rect x="3" y="3" width="10" height="7" rx="1" />
+      <circle cx="6" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
+      <path d="M4 12.5h8" />
+    </svg>
+  )
+}
+
+/** 回形针 —— MaterialsPane「附件」section 专用。 */
+export function AttachmentIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M9.5 5.5l-3 3a2.1 2.1 0 0 0 3 3l4-4a3.5 3.5 0 0 0-5-5L5 5.5a2.5 2.5 0 0 0 3.5 3.5L11 6.5" />
+    </svg>
+  )
+}
+
+/** 地球 —— MaterialsPane「外部链接」section 专用。 */
+export function GlobeIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2 8h12" />
+      <path d="M8 2c2.5 2.5 2.5 9.5 0 12M8 2C5.5 4.5 5.5 11.5 8 14" />
+    </svg>
+  )
+}

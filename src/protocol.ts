@@ -69,6 +69,173 @@ export const REQUIREMENT_ID_RE = /^\d{4}-\d{2}-\d{2}T.+-[a-z0-9]{6}$/
 export const RequirementIdSchema = z.string().regex(REQUIREMENT_ID_RE)
 export type RequirementId = z.infer<typeof RequirementIdSchema>
 
+/* ── 需求物料（Phase 2.1：详情页「需求物料」tab 数据建模）── */
+
+/**
+ * 物料基础原语 —— 6 个 section 共用的原子类型。
+ * - MaterialItemId：物料项主键，UUID v4（client 用 `crypto.randomUUID()`）
+ * - Url：仅允许 http/https，禁止 javascript:/file:/data: 等危险 scheme
+ * - UserId：DSH workspace 用户 id，空字符串 = 系统/未知
+ */
+
+/** 物料项主键 —— UUID v4 字符串。同一 section 内 id 全局唯一。 */
+export const MaterialItemIdSchema = z.string().uuid()
+export type MaterialItemId = z.infer<typeof MaterialItemIdSchema>
+
+/** URL —— 必须 http/https 协议（防 XSS / SSRF）。 */
+export const UrlSchema = z.string().url().refine(
+  (u) => {
+    try {
+      const proto = new URL(u).protocol
+      return proto === 'http:' || proto === 'https:'
+    } catch {
+      return false
+    }
+  },
+  { message: 'only http/https URLs are allowed' },
+)
+export type Url = z.infer<typeof UrlSchema>
+
+/** 用户标识 —— DSH workspace 用户 id；空字符串 = 系统/未知。 */
+export const UserIdSchema = z.string().min(0).max(128)
+export type UserId = z.infer<typeof UserIdSchema>
+
+/* ── 6 个物料 section 子项 schema ── */
+
+/** PRD 文档 —— 上传的产品 PRD 文件。 */
+export const PrdFileSchema = z.object({
+  id:         MaterialItemIdSchema,
+  filename:   z.string().min(1).max(255),
+  mimeType:   z.string().min(1).max(127),
+  /** 字节数（0 也合法 —— 空文件）。 */
+  size:       z.number().int().nonnegative(),
+  uploadedAt: z.string().datetime(),
+  uploadedBy: UserIdSchema,
+})
+export type PrdFile = z.infer<typeof PrdFileSchema>
+
+/** PRD 链接 —— 在线 PRD 文档（语雀/Notion/Confluence/飞书/自定义）。 */
+export const PrdLinkSchema = z.object({
+  id:      MaterialItemIdSchema,
+  url:     UrlSchema,
+  title:   z.string().min(1).max(200),
+  /** 来源平台 —— 决定 UI 图标 + 提取标题策略。 */
+  source:  z.enum(['yuque', 'notion', 'confluence', 'feishu', 'custom']),
+  addedAt: z.string().datetime(),
+  addedBy: UserIdSchema,
+})
+export type PrdLink = z.infer<typeof PrdLinkSchema>
+
+/** 源码仓库 —— git URL + branch + 可选 last commit SHA。 */
+export const SourceRepoSchema = z.object({
+  id:           MaterialItemIdSchema,
+  url:          UrlSchema,
+  /** git branch / tag / commit ref；空字符串 = 默认分支（host 解析时回退）。 */
+  branch:       z.string().max(255),
+  /** last commit SHA（short 7 字符或 full 40 字符均可）；optional —— 未同步时为空。 */
+  lastCommitSha: z.string().regex(/^[a-f0-9]{7,40}$/).optional(),
+  /** 一句话描述（UI 副标题展示）。 */
+  description:   z.string().max(500),
+  addedAt:       z.string().datetime(),
+  addedBy:       UserIdSchema,
+})
+export type SourceRepo = z.infer<typeof SourceRepoSchema>
+
+/** 设计稿链接 —— Figma / Sketch / 图片 / embed。 */
+export const DesignLinkSchema = z.object({
+  id:           MaterialItemIdSchema,
+  url:          UrlSchema,
+  kind:         z.enum(['figma', 'sketch', 'image', 'embed']),
+  title:        z.string().min(1).max(200),
+  /** 缩略图 URL —— optional，异步生成中或失败时为空。 */
+  thumbnailUrl: UrlSchema.optional(),
+  addedAt:      z.string().datetime(),
+  addedBy:      UserIdSchema,
+})
+export type DesignLink = z.infer<typeof DesignLinkSchema>
+
+/** 附件 —— 任意文件（图片 / PDF / 文档 / 压缩包等）。
+ *  schema 与 PrdFile 一致 —— 但业务语义不同（PRD 是产品需求文档，附件是补充材料），
+ *  保持分开便于未来各自扩展字段。 */
+export const AttachmentSchema = z.object({
+  id:         MaterialItemIdSchema,
+  filename:   z.string().min(1).max(255),
+  mimeType:   z.string().min(1).max(127),
+  size:       z.number().int().nonnegative(),
+  uploadedAt: z.string().datetime(),
+  uploadedBy: UserIdSchema,
+})
+export type Attachment = z.infer<typeof AttachmentSchema>
+
+/** 外部链接 —— API 文档 / 会议纪要 / 调研报告 / 故障复盘 / 其他。 */
+export const ExternalLinkSchema = z.object({
+  id:          MaterialItemIdSchema,
+  url:         UrlSchema,
+  title:       z.string().min(1).max(200),
+  kind:        z.enum(['api-doc', 'meeting', 'research', 'incident', 'other']),
+  /** 一句话摘要（UI 列表副标题）。 */
+  description: z.string().max(500),
+  addedAt:     z.string().datetime(),
+  addedBy:     UserIdSchema,
+})
+export type ExternalLink = z.infer<typeof ExternalLinkSchema>
+
+/**
+ * 需求物料 —— 详情页「需求物料」tab 的完整数据结构。
+ *
+ * 完美主义原则（Phase 2.1 Strategy C）：
+ *   - **6 个 section 全部 required**（不 optional）—— 每条 requirement 物料结构 100% 完整
+ *   - **不用 zod `.default()`** —— host create() 显式调用 `emptyMaterials()` 工厂函数
+ *   - **loadDetail 收到缺字段视为 invalid-record**（fail loud）—— 不写 silent default 兜底
+ *   - **不写 migration script** —— DSH backend 无原生迁移 API（version mismatch 直接全废），
+ *     项目未上线不存在需要兼容的旧数据，升级时通过 DSH backend `version: 2` 体现 schema 演进
+ *
+ * UI 拓扑：
+ *   - PRD 文档 / PRD 链接  → AI「理解」阶段优先读
+ *   - 源码关联             → AI「实现」阶段优先读
+ *   - 设计稿 / 附件 / 外部链接 → AI 任意阶段按需读
+ *
+ * 写入路径（Phase 2.5 待实现）：
+ *   - PRD 文档 / 附件：multipart upload → host `/api/sky-axis/materials/upload`
+ *   - 其余 4 section：JSON POST → host `/api/sky-axis/materials/{section}/add`
+ */
+export const MaterialsSchema = z.object({
+  prdFiles:      z.array(PrdFileSchema),
+  prdLinks:      z.array(PrdLinkSchema),
+  sourceRepos:   z.array(SourceRepoSchema),
+  designLinks:   z.array(DesignLinkSchema),
+  attachments:   z.array(AttachmentSchema),
+  externalLinks: z.array(ExternalLinkSchema),
+})
+export type Materials = z.infer<typeof MaterialsSchema>
+
+/**
+ * 构造一个空物料结构（host create() / controller 工厂用）。
+ * 每个 section 都是空数组 —— 显式构造，避免 host 端漏写。
+ */
+export function emptyMaterials(): Materials {
+  return {
+    prdFiles:      [],
+    prdLinks:      [],
+    sourceRepos:   [],
+    designLinks:   [],
+    attachments:   [],
+    externalLinks: [],
+  }
+}
+
+/** 物料总数（用于 tab header 徽标 / 详情页统计行）。 */
+export function countMaterials(m: Materials): number {
+  return (
+    m.prdFiles.length
+    + m.prdLinks.length
+    + m.sourceRepos.length
+    + m.designLinks.length
+    + m.attachments.length
+    + m.externalLinks.length
+  )
+}
+
 /* ── 详情页扩展（Phase 1.2：开发意图工作台 schema）── */
 
 /**
@@ -220,17 +387,21 @@ export type NewRequirement = z.infer<typeof NewRequirementSchema>
  * KV 存储的 requirement 记录。id/status/时间戳由 host 在 create 时填入；
  * workspaceId 创建后不可变（要换工作区 = 删了重建，避免产物目录归属混乱）。
  *
- * Phase 1.2 增量：追加 8 个开发意图工作台相关字段。
- * - 所有字段均 `.optional().default(...)` —— Phase 1 保持 storage domain v1
- *   兼容（旧 KV 记录 parse 缺字段时自动填默认值，不触发迁移）；Phase 2 才
- *   升 v2 + 写迁移脚本。
- * - aiSessionId / branch / aiLastActivityAt 默认 null（未启动 AI / 未选分支）
- * - artifacts / interventionQueue / stageHistory 默认空集合
- * - stage 默认 'understand'（新建需求永远从「理解」起步）
- * - aiState 默认 'idle'（未启动 AI 协奏）
+ * 完美主义原则（Phase 2.1 Strategy C）：
+ *   - **所有字段 required**（不 optional、不依赖 zod `.default()` 兜底业务逻辑）
+ *   - **host service.create() 显式调用 `defaultRequirementFields()` 工厂函数** 写完整结构
+ *   - **DSH backend `version: 2`** 体现 schema 演进（旧数据直接 reject，无 migration script）
+ *   - **loadDetail 收到缺字段视为 invalid-record**（fail loud）—— 不写 silent default
+ *   - **不写 migration script** —— DSH backend 无原生迁移 API（version mismatch 直接全废），
+ *     项目未上线无包袱；升级时通过 DSH `version` 数字演进，dev 一次性清盘 storage 介质即可
  *
- * 字段含义见 §1.1 Plan 表格；schema 定义见上方 StageSchema / AiStateSchema
- * / StageHistoryEntrySchema / InterventionItemSchema / ArtifactSchema。
+ * 字段语义：
+ *   - stage / stageHistory / aiState / aiSessionId / aiLastActivityAt：
+ *     5 阶段开发意图工作台相关（Phase 1.2 引入，Phase 2.1 改为 required）
+ *   - interventionQueue：等待人类介入的项（approval/question/review）
+ *   - artifacts：阶段产物键值表（artifactId → Artifact）
+ *   - branch：工作分支（git），未指定时 null
+ *   - materials：需求物料完整结构（Phase 2.1 新增）
  */
 export const RequirementSchema = z.object({
   id: RequirementIdSchema,
@@ -243,25 +414,64 @@ export const RequirementSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 
-  /* ── Phase 1.2 新增（5 阶段开发意图工作台）── */
-  /** 当前阶段（5 选 1）；新建需求默认 'understand'。 */
-  stage: StageSchema.default('understand'),
+  /* ── 5 阶段开发意图工作台（Phase 1.2 引入，Phase 2.1 升级为 required）── */
+  /** 当前阶段（5 选 1）。 */
+  stage: StageSchema,
   /** 阶段流转历史（可审计、可回退）。 */
-  stageHistory: z.array(StageHistoryEntrySchema).default(() => []),
-  /** AI session 顶层状态；新建需求默认 'idle'。 */
-  aiState: AiStateSchema.default('idle'),
+  stageHistory: z.array(StageHistoryEntrySchema),
+  /** AI session 顶层状态。 */
+  aiState: AiStateSchema,
   /** 绑定的 agent session id；未启动时 null。 */
-  aiSessionId: z.string().nullable().default(null),
+  aiSessionId: z.string().nullable(),
   /** 最近 session/event 时间戳；UI「AI 在 5s 前活跃」用；未启动 null。 */
-  aiLastActivityAt: z.string().datetime().nullable().default(null),
+  aiLastActivityAt: z.string().datetime().nullable(),
   /** 等待人类介入的项（approval/question/review）。 */
-  interventionQueue: z.array(InterventionItemSchema).default(() => []),
+  interventionQueue: z.array(InterventionItemSchema),
   /** 阶段产物键值表（artifactId → Artifact）。 */
-  artifacts: z.record(z.string(), ArtifactSchema).default(() => ({})),
+  artifacts: z.record(z.string(), ArtifactSchema),
   /** 工作分支（git）；未指定时 null。 */
-  branch: z.string().nullable().default(null),
+  branch: z.string().nullable(),
+
+  /* ── 需求物料（Phase 2.1 新增，required）── */
+  /** 物料完整结构（6 section 全部 required）。 */
+  materials: MaterialsSchema,
 })
 export type Requirement = z.infer<typeof RequirementSchema>
+
+/**
+ * 构造 requirement 默认扩展字段（host create() / controller 工厂用）。
+ * 所有字段显式填值 —— **不依赖 zod parse-time default**。
+ *
+ * 使用：
+ *   const extended = defaultRequirementFields({ now, input })
+ *   const requirement: Requirement = { id, workspaceId, title, ...input, createdAt: now, updatedAt: now, ...extended }
+ */
+export function defaultRequirementFields(opts: {
+  now: string
+  input: {
+    workspaceId: WorkspaceId
+    title: string
+    description?: string
+    priority: RequirementPriority
+    tags: string[]
+  }
+}): Pick<Requirement,
+  'description' | 'stage' | 'stageHistory' | 'aiState' | 'aiSessionId' |
+  'aiLastActivityAt' | 'interventionQueue' | 'artifacts' | 'branch' | 'materials'
+> {
+  return {
+    description:       opts.input.description ?? '',
+    stage:             'understand',
+    stageHistory:      [{ stage: 'understand', enteredAt: opts.now }],
+    aiState:           'idle',
+    aiSessionId:       null,
+    aiLastActivityAt:  null,
+    interventionQueue: [],
+    artifacts:         {},
+    branch:            null,
+    materials:         emptyMaterials(),
+  }
+}
 
 /* ── Workspace 元数据（client 列表展示用）── */
 

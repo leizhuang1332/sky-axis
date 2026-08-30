@@ -17,19 +17,27 @@ import {
   SkyAxisEndpoints,
   SKY_AXIS_ERROR_CODES,
   HealthResponseSchema,
+  MaterialsSchema,
   NewRequirementSchema,
   PingResponseSchema,
+  PrdFileSchema,
+  PrdLinkSchema,
   RequirementEventSchema,
   RequirementIdSchema,
   RequirementPrioritySchema,
   RequirementSchema,
   RequirementStatusSchema,
   RequirementsListResponseSchema,
+  SourceRepoSchema,
+  UrlSchema,
+  UserIdSchema,
   WorkspacesListResponseSchema,
   WorkspaceSummarySchema,
+  countMaterials,
+  emptyMaterials,
 } from '../src/protocol.ts'
 
-/** 一条合法的 requirement 记录（用于响应 schema 校验；Phase 1.2 加 8 个新字段）。 */
+/** 一条合法的 requirement 记录（用于响应 schema 校验；Phase 2.1 加 materials）。 */
 const sampleRequirement = {
   id: '2026-08-30T12:34:56.789Z-x9k2p4',
   workspaceId: 'ws-abc',
@@ -40,7 +48,7 @@ const sampleRequirement = {
   tags: ['demo'],
   createdAt: '2026-08-30T12:34:56.789Z',
   updatedAt: '2026-08-30T12:34:56.789Z',
-  // ── Phase 1.2 新增 ──
+  // ── Phase 1.2 字段（全部 required）──
   stage: 'understand' as const,
   stageHistory: [{ stage: 'understand' as const, enteredAt: '2026-08-30T12:34:56.789Z' }],
   aiState: 'idle' as const,
@@ -49,6 +57,15 @@ const sampleRequirement = {
   interventionQueue: [],
   artifacts: {},
   branch: null,
+  // ── Phase 2.1 物料（required）──
+  materials: {
+    prdFiles: [],
+    prdLinks: [],
+    sourceRepos: [],
+    designLinks: [],
+    attachments: [],
+    externalLinks: [],
+  },
 }
 
 describe('SkyAxisEndpoints 路径字面量', () => {
@@ -326,5 +343,96 @@ describe('WorkspacesListResponseSchema', () => {
       ok: true,
       items: [{ id: '', title: 'x', path: '/x' }],
     })).toThrow()
+  })
+})
+
+/* ── Phase 2.1：物料 schema 边界 ── */
+
+describe('MaterialsSchema（需求物料）', () => {
+  const now = '2026-08-30T12:00:00.000Z'
+
+  it('emptyMaterials 返回 6 个空数组', () => {
+    const m = emptyMaterials()
+    expect(m.prdFiles).toEqual([])
+    expect(m.prdLinks).toEqual([])
+    expect(m.sourceRepos).toEqual([])
+    expect(m.designLinks).toEqual([])
+    expect(m.attachments).toEqual([])
+    expect(m.externalLinks).toEqual([])
+  })
+
+  it('countMaterials 6 个 section 计数求和', () => {
+    const m = {
+      prdFiles: [{} as never, {} as never],
+      prdLinks: [{} as never],
+      sourceRepos: [{} as never, {} as never, {} as never],
+      designLinks: [],
+      attachments: [{} as never],
+      externalLinks: [],
+    }
+    expect(countMaterials(m)).toBe(7)
+  })
+
+  it('合法 Materials 通过 parse', () => {
+    expect(() => MaterialsSchema.parse(emptyMaterials())).not.toThrow()
+  })
+
+  it('缺 section 字段即拒绝（fail loud，不 silent 兜底）', () => {
+    expect(() => MaterialsSchema.parse({
+      prdFiles: [], prdLinks: [], sourceRepos: [], designLinks: [], attachments: [],
+      // externalLinks 缺失
+    })).toThrow()
+  })
+
+  it('PrdFileSchema 合法字段', () => {
+    expect(() => PrdFileSchema.parse({
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      filename: 'prd.pdf', mimeType: 'application/pdf', size: 1024,
+      uploadedAt: now, uploadedBy: 'user-1',
+    })).not.toThrow()
+  })
+
+  it('PrdFileSchema 非 UUID 拒绝', () => {
+    expect(() => PrdFileSchema.parse({
+      id: 'not-uuid', filename: 'prd.pdf', mimeType: 'application/pdf', size: 1024,
+      uploadedAt: now, uploadedBy: 'user-1',
+    })).toThrow()
+  })
+
+  it('PrdLinkSchema 仅接受 http/https URL', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      title: 'PRD', source: 'yuque' as const, addedAt: now, addedBy: 'user-1',
+    }
+    expect(() => PrdLinkSchema.parse({ ...base, url: 'https://yuque.com/foo' })).not.toThrow()
+    expect(() => PrdLinkSchema.parse({ ...base, url: 'http://example.com' })).not.toThrow()
+    expect(() => PrdLinkSchema.parse({ ...base, url: 'javascript:alert(1)' })).toThrow()
+    expect(() => PrdLinkSchema.parse({ ...base, url: 'file:///etc/passwd' })).toThrow()
+    expect(() => PrdLinkSchema.parse({ ...base, url: 'ftp://example.com' })).toThrow()
+  })
+
+  it('SourceRepoSchema lastCommitSha 必须是 7-40 字符 hex', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'main',
+      description: '', addedAt: now, addedBy: 'user-1',
+    }
+    expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: 'a1b2c3d' })).not.toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: '0123456789abcdef0123456789abcdef01234567' })).not.toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: 'short' })).toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: 'not-a-hex-at-all-zzzzzz' })).toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base })).not.toThrow()
+  })
+
+  it('UrlSchema 通用 http/https 校验', () => {
+    expect(UrlSchema.safeParse('https://x.com').success).toBe(true)
+    expect(UrlSchema.safeParse('http://x.com').success).toBe(true)
+    expect(UrlSchema.safeParse('data:text/plain,abc').success).toBe(false)
+    expect(UrlSchema.safeParse('not-a-url').success).toBe(false)
+  })
+
+  it('UserIdSchema 空字符串合法（系统/未知）', () => {
+    expect(UserIdSchema.safeParse('').success).toBe(true)
+    expect(UserIdSchema.safeParse('user-1').success).toBe(true)
   })
 })

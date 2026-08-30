@@ -98,21 +98,13 @@ export function apply(ctx: ClientContext): void {
   const reqClient = new RequirementClient()
 
   // 3. 构造控制器，注入 host fetch impl。
+  //    Phase 2.1 完美主义：host 返回的 record 已 100% 完整（含 materials 等所有 required 字段），
+  //    直接 spread 投影，无需逐字段拷贝 —— 避免漏字段风险。
   const controller = createSkyAxisController({
     loadImpl: async () => {
       const r = await reqClient.list()
       if (r.ok) {
-        return { ok: true, items: r.value.map(item => ({
-          id: item.id,
-          workspaceId: item.workspaceId,
-          title: item.title,
-          description: item.description,
-          priority: item.priority,
-          status: item.status,
-          tags: item.tags,
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-        })) }
+        return { ok: true, items: r.value.map(item => ({ ...item })) }
       }
       return { ok: false, error: { code: r.code, detail: r.detail } }
     },
@@ -125,17 +117,7 @@ export function apply(ctx: ClientContext): void {
         tags: input.tags ?? [],
       })
       if (r.ok) {
-        return { ok: true, item: {
-          id: r.value.id,
-          workspaceId: r.value.workspaceId,
-          title: r.value.title,
-          description: r.value.description,
-          priority: r.value.priority,
-          status: r.value.status,
-          tags: r.value.tags,
-          createdAt: r.value.createdAt,
-          updatedAt: r.value.updatedAt,
-        } }
+        return { ok: true, item: { ...r.value } }
       }
       return { ok: false, error: { code: r.code, detail: r.detail } }
     },
@@ -213,19 +195,10 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     const sub = subscribeRequirementEvents((event) => {
       if (event.operation === 'put') {
+        // Phase 2.1 完美主义：host 推送的 record 已 100% 完整，直接 spread 投影
         controller.handleStreamEvent({
           operation: 'put',
-          item: {
-            id: event.item.id,
-            workspaceId: event.item.workspaceId,
-            title: event.item.title,
-            description: event.item.description,
-            priority: event.item.priority,
-            status: event.item.status,
-            tags: event.item.tags,
-            createdAt: event.item.createdAt,
-            updatedAt: event.item.updatedAt,
-          },
+          item: { ...event.item },
         })
       } else {
         controller.handleStreamEvent({ operation: 'deleted', id: event.id as string })

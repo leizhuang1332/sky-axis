@@ -25,12 +25,13 @@ import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import type { WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
-import type {
+import {
   NewRequirement,
   Requirement,
   RequirementId,
   WorkspaceId as SkyAxisWorkspaceId,
   SkyAxisErrorCode,
+  defaultRequirementFields,
 } from '../protocol.ts'
 import { skyAxisRequest } from './rpc-helper.ts'
 import { requirementDomain } from './storage/requirement-domain.ts'
@@ -131,32 +132,20 @@ export class RequirementHostService {
 
     const now = new Date().toISOString()
     const id = makeRequirementId()
-    // Phase 1.2 增量：主动写 8 个开发意图工作台字段的默认值。
-    //   - 虽然 RequirementSchema 的 zod `.default()` 在 parse 时会自动填充，
-    //     但 host 主动写有 3 个好处：
-    //       1) KV 里持久化的记录显式完整（不依赖 parse-time default 兜底）
-    //       2) stageHistory 第一条记录就是「进入理解阶段」（审计链起点）
-    //       3) 客户端读到的快照永远是完整结构，不会出现「字段缺失 → undefined」
-    //   - 全部字段与 protocol.ts RequirementSchema 默认值一一对应。
+    // Phase 2.1 完美主义：显式调用工厂函数写完整 10 个扩展字段（含 Phase 1.2 的 8 个 + Phase 2.1 的 materials）。
+    //   - 不依赖 zod parse-time default 兜底 —— 每条持久化记录 100% 完整
+    //   - 工厂函数单一职责 —— 默认值集中管理，未来字段增减只改一处
+    //   - stageHistory 第一条记录就是「进入理解阶段」（审计链起点）
     const requirement: Requirement = {
       id,
       workspaceId: input.workspaceId,
       title: input.title,
-      description: input.description ?? '',
       priority: input.priority,
       status: 'open',
       tags: input.tags,
       createdAt: now,
       updatedAt: now,
-      // ── Phase 1.2 新增字段默认值 ──
-      stage: 'understand',
-      stageHistory: [{ stage: 'understand', enteredAt: now }],
-      aiState: 'idle',
-      aiSessionId: null,
-      aiLastActivityAt: null,
-      interventionQueue: [],
-      artifacts: {},
-      branch: null,
+      ...defaultRequirementFields({ now, input }),
     }
 
     await table.put(id as unknown as SkyAxisWorkspaceId & string, requirement)

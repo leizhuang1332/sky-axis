@@ -63,6 +63,18 @@
   white-space: nowrap;
 }
 
+.badgeConfigured {
+  background: color-mix(in srgb, var(--dsw-alias-status-success, #22c55e) 12%, transparent);
+  color: var(--dsw-alias-status-success, #22c55e);
+  border-color: color-mix(in srgb, var(--dsw-alias-status-success, #22c55e) 30%, transparent);
+}
+
+.badgeEmpty {
+  background: color-mix(in srgb, var(--dsw-alias-status-warning) 12%, transparent);
+  color: var(--dsw-alias-status-warning);
+  border-color: color-mix(in srgb, var(--dsw-alias-status-warning) 30%, transparent);
+}
+
 /* ── 引导提示 ── */
 
 .guidance {
@@ -153,10 +165,38 @@
   outline-offset: -2px;
 }
 
+.sectionHeaderMain {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sectionIcon {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .sectionTitle {
   font-size: 13px;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
+}
+
+.sectionCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .sectionChevron {
@@ -174,6 +214,97 @@
   padding: 12px 14px 14px;
   border-top: 1px solid var(--dsw-alias-separator-secondary);
   background: var(--dsw-alias-bg-primary);
+}
+
+/* ── 物料 item 列表 ── */
+
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-separator-secondary);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.itemMain {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.itemTitle {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-accent-primary, #3b6ef5) 10%, transparent);
+  color: var(--dsw-alias-accent-primary, #3b6ef5);
+  flex-shrink: 0;
+}
+
+.itemSha {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 3px;
+  color: var(--dsw-alias-label-secondary);
+  flex-shrink: 0;
+}
+
+.itemUrl {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.itemAside {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Placeholder ── */

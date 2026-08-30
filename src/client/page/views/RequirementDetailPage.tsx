@@ -32,6 +32,7 @@ import type {
 } from '../../controller/sky-axis-controller.ts'
 import type { RequirementOption } from '../../controller/sky-axis-controller.ts'
 import { Stepper, type StepperItem } from '../../ui/Stepper.tsx'
+import { countRequirementMaterials } from '../../controller/sky-axis-controller.ts'
 import { AiConductorPane } from '../sections/AiConductorPane.tsx'
 import { StageWorkspacePane } from '../sections/StageWorkspacePane.tsx'
 import { InterventionQueuePane } from '../sections/InterventionQueuePane.tsx'
@@ -120,7 +121,7 @@ export function RequirementDetailPage({
         </div>
       )}
 
-      {/* Tab Header —— Phase 1.13 新增 */}
+      {/* Tab Header —— Phase 1.13 新增；Phase 2.1 徽标改显示物料总数 */}
       <nav className={css.tabHeader} aria-label={t('requirement.detail.tabHeader.ariaLabel')}>
         <button
           type="button"
@@ -130,7 +131,7 @@ export function RequirementDetailPage({
           onClick={(): void => { onTabChange('materials') }}
         >
           <span>{t('requirement.detail.tabHeader.materials')}</span>
-          <span className={css.tabBadge}>{t('requirement.detail.tabHeader.materialsBadge')}</span>
+          <span className={css.tabBadge}>{countRequirementMaterials(requirement.materials)}</span>
         </button>
         <button
           type="button"

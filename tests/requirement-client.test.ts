@@ -51,7 +51,7 @@ const SAMPLE: Requirement = {
   tags: [],
   createdAt: '2026-08-30T12:00:00.000Z',
   updatedAt: '2026-08-30T12:00:00.000Z',
-  // ── Phase 1.2 新增（与 protocol.ts RequirementSchema 默认值一一对应）──
+  // ── Phase 1.2 字段（全部 required）──
   stage: 'understand',
   stageHistory: [{ stage: 'understand', enteredAt: '2026-08-30T12:00:00.000Z' }],
   aiState: 'idle',
@@ -60,6 +60,15 @@ const SAMPLE: Requirement = {
   interventionQueue: [],
   artifacts: {},
   branch: null,
+  // ── Phase 2.1 物料（required）──
+  materials: {
+    prdFiles: [],
+    prdLinks: [],
+    sourceRepos: [],
+    designLinks: [],
+    attachments: [],
+    externalLinks: [],
+  },
 }
 
 /** 合法 NewRequirement 入参（带 WorkspaceId brand）。 */

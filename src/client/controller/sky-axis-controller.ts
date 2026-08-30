@@ -128,14 +128,101 @@ export interface RequirementStageHistoryEntry {
   outcome?: 'completed' | 'manual' | 'rolled-back' | 'errored'
 }
 
+/* ── 物料镜像 type（Phase 2.1）── */
+
+/** 物料基础原语镜像 —— 与 host schema 同字段子集。 */
+export interface RequirementMaterialItemBase {
+  id: string
+}
+
+/** PRD 文档镜像。 */
+export interface RequirementPrdFile extends RequirementMaterialItemBase {
+  filename: string
+  mimeType: string
+  size: number
+  uploadedAt: string
+  uploadedBy: string
+}
+
+/** PRD 链接镜像。 */
+export interface RequirementPrdLink extends RequirementMaterialItemBase {
+  url: string
+  title: string
+  source: 'yuque' | 'notion' | 'confluence' | 'feishu' | 'custom'
+  addedAt: string
+  addedBy: string
+}
+
+/** 源码仓库镜像。 */
+export interface RequirementSourceRepo extends RequirementMaterialItemBase {
+  url: string
+  branch: string
+  lastCommitSha?: string
+  description: string
+  addedAt: string
+  addedBy: string
+}
+
+/** 设计稿链接镜像。 */
+export interface RequirementDesignLink extends RequirementMaterialItemBase {
+  url: string
+  kind: 'figma' | 'sketch' | 'image' | 'embed'
+  title: string
+  thumbnailUrl?: string
+  addedAt: string
+  addedBy: string
+}
+
+/** 附件镜像。 */
+export interface RequirementAttachment extends RequirementMaterialItemBase {
+  filename: string
+  mimeType: string
+  size: number
+  uploadedAt: string
+  uploadedBy: string
+}
+
+/** 外部链接镜像。 */
+export interface RequirementExternalLink extends RequirementMaterialItemBase {
+  url: string
+  title: string
+  kind: 'api-doc' | 'meeting' | 'research' | 'incident' | 'other'
+  description: string
+  addedAt: string
+  addedBy: string
+}
+
+/** 物料完整结构镜像（6 section 全部 required）。 */
+export interface RequirementMaterials {
+  prdFiles: RequirementPrdFile[]
+  prdLinks: RequirementPrdLink[]
+  sourceRepos: RequirementSourceRepo[]
+  designLinks: RequirementDesignLink[]
+  attachments: RequirementAttachment[]
+  externalLinks: RequirementExternalLink[]
+}
+
+/** 物料总数（client 镜像版本 —— 不依赖 protocol.ts zod，保持 client bundle 体积最小）。 */
+export function countRequirementMaterials(m: RequirementMaterials): number {
+  return (
+    m.prdFiles.length
+    + m.prdLinks.length
+    + m.sourceRepos.length
+    + m.designLinks.length
+    + m.attachments.length
+    + m.externalLinks.length
+  )
+}
+
 /** 极简 Requirement 镜像（与 host Requirement schema 同字段子集）。
  *  此处重定义而非直接 import 是为了 client bundle 不依赖 protocol.ts 的 zod
  *  schema（让 client 体积更小）。host 端 schema 仍为权威源。
  *
- *  Phase 1.2 增量：加 8 个开发意图工作台字段（全部 optional）。
- *  - 旧 KV 记录若缺这些字段（storage domain v1 时段的记录），client 解析为
- *    undefined，由 detail UI 做兜底（默认 'idle' / 空数组）。
- *  - Phase 2 升 v2 + host 主动写默认值后，这里改为必填。 */
+ *  Phase 2.1 完美主义（Strategy C）：
+ *    - 所有字段 **required**（不 optional、不依赖 silent default 兜底）
+ *    - 旧 v1 记录若缺字段 → zod parse 失败 → 视为 invalid-record（fail loud）
+ *    - Phase 2.1 升 DSH backend version: 2，旧数据被 backend 直接 reject
+ *    - loadDetail 收到的 record 必须 100% 完整，否则写 detailError */
 export interface RequirementEntry {
   id: string
   workspaceId: string
@@ -146,15 +233,17 @@ export interface RequirementEntry {
   tags: string[]
   createdAt: string
   updatedAt: string
-  /* ── Phase 1.2 新增（全部 optional 保持 v1 兼容）── */
-  stage?: RequirementStage
-  stageHistory?: RequirementStageHistoryEntry[]
-  aiState?: RequirementAiState
-  aiSessionId?: string | null
-  aiLastActivityAt?: string | null
-  interventionQueue?: RequirementInterventionItem[]
-  artifacts?: Record<string, RequirementArtifact>
-  branch?: string | null
+  /* ── 5 阶段开发意图工作台（全部 required）── */
+  stage: RequirementStage
+  stageHistory: RequirementStageHistoryEntry[]
+  aiState: RequirementAiState
+  aiSessionId: string | null
+  aiLastActivityAt: string | null
+  interventionQueue: RequirementInterventionItem[]
+  artifacts: Record<string, RequirementArtifact>
+  branch: string | null
+  /* ── 需求物料（Phase 2.1 新增 required）── */
+  materials: RequirementMaterials
 }
 
 /** CRUD / SSE 错误（轻量版，client UI 展示用）。 */
@@ -315,12 +404,19 @@ export function createSkyAxisController(deps: {
 
   /**
    * 把 host Requirement / error 投影到 client 类型（避免 protocol.ts zod schema
-   * 进入 client bundle）。如果 host → client 字段名一致，直接复制。
+   * 进入 client bundle）。Phase 2.1 完美主义：传入对象必须包含所有 required 字段，
+   * 缺字段的旧记录不在此处投影 —— 由 caller（loadDetail / handleStreamEvent）
+   * 在 parse 失败时显式 fail loud。
    */
   const projectItem = (item: {
     id: string; workspaceId: string; title: string; description: string;
     priority: RequirementEntry['priority']; status: RequirementEntry['status'];
     tags: string[]; createdAt: string; updatedAt: string;
+    stage: RequirementStage; stageHistory: RequirementStageHistoryEntry[];
+    aiState: RequirementAiState; aiSessionId: string | null;
+    aiLastActivityAt: string | null; interventionQueue: RequirementInterventionItem[];
+    artifacts: Record<string, RequirementArtifact>; branch: string | null;
+    materials: RequirementMaterials;
   }): RequirementEntry => item
 
   const projectError = (code: RequirementError['code'], detail?: string): RequirementError =>
@@ -527,19 +623,19 @@ export function createSkyAxisController(deps: {
     },
 
     async loadDetail(id) {
-      // 本地优先：列表里已有就直接合并（openDetail 触发的初次拉取，列表刚加载完的场景）
+      // 本地优先：列表里已有完整 record 直接复用（openDetail 触发的初次拉取，列表刚加载完的场景）
+      //   Phase 2.1 完美主义：所有字段都是 required（host create() 已写完整），无需再检查 stage 等字段是否存在
       const local = snapshot.requirements.find(r => r.id === id)
-      if (local !== undefined && local.stage !== undefined) {
-        // 列表里有完整 stage 等字段（host 已写默认值），无需重复 GET
+      if (local !== undefined) {
+        // 列表里有完整 record（host 已写默认值 + materials），无需重复 GET
         // 这里什么也不做 —— openDetail 已经把 selectedRequirementId 设上，
         // UI 端会从 snapshot.requirements 找到该 id 并渲染。
         return
       }
       // 缺 detailImpl（Phase 1 demo）：纯本地模式兜底，不写错误干扰 UI
-      //   - 本地有数据（即便字段不全）→ UI 端会用 stage ?? 'understand' 等兜底渲染
+      //   - 本地有数据 → 直接 return（已在上面 short-circuit）
       //   - 本地无数据 → 写 requirement-not-found 错误（防御，正常情况不会发生）
       if (deps.detailImpl === undefined) {
-        if (local !== undefined) return
         snapshot = {
           ...snapshot,
           detailError: projectError(
