@@ -2,9 +2,11 @@
  * MaterialsPane.module.css —— 详情页「需求物料」tab 内容样式。
  *
  * 风格契约：
- *   - 全用 --dsw-alias-* 设计令牌
- *   - 单 root class
- *   - 暗色主题 @media (prefers-color-scheme: dark)
+ *   - 视觉与详情页「AI 工作台」tab 三块面板(AiConductorPane / StageWorkspacePane /
+ *     InterventionQueuePane)保持一致 —— 全部使用 DSH 设计令牌 --dsw-alias-*
+ *   - 卡片容器：border-l2 + bg-layer-1/2 + border-radius 8-10px
+ *   - 分组分隔：separator-secondary 1px
+ *   - 暗色主题自动跟随(令牌已含主题切换)
  */
 
 .pane {
@@ -19,6 +21,53 @@
   background: var(--dsw-alias-bg-primary);
   color: var(--dsw-alias-label-primary);
   overflow-y: auto;
+}
+
+/* ── Section 列表 ── */
+
+.sectionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* 12:section 之间留出空隙,与 StageWorkspacePane.history gap(8-12px)一致 */
+  gap: 12px;
+}
+
+.sectionItem {
+  /* 对齐 InterventionQueuePane.card + AiConductorPane.statusCard:
+     border 1px solid border-l2 + bg layer-1 + border-radius 10px(外层容器用 10) */
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  /* header 不加独立背景 —— 整体卡片共用 layer-1 背景,只通过底部细线分隔 header 与 body */
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--dsw-alias-separator-secondary);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: background 120ms ease;
+}
+
+.sectionHeader:hover {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+}
+
+.sectionHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-focus-ring);
+  outline-offset: -2px;
 }
 
 /* ── 头部 ── */
@@ -128,45 +177,7 @@
 
 /* ── Section 列表 ── */
 
-.sectionList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sectionItem {
-  border: 1px solid var(--dsw-alias-separator-secondary);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.sectionHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 10px 14px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-  transition: background 120ms ease;
-}
-
-.sectionHeader:hover {
-  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
-}
-
-.sectionHeader:focus-visible {
-  outline: 2px solid var(--dsw-alias-focus-ring);
-  outline-offset: -2px;
-}
+/* .sectionList / .sectionItem / .sectionHeader 定义见顶部 .pane 之后,这里保留子元素样式 */
 
 .sectionHeaderMain {
   display: inline-flex;
@@ -214,8 +225,9 @@
 }
 
 .sectionBody {
+  /* 不单独加 border —— 由 .sectionItem 的 border-l2 圆角矩形框统一提供;
+     background 用 bg-primary(比 sectionItem 的 layer-1 更亮)形成 header/body 对比。 */
   padding: 12px 14px 14px;
-  border-top: 1px solid var(--dsw-alias-separator-secondary);
   background: var(--dsw-alias-bg-primary);
 }
 
@@ -227,7 +239,8 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* 10:与 InterventionQueuePane.list gap 一致 */
+  gap: 10px;
 }
 
 .item {
@@ -236,10 +249,18 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
+  /* 对齐 InterventionQueuePane.card:border 1px border-l2 + bg layer-2 + radius 8px */
   background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-separator-secondary);
-  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
   min-width: 0;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.item:hover {
+  /* 对齐 AiConductorPane.secondaryButton:hover —— 加深一层 bg */
+  background: var(--dsw-alias-bg-layer-3);
+  border-color: var(--dsw-alias-border-l1);
 }
 
 .itemMain {
@@ -437,17 +458,4 @@
 }
 
 /* ── 暗色主题 ── */
-
-@media (prefers-color-scheme: dark) {
-  .pane {
-    background: var(--dsw-alias-bg-primary);
-  }
-  .sectionItem {
-    background: var(--dsw-alias-bg-layer-1);
-    border-color: var(--dsw-alias-separator-secondary);
-  }
-  .sectionBody {
-    background: var(--dsw-alias-bg-primary);
-    border-color: var(--dsw-alias-separator-secondary);
-  }
-}
+/* 全部 --dsw-alias-* 令牌,自动跟随主题;不再需要硬覆盖 */
