@@ -24,6 +24,9 @@ export type HelloViewKey = 'home' | 'team' | 'personal' | 'reports' | 'settings'
 export interface HelloSnapshot {
   pageOpen: boolean
   viewKey: HelloViewKey
+  /** sidebar 是否折叠（默认 false = 展开）。与 pageOpen 独立持久：
+   *  关掉 Hello 再打开仍保留折叠状态，符合 sidebar 用户偏好习惯。 */
+  sidebarCollapsed: boolean
 }
 
 /** controller 公开 API。 */
@@ -44,11 +47,19 @@ export interface HelloController {
   setView(view: HelloViewKey): void
   /** 当前视图（pageOpen=false 时返回上次保留值）。 */
   getView(): HelloViewKey
+  /** 切换 sidebar 收起 / 展开（与 pageOpen 独立，可任意时机调用）。 */
+  toggleSidebar(): void
+  /** sidebar 是否折叠（避免 React 端每次解构判断）。 */
+  isSidebarCollapsed(): boolean
 }
 
 /** 创建 hello 控制器实例（每次 apply 调用产生一个，与 cordis 生命周期对应）。 */
 export function createHelloController(): HelloController {
-  let snapshot: HelloSnapshot = { pageOpen: false, viewKey: 'home' }
+  let snapshot: HelloSnapshot = {
+    pageOpen: false,
+    viewKey: 'home',
+    sidebarCollapsed: false,
+  }
   const listeners = new Set<() => void>()
 
   const notify = (): void => {
@@ -68,35 +79,64 @@ export function createHelloController(): HelloController {
     },
     openPage() {
       if (snapshot.pageOpen) return
-      // 打开时同时设 pageOpen + viewKey（重置为首页）。新对象让
-      // useSyncExternalStore 识别到变化。
-      snapshot = { pageOpen: true, viewKey: 'home' }
+      // 打开时同时设 pageOpen + viewKey（重置为首页）；sidebarCollapsed
+      // 透传，保留用户折叠偏好。
+      snapshot = {
+        pageOpen: true,
+        viewKey: 'home',
+        sidebarCollapsed: snapshot.sidebarCollapsed,
+      }
       notify()
     },
     closePage() {
       if (!snapshot.pageOpen) return
-      // 关闭时只翻 pageOpen，保留 viewKey（下次打开仍在原视图）。
-      snapshot = { pageOpen: false, viewKey: snapshot.viewKey }
+      // 关闭时只翻 pageOpen，保留 viewKey + sidebarCollapsed。
+      snapshot = {
+        pageOpen: false,
+        viewKey: snapshot.viewKey,
+        sidebarCollapsed: snapshot.sidebarCollapsed,
+      }
       notify()
     },
     togglePage() {
       if (snapshot.pageOpen) {
-        // 与 closePage 行为一致：保留 viewKey
-        snapshot = { pageOpen: false, viewKey: snapshot.viewKey }
+        // 与 closePage 行为一致：保留 viewKey + sidebarCollapsed
+        snapshot = {
+          pageOpen: false,
+          viewKey: snapshot.viewKey,
+          sidebarCollapsed: snapshot.sidebarCollapsed,
+        }
       } else {
-        // 打开时重置到首页
-        snapshot = { pageOpen: true, viewKey: 'home' }
+        // 打开时重置到首页；sidebarCollapsed 透传
+        snapshot = {
+          pageOpen: true,
+          viewKey: 'home',
+          sidebarCollapsed: snapshot.sidebarCollapsed,
+        }
       }
       notify()
     },
     setView(view) {
       if (!snapshot.pageOpen) return
       if (snapshot.viewKey === view) return
-      snapshot = { pageOpen: true, viewKey: view }
+      snapshot = {
+        pageOpen: true,
+        viewKey: view,
+        sidebarCollapsed: snapshot.sidebarCollapsed,
+      }
       notify()
     },
     getView() {
       return snapshot.viewKey
+    },
+    toggleSidebar() {
+      // 翻转 sidebarCollapsed；与 pageOpen 完全独立（折叠态下点击 entry
+      // 仍可切视图，关掉页面后再打开保留折叠偏好）。
+      snapshot = { ...snapshot, sidebarCollapsed: !snapshot.sidebarCollapsed }
+      notify()
+    },
+    isSidebarCollapsed() {
+      return snapshot.sidebarCollapsed
     },
   }
 }

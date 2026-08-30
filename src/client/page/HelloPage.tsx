@@ -53,8 +53,9 @@ function BackIcon(): JSX.Element {
 /** 整页「开发工作台」SPA 主体。 */
 export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Element {
   // 订阅 controller —— viewKey 变化时本组件重渲染。
-  const { viewKey } = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const { viewKey, sidebarCollapsed } = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const onSelect = (k: HelloViewKey): void => { controller.setView(k) }
+  const onToggleCollapse = (): void => { controller.toggleSidebar() }
 
   return (
     <div className={css.page} data-dsh-part="hello-page">
@@ -77,7 +78,13 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
 
       {/* body —— 左侧 HelloSidebar + 右侧 viewArea */}
       <main className={css.body}>
-        <HelloSidebar t={t} viewKey={viewKey} onSelect={onSelect} />
+        <HelloSidebar
+          t={t}
+          viewKey={viewKey}
+          onSelect={onSelect}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={onToggleCollapse}
+        />
         <div className={css.viewArea}>
           {viewKey === 'home'     && <HomeView t={t} />}
           {viewKey === 'team'     && <TeamView t={t} />}

@@ -21,6 +21,7 @@ import type { IconComponent } from '../../icons/icons.tsx'
 import type { HelloKey } from '../../locales.ts'
 import {
   HomeIcon, TeamIcon, PersonalIcon, ReportsIcon, SettingsIcon,
+  ChevronLeftIcon,
 } from '../../icons/icons.tsx'
 import { QuickActions } from '../sections/QuickActions.tsx'
 import css from './sidebar.module.css'
@@ -48,11 +49,35 @@ export interface HelloSidebarProps {
   viewKey: HelloViewKey
   /** 点击 entry 回调（HelloPage 内 controller.setView 包一层）。 */
   onSelect: (k: HelloViewKey) => void
+  /** sidebar 是否折叠（来自 controller.sidebarCollapsed）。
+   *  true → icon rail 模式（48px 宽，文字 / QuickActions 隐藏，chevron 旋转 180°）。 */
+  collapsed: boolean
+  /** 点击顶部 toggle 按钮回调（HelloPage 内 controller.toggleSidebar 包一层）。 */
+  onToggleCollapse: () => void
 }
 
-export function HelloSidebar({ t, viewKey, onSelect }: HelloSidebarProps): JSX.Element {
+export function HelloSidebar({
+  t, viewKey, onSelect, collapsed, onToggleCollapse,
+}: HelloSidebarProps): JSX.Element {
+  const sidebarClass = collapsed ? `${css.sidebar} ${css.collapsed}` : css.sidebar
+  // 字面量 key 用联合类型让 t() 在编译期校验（HelloKey 联合类型）
+  const toggleKey = collapsed ? 'sidebar.toggle.expand' : 'sidebar.toggle.collapse'
   return (
-    <nav className={css.sidebar} aria-label={t('sidebar.ariaLabel')}>
+    <nav className={sidebarClass} aria-label={t('sidebar.ariaLabel')}>
+      {/* 顶部 toggle 按钮 —— 展开时显示「收起」+ chevron-left；折叠态由 CSS 隐藏文字 + 旋转 chevron */}
+      <div className={css.toggleRow}>
+        <button
+          type="button"
+          className={css.toggleButton}
+          aria-label={t(toggleKey)}
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapse}
+        >
+          <ChevronLeftIcon size={14} className={css.toggleIcon} />
+          <span className={css.toggleLabel}>{t(toggleKey)}</span>
+        </button>
+      </div>
+
       <ul className={css.entryList}>
         {ENTRIES.map((e) => {
           const Icon = e.Icon

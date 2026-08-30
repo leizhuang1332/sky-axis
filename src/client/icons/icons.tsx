@@ -44,6 +44,16 @@ function svgProps(size: number, className?: string): JSX.IntrinsicElements['svg'
 
 /* ── Sidebar 图标（5 个，size 默认 16）── */
 
+/** Chevron left —— sidebar 折叠/展开 toggle 按钮专用。
+    折叠态由 CSS transform: rotate(180deg) 复用本图标，无需 ChevronRight。 */
+export function ChevronLeftIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <polyline points="10 3 5 8 10 13" />
+    </svg>
+  )
+}
+
 /** 房子 —— sidebar「首页」。 */
 export function HomeIcon({ size = 16, className }: IconProps): JSX.Element {
   return (

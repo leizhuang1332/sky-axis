@@ -59,6 +59,8 @@ export const zh = {
   'sidebar.reports.label': '报表',
   'sidebar.settings.label': '设置',
   'sidebar.quickActions.label': '快捷操作',
+  'sidebar.toggle.collapse': '收起',
+  'sidebar.toggle.expand': '展开',
 
   // 视图标题 / 副标题
   'view.home.title': '工作台首页',
@@ -166,6 +168,8 @@ export const en: Record<HelloKey, string> = {
   'sidebar.reports.label': 'Reports',
   'sidebar.settings.label': 'Settings',
   'sidebar.quickActions.label': 'Quick actions',
+  'sidebar.toggle.collapse': 'Collapse',
+  'sidebar.toggle.expand': 'Expand',
 
   // View titles / subtitles
   'view.home.title': 'Workbench home',

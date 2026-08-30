@@ -25,9 +25,44 @@
   background: var(--dsw-alias-bg-layer-1);
   border-right: 1px solid var(--dsw-alias-separator-primary);
   overflow-y: auto;
+  /* 抽屉式动画：width 在 240ms ease 内从 208px 缩到 48px（或反向）。
+     viewArea 通过 flex: 1 自动平滑占满剩余空间。 */
+  transition: width 240ms ease, padding-left 240ms ease, padding-right 240ms ease;
   /* 滚动条配色 —— 内部 sidebar 不抢眼 */
   scrollbar-color: var(--dsw-alias-border-l3) transparent;
   scrollbar-width: thin;
+}
+
+/* ── 折叠态（icon rail 模式）── */
+
+.collapsed {
+  width: 48px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.collapsed .entry {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.collapsed .entryLabel {
+  display: none;
+}
+
+.collapsed .divider,
+.collapsed .quickLabel,
+.collapsed .quickActions {
+  display: none;
+}
+
+.collapsed .toggleIcon {
+  transform: rotate(180deg);
+}
+
+.collapsed .toggleLabel {
+  display: none;
 }
 
 .sidebar::-webkit-scrollbar {
@@ -128,4 +163,58 @@
   color: var(--dsw-alias-label-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ── 顶部 toggle 按钮（收起 / 展开）── */
+
+.toggleRow {
+  display: flex;
+  flex: none;
+  /* 与下方 entry 列表对齐节奏 */
+  margin-bottom: 2px;
+}
+
+.toggleButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.toggleButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toggleButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.toggleButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.toggleIcon {
+  flex: none;
+  display: inline-flex;
+  /* 与 sidebar width 同步：chevron 旋转与抽屉滑动同一 240ms ease。 */
+  transition: transform 240ms ease;
+}
+
+.toggleLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
