@@ -131,6 +131,13 @@ export class RequirementHostService {
 
     const now = new Date().toISOString()
     const id = makeRequirementId()
+    // Phase 1.2 增量：主动写 8 个开发意图工作台字段的默认值。
+    //   - 虽然 RequirementSchema 的 zod `.default()` 在 parse 时会自动填充，
+    //     但 host 主动写有 3 个好处：
+    //       1) KV 里持久化的记录显式完整（不依赖 parse-time default 兜底）
+    //       2) stageHistory 第一条记录就是「进入理解阶段」（审计链起点）
+    //       3) 客户端读到的快照永远是完整结构，不会出现「字段缺失 → undefined」
+    //   - 全部字段与 protocol.ts RequirementSchema 默认值一一对应。
     const requirement: Requirement = {
       id,
       workspaceId: input.workspaceId,
@@ -141,6 +148,15 @@ export class RequirementHostService {
       tags: input.tags,
       createdAt: now,
       updatedAt: now,
+      // ── Phase 1.2 新增字段默认值 ──
+      stage: 'understand',
+      stageHistory: [{ stage: 'understand', enteredAt: now }],
+      aiState: 'idle',
+      aiSessionId: null,
+      aiLastActivityAt: null,
+      interventionQueue: [],
+      artifacts: {},
+      branch: null,
     }
 
     await table.put(id as unknown as SkyAxisWorkspaceId & string, requirement)

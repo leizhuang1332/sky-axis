@@ -29,7 +29,7 @@ import {
   WorkspaceSummarySchema,
 } from '../src/protocol.ts'
 
-/** 一条合法的 requirement 记录（用于响应 schema 校验）。 */
+/** 一条合法的 requirement 记录（用于响应 schema 校验；Phase 1.2 加 8 个新字段）。 */
 const sampleRequirement = {
   id: '2026-08-30T12:34:56.789Z-x9k2p4',
   workspaceId: 'ws-abc',
@@ -40,6 +40,15 @@ const sampleRequirement = {
   tags: ['demo'],
   createdAt: '2026-08-30T12:34:56.789Z',
   updatedAt: '2026-08-30T12:34:56.789Z',
+  // ── Phase 1.2 新增 ──
+  stage: 'understand' as const,
+  stageHistory: [{ stage: 'understand' as const, enteredAt: '2026-08-30T12:34:56.789Z' }],
+  aiState: 'idle' as const,
+  aiSessionId: null,
+  aiLastActivityAt: null,
+  interventionQueue: [],
+  artifacts: {},
+  branch: null,
 }
 
 describe('SkyAxisEndpoints 路径字面量', () => {
@@ -65,15 +74,20 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 6 个错误码', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(6)
+  it('正好包含 11 个错误码（Phase 1.2 加 5 个 AI / 详情 / 产物 / 阶段错误码）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(11)
   })
 
   it('错误码集合稳定', () => {
     expect([...SKY_AXIS_ERROR_CODES].sort()).toEqual([
+      'ai-event-failed',
+      'ai-not-configured',
+      'ai-session-missing',
+      'artifact-not-found',
       'internal-error',
       'invalid-record',
       'requirement-not-found',
+      'stage-invalid',
       'validation-failed',
       'workspace-list-failed',
       'workspace-not-found',

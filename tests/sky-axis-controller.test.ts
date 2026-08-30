@@ -23,7 +23,7 @@ import {
   type RequirementError,
 } from '../src/client/controller/sky-axis-controller.ts'
 
-/** 一条最小可用的 requirement fixture。 */
+/** 一条最小可用的 requirement fixture（Phase 1.2 加 8 个开发意图工作台字段默认值）。 */
 function makeReq(overrides: Partial<RequirementEntry> = {}): RequirementEntry {
   return {
     id: '2026-08-30T12:00:00.000Z-aaaaa1',
@@ -35,6 +35,15 @@ function makeReq(overrides: Partial<RequirementEntry> = {}): RequirementEntry {
     tags: [],
     createdAt: '2026-08-30T12:00:00.000Z',
     updatedAt: '2026-08-30T12:00:00.000Z',
+    // ── Phase 1.2 新增（与 protocol.ts RequirementSchema 默认值一一对应）──
+    stage: 'understand',
+    stageHistory: [{ stage: 'understand', enteredAt: '2026-08-30T12:00:00.000Z' }],
+    aiState: 'idle',
+    aiSessionId: null,
+    aiLastActivityAt: null,
+    interventionQueue: [],
+    artifacts: {},
+    branch: null,
     ...overrides,
   }
 }
@@ -498,5 +507,118 @@ describe('SkyAxisController subscribe 引用语义', () => {
     c.setView('team')
     c.toggleSidebar()
     expect(spy).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('SkyAxisController openDetail / closeDetail / loadDetail（Phase 1.2）', () => {
+  it('openDetail 设 selectedRequirementId 且不切 viewKey', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: '2026-08-30T12:00:00.000Z-aaaaa1' })]),
+    })
+    await c.loadRequirements()
+    c.openPage()
+    c.setView('requirements')
+    c.openDetail('2026-08-30T12:00:00.000Z-aaaaa1')
+    const s = c.getSnapshot()
+    expect(s.selectedRequirementId).toBe('2026-08-30T12:00:00.000Z-aaaaa1')
+    expect(s.viewKey).toBe('requirements') // 不切 viewKey
+  })
+
+  it('openDetail 幂等：同 id 二次调用不重复触发 loadDetail', async () => {
+    const detailSpy = vi.fn(async () => ({ ok: true as const, item: makeReq({ id: 'r-1', stage: 'plan' as const }) }))
+    // 本地数据缺 stage（v1 时段记录），强制走 detailImpl 网络路径
+    const localOld = { ...makeReq({ id: 'r-1' }), stage: undefined as undefined }
+    const c = createSkyAxisController({
+      loadImpl: okLoad([localOld]),
+      detailImpl: detailSpy,
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    c.openDetail('r-1')
+    expect(detailSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('closeDetail 清 selectedRequirementId 且不切 viewKey', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]),
+    })
+    await c.loadRequirements()
+    c.openPage()
+    c.setView('requirements')
+    c.openDetail('r-1')
+    c.closeDetail()
+    const s = c.getSnapshot()
+    expect(s.selectedRequirementId).toBeNull()
+    expect(s.viewKey).toBe('requirements') // 不切 viewKey
+  })
+
+  it('loadDetail 本地优先：列表里有完整字段（stage 已写）就不调网络', async () => {
+    const detailSpy = vi.fn()
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]), // makeReq 默认 stage='understand'
+      detailImpl: detailSpy,
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1') // 触发 loadDetail
+    expect(detailSpy).not.toHaveBeenCalled()
+    expect(c.getSnapshot().detailError).toBeNull()
+  })
+
+  it('loadDetail 详情 GET 成功：合并到列表', async () => {
+    const fresh = makeReq({ id: 'r-1', stage: 'plan', title: '最新' })
+    // 本地数据 stage 缺字段（旧 v1 记录），强制走 GET 路径
+    const localOld = { ...makeReq({ id: 'r-1', title: '旧' }), stage: undefined as undefined }
+    const c = createSkyAxisController({
+      loadImpl: okLoad([localOld]),
+      detailImpl: async () => ({ ok: true as const, item: fresh }),
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    // 等 microtask flush
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    const s = c.getSnapshot()
+    const r = s.requirements.find(x => x.id === 'r-1')
+    expect(r?.title).toBe('最新')
+    expect(r?.stage).toBe('plan')
+    expect(s.detailError).toBeNull()
+  })
+
+  it('loadDetail 详情 GET 失败：写 detailError 不污染列表', async () => {
+    // 本地数据 stage 缺字段（旧 v1 记录），强制走 GET 路径
+    const localOld = { ...makeReq({ id: 'r-1' }), stage: undefined as undefined }
+    const c = createSkyAxisController({
+      loadImpl: okLoad([localOld]),
+      detailImpl: async () => ({ ok: false as const, error: { code: 'requirement-not-found' as const } }),
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    const s = c.getSnapshot()
+    expect(s.detailError).toEqual({ code: 'requirement-not-found' })
+    expect(s.requirements.find(x => x.id === 'r-1')).toBeDefined() // 列表数据不变
+  })
+
+  it('loadDetail Phase 1 demo：detailImpl 未注入 + 本地有数据 → 不写 detailError（友好兜底）', async () => {
+    // 本地是 v1 旧记录（stage 缺字段），但 detailImpl 未注入 → 走友好兜底
+    const localOld = { ...makeReq({ id: 'r-1' }), stage: undefined as undefined }
+    const c = createSkyAxisController({
+      loadImpl: okLoad([localOld]),
+      // 故意不传 detailImpl
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    const s = c.getSnapshot()
+    expect(s.detailError).toBeNull()
+    expect(s.selectedRequirementId).toBe('r-1')
+  })
+
+  it('loadDetail Phase 1 demo：detailImpl 未注入 + 本地无数据 → 写 requirement-not-found 错误（兜底）', async () => {
+    const c = createSkyAxisController() // 无 loadImpl / detailImpl
+    // 不预加载列表，直接 openDetail 不存在的 id
+    c.openDetail('non-existent-id')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    const s = c.getSnapshot()
+    expect(s.detailError?.code).toBe('requirement-not-found')
   })
 })

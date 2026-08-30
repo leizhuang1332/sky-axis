@@ -1,0 +1,174 @@
+/* InterventionQueuePane —— 详情页右列「介入队列」面板。 */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+/* ── 空状态 ── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.emptyIcon {
+  font-size: 24px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.emptyText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* ── 介入项卡 ── */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.card {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card_approval { border-left: 3px solid var(--dsw-alias-state-business-primary); }
+.card_question  { border-left: 3px solid var(--dsw-alias-state-business-warning, #f59e0b); }
+.card_review    { border-left: 3px solid var(--dsw-alias-state-business-success, #22c55e); }
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.cardKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cardIcon {
+  display: inline-flex;
+}
+
+.cardTime {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.cardSummary {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-word;
+}
+
+.cardActions {
+  display: flex;
+  gap: 6px;
+}
+
+.cardActionApprove,
+.cardActionReject {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.cardActionApprove:not(:disabled):hover {
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.cardActionReject:not(:disabled):hover {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #ef4444;
+}
+
+.cardActionApprove:disabled,
+.cardActionReject:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Phase 1 占位 ── */
+
+.placeholder {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 35%, transparent);
+}
+
+.placeholderText {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.5;
+}

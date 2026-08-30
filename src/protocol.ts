@@ -69,6 +69,135 @@ export const REQUIREMENT_ID_RE = /^\d{4}-\d{2}-\d{2}T.+-[a-z0-9]{6}$/
 export const RequirementIdSchema = z.string().regex(REQUIREMENT_ID_RE)
 export type RequirementId = z.infer<typeof RequirementIdSchema>
 
+/* ── 详情页扩展（Phase 1.2：开发意图工作台 schema）── */
+
+/**
+ * 5 阶段开发意图工作流的阶段 key。
+ * - understand：理解（找歧义 / 搜代码 / 澄清问题）
+ * - plan：规划（多方案 / 风险 / 测试策略）
+ * - implement：实现（按方案生成代码 / commit）
+ * - verify：验证（跑测试 / review）
+ * - deliver：交付（跟踪 CI / 合并 / 部署）
+ *
+ * 阶段流转由 host ai-event-bridge 推 SSE `stageChanged` 帧驱动；client
+ * 通过 controller.handleStreamEvent 更新 snapshot。手动推进 / 回退走
+ * AiActionRequest 的 `advance` action。
+ */
+export const StageSchema = z.enum(['understand', 'plan', 'implement', 'verify', 'deliver'])
+export type Stage = z.infer<typeof StageSchema>
+
+/** 所有 Stage 值的有序列表 —— Stepper 渲染时按此顺序显示。 */
+export const STAGE_ORDER: readonly Stage[] = ['understand', 'plan', 'implement', 'verify', 'deliver']
+
+/** 5 阶段的中文显示顺序（与 STAGE_ORDER 一一对应，便于 UI 索引）。 */
+export const STAGE_LABEL_KEYS: readonly string[] = [
+  'requirement.detail.stage.understand.label',
+  'requirement.detail.stage.plan.label',
+  'requirement.detail.stage.implement.label',
+  'requirement.detail.stage.verify.label',
+  'requirement.detail.stage.deliver.label',
+] as const
+
+/**
+ * AI session 顶层状态。
+ * - idle：未启动 / 已结束
+ * - running：正在运转，UI 持续展示流式输出
+ * - paused：用户主动暂停（host 已 cancel current session）
+ * - awaiting-input：等待人类介入（approval/question/steer）
+ * - errored：AI session 异常 / preset 未注册 / 平台能力缺失
+ */
+export const AiStateSchema = z.enum(['idle', 'running', 'paused', 'awaiting-input', 'errored'])
+export type AiState = z.infer<typeof AiStateSchema>
+
+/**
+ * 阶段流转历史条目 —— 用于阶段面板展示「何时进入、何时离开、什么结局」。
+ * - outcome: 'completed' | 'manual' | 'rolled-back' | 'errored'
+ *   - completed：AI 自然完成该阶段
+ *   - manual：用户手动「暂回上阶段」标记为 manual
+ *   - rolled-back：上一阶段被回退到此阶段（保留审计链）
+ *   - errored：该阶段异常退出
+ */
+export const StageHistoryEntrySchema = z.object({
+  stage: StageSchema,
+  enteredAt: z.string().datetime(),
+  leftAt: z.string().datetime().optional(),
+  outcome: z.enum(['completed', 'manual', 'rolled-back', 'errored']).optional(),
+})
+export type StageHistoryEntry = z.infer<typeof StageHistoryEntrySchema>
+
+/**
+ * 介入队列项 —— AI 等待人类介入的事件。
+ * - kind: 'approval' | 'question' | 'review'
+ *   - approval：tool 调用的权限确认（run shell / write file 等）
+ *   - question：AI 主动询问（多选 / 单选 / 文本）
+ *   - review：阶段性 review 请求（产出的 plan / patch 让人审）
+ * - rpcId：DSH event/mux 的 rpc id（client 调 `ctx.apiProxy.respond` 时回传）
+ * - summary：UI 列表展示用的一句话摘要
+ * - createdAt：入队时间（用于排序）
+ * - payload：原 JSON 帧内容，UI 渲染复杂问答表单时读取
+ */
+export const InterventionItemSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(['approval', 'question', 'review']),
+  rpcId: z.string().min(1),
+  summary: z.string().min(1).max(500),
+  createdAt: z.string().datetime(),
+  payload: z.unknown(),
+})
+export type InterventionItem = z.infer<typeof InterventionItemSchema>
+
+/**
+ * 阶段产物键值条目 —— 每阶段 AI 产生的 plan / patch / note / log / report。
+ * - kind：产物种类（决定图标 + 默认渲染器）
+ * - title：UI 标题（如「实现方案 v2」「3 个文件的 diff」）
+ * - createdAt：产生时间
+ * - body：产物正文（markdown / patch / 日志文本）
+ * - meta：可选附加元数据（如 patch 的 path / commit sha / report 的 metric）
+ */
+export const ArtifactSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(['plan', 'patch', 'note', 'log', 'report']),
+  title: z.string().min(1).max(200),
+  createdAt: z.string().datetime(),
+  body: z.string().max(200_000),
+  meta: z.record(z.string(), z.unknown()).optional(),
+})
+export type Artifact = z.infer<typeof ArtifactSchema>
+
+/**
+ * AI 操作请求（POST /ai/action 入参）—— discriminated union by action。
+ * - pause / resume / cancel：session 控制
+ * - steer：实时插入文本到 running session
+ * - respond：应答 approval/question（必填 rpcId + answer）
+ * - advance：手动推进 / 回退阶段（必填 toStage）
+ */
+export const AiActionRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('pause') }),
+  z.object({ action: z.literal('resume') }),
+  z.object({ action: z.literal('cancel') }),
+  z.object({ action: z.literal('steer'), text: z.string().min(1).max(4000) }),
+  z.object({
+    action: z.literal('respond'),
+    rpcId: z.string().min(1),
+    /** 答案 payload —— 由 host 包成 ClientResponse envelope 调 ctx.apiProxy.respond。 */
+    answer: z.unknown(),
+  }),
+  z.object({
+    action: z.literal('advance'),
+    toStage: StageSchema,
+    /** 'next' / 'prev' / 自定义 —— UI 显示文案用，host 可不读 */
+    intent: z.enum(['next', 'prev', 'manual']).default('manual'),
+  }),
+])
+export type AiActionRequest = z.infer<typeof AiActionRequestSchema>
+
+/** AI 启动请求（POST /ai/start 入参）—— Phase 2 实现。Phase 1 schema 先行。 */
+export const AiStartRequestSchema = z.object({
+  /** 初始 prompt 文本（任务描述 / 触发 AI 的第一句话）。 */
+  initialPrompt: z.string().min(1).max(8000).optional(),
+})
+export type AiStartRequest = z.infer<typeof AiStartRequestSchema>
+
 /* ── 入参：新建需求 ── */
 
 /**
@@ -90,6 +219,18 @@ export type NewRequirement = z.infer<typeof NewRequirementSchema>
 /**
  * KV 存储的 requirement 记录。id/status/时间戳由 host 在 create 时填入；
  * workspaceId 创建后不可变（要换工作区 = 删了重建，避免产物目录归属混乱）。
+ *
+ * Phase 1.2 增量：追加 8 个开发意图工作台相关字段。
+ * - 所有字段均 `.optional().default(...)` —— Phase 1 保持 storage domain v1
+ *   兼容（旧 KV 记录 parse 缺字段时自动填默认值，不触发迁移）；Phase 2 才
+ *   升 v2 + 写迁移脚本。
+ * - aiSessionId / branch / aiLastActivityAt 默认 null（未启动 AI / 未选分支）
+ * - artifacts / interventionQueue / stageHistory 默认空集合
+ * - stage 默认 'understand'（新建需求永远从「理解」起步）
+ * - aiState 默认 'idle'（未启动 AI 协奏）
+ *
+ * 字段含义见 §1.1 Plan 表格；schema 定义见上方 StageSchema / AiStateSchema
+ * / StageHistoryEntrySchema / InterventionItemSchema / ArtifactSchema。
  */
 export const RequirementSchema = z.object({
   id: RequirementIdSchema,
@@ -101,6 +242,24 @@ export const RequirementSchema = z.object({
   tags: z.array(z.string().min(1).max(32)).max(20),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+
+  /* ── Phase 1.2 新增（5 阶段开发意图工作台）── */
+  /** 当前阶段（5 选 1）；新建需求默认 'understand'。 */
+  stage: StageSchema.default('understand'),
+  /** 阶段流转历史（可审计、可回退）。 */
+  stageHistory: z.array(StageHistoryEntrySchema).default(() => []),
+  /** AI session 顶层状态；新建需求默认 'idle'。 */
+  aiState: AiStateSchema.default('idle'),
+  /** 绑定的 agent session id；未启动时 null。 */
+  aiSessionId: z.string().nullable().default(null),
+  /** 最近 session/event 时间戳；UI「AI 在 5s 前活跃」用；未启动 null。 */
+  aiLastActivityAt: z.string().datetime().nullable().default(null),
+  /** 等待人类介入的项（approval/question/review）。 */
+  interventionQueue: z.array(InterventionItemSchema).default(() => []),
+  /** 阶段产物键值表（artifactId → Artifact）。 */
+  artifacts: z.record(z.string(), ArtifactSchema).default(() => ({})),
+  /** 工作分支（git）；未指定时 null。 */
+  branch: z.string().nullable().default(null),
 })
 export type Requirement = z.infer<typeof RequirementSchema>
 
@@ -186,6 +345,13 @@ export type RequirementEvent = z.infer<typeof RequirementEventSchema>
  * - requirement-not-found：要删除/获取的 id 不存在
  * - invalid-record：KV 中已存的记录 schema 校验失败（极少见，理论上 domain open 时就拦住了）
  * - internal-error：未捕获异常
+ *
+ * Phase 1.2 增量（AI 协作工作台相关）：
+ * - ai-not-configured：sky-axis-collaborator agentPreset 未在 DSH 注册 / 平台能力缺失
+ * - ai-session-missing：操作的 requirement 还没启动 AI session（先调 /ai/start）
+ * - ai-event-failed：ctx.apiProxy.events.mux() 或 respond 失败
+ * - artifact-not-found：getArtifact 取的 artifactId 不存在
+ * - stage-invalid：advance 请求的 toStage 与当前 stage 不兼容（如跳跃前进）
  */
 export const SKY_AXIS_ERROR_CODES = [
   'validation-failed',
@@ -194,6 +360,12 @@ export const SKY_AXIS_ERROR_CODES = [
   'requirement-not-found',
   'invalid-record',
   'internal-error',
+  // ── Phase 1.2 新增 ──
+  'ai-not-configured',
+  'ai-session-missing',
+  'ai-event-failed',
+  'artifact-not-found',
+  'stage-invalid',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

@@ -25,6 +25,8 @@ export interface RequirementsListProps {
   loading: boolean
   error: { code: string; detail?: string } | null
   onDelete: (id: string) => void
+  /** Phase 1.2：点击条目回调（打开详情页）。 */
+  onOpen: (id: string) => void
 }
 
 /** 把 ISO 时间戳格式化为「YYYY-MM-DD HH:mm」（loc 无关、紧凑）。 */
@@ -87,7 +89,7 @@ function statusClass(s: RequirementEntry['status']): string {
 }
 
 export function RequirementsList(props: RequirementsListProps): JSX.Element {
-  const { t, requirements, workspaces, loading, error, onDelete } = props
+  const { t, requirements, workspaces, loading, error, onDelete, onOpen } = props
   const groups = useMemo(() => groupByWorkspace(requirements, workspaces), [requirements, workspaces])
 
   if (loading && requirements.length === 0) {
@@ -122,26 +124,39 @@ export function RequirementsList(props: RequirementsListProps): JSX.Element {
           <ul className={css.items}>
             {group.items.map(item => (
               <li key={item.id} className={css.item}>
-                <div className={css.itemMain}>
-                  <div className={css.itemTitleRow}>
-                    <span className={css.itemTitle}>{item.title}</span>
-                    <span className={`${css.statusPill} ${statusClass(item.status)}`}>{t(`requirement.status.${item.status}`)}</span>
-                    <span className={`${css.priority} ${css[`priority_${item.priority}`]}`}>{t(`requirement.priority.${item.priority}`)}</span>
+                {/* Phase 1.2 增量：整行可点 → 触发 onOpen 打开详情页。
+                 *  按钮（删除）通过 stopPropagation 避免冒泡到 li 的 onClick。 */}
+                <button
+                  type="button"
+                  className={css.itemMainButton}
+                  onClick={() => { onOpen(item.id) }}
+                  aria-label={t('requirement.list.open')}
+                  title={t('requirement.list.open')}
+                >
+                  <div className={css.itemMain}>
+                    <div className={css.itemTitleRow}>
+                      <span className={css.itemTitle}>{item.title}</span>
+                      <span className={`${css.statusPill} ${statusClass(item.status)}`}>{t(`requirement.status.${item.status}`)}</span>
+                      <span className={`${css.priority} ${css[`priority_${item.priority}`]}`}>{t(`requirement.priority.${item.priority}`)}</span>
+                    </div>
+                    {item.description !== '' && <p className={css.itemDescription}>{item.description}</p>}
+                    <div className={css.itemMeta}>
+                      <span className={css.itemTime}>{formatTime(item.createdAt)}</span>
+                      {item.tags.length > 0 && (
+                        <span className={css.itemTags}>
+                          {item.tags.map(tag => <span key={tag} className={css.tag}>#{tag}</span>)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  {item.description !== '' && <p className={css.itemDescription}>{item.description}</p>}
-                  <div className={css.itemMeta}>
-                    <span className={css.itemTime}>{formatTime(item.createdAt)}</span>
-                    {item.tags.length > 0 && (
-                      <span className={css.itemTags}>
-                        {item.tags.map(tag => <span key={tag} className={css.tag}>#{tag}</span>)}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                </button>
                 <button
                   type="button"
                   className={css.deleteButton}
-                  onClick={() => { onDelete(item.id) }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(item.id)
+                  }}
                   aria-label={t('requirement.list.delete')}
                   title={t('requirement.list.delete')}
                 >

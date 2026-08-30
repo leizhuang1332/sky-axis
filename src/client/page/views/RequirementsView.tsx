@@ -35,10 +35,12 @@ export interface RequirementsViewProps {
   onNewRequirement: () => void
   /** 当前是否有可用 workspace。按钮始终可点；该值仅作为未来视觉 hint。 */
   hasWorkspace: boolean
+  /** Phase 1.2：点击条目 → 打开详情页。 */
+  onOpen: (id: string) => void
 }
 
 export function RequirementsView({
-  t, requirements, workspaces, loading, error, onDelete, onNewRequirement, hasWorkspace,
+  t, requirements, workspaces, loading, error, onDelete, onNewRequirement, hasWorkspace, onOpen,
 }: RequirementsViewProps): JSX.Element {
   return (
     <div className={css.view}>
@@ -65,6 +67,7 @@ export function RequirementsView({
           loading={loading}
           error={error}
           onDelete={onDelete}
+          onOpen={onOpen}
         />
       </section>
     </div>

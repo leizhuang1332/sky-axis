@@ -278,3 +278,87 @@ export function CheckIcon({ size = 14, className }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/* ── Phase 1.2 详情页 icon（7 个）── */
+
+/** 时钟 —— Stepper / 详情页「理解」阶段。 */
+export function ClockIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5v3.2l2 1.5" />
+    </svg>
+  )
+}
+
+/** 旗 —— Stepper / 详情页「规划」阶段。 */
+export function FlagIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M4 2.5v11" />
+      <path d="M4 3.5h7l-1.5 2.5L11 8.5H4" />
+    </svg>
+  )
+}
+
+/** 流程节点（圆 + 折线）—— Stepper / 详情页「实现」阶段。 */
+export function WorkflowIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <rect x="2" y="3" width="3.5" height="2.5" rx="0.5" />
+      <rect x="10.5" y="3" width="3.5" height="2.5" rx="0.5" />
+      <rect x="6" y="10.5" width="4" height="2.5" rx="0.5" />
+      <path d="M5.5 5.5L5.5 8 8 8" />
+      <path d="M10.5 5.5L10.5 8 8 8" />
+      <path d="M8 10.5L8 8" />
+    </svg>
+  )
+}
+
+/** 播放三角 —— Stepper / 详情页「验证」阶段 + AiConductorPane「启动 AI」按钮。 */
+export function PlayIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)} fill="currentColor" stroke="none">
+      <path d="M5 3.5v9l7-4.5z" />
+    </svg>
+  )
+}
+
+/** 暂停双竖线 —— Stepper / 详情页「交付」阶段 + AiConductorPane「暂停」按钮。 */
+export function PauseIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)} fill="currentColor" stroke="none">
+      <rect x="4.5" y="3.5" width="2.5" height="9" rx="0.4" />
+      <rect x="9" y="3.5" width="2.5" height="9" rx="0.4" />
+    </svg>
+  )
+}
+
+/** 停止方块 —— AiConductorPane「取消 / 停止」按钮。 */
+export function StopIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)} fill="currentColor" stroke="none">
+      <rect x="4" y="4" width="8" height="8" rx="0.6" />
+    </svg>
+  )
+}
+
+/** 三角警告 —— AiConductorPane「errored」状态指示。 */
+export function WarningTriangleIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M8 2L14.5 13h-13L8 2z" />
+      <path d="M8 6.5v3.5" />
+      <circle cx="8" cy="11.8" r="0.55" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+/** 对话气泡 —— InterventionQueuePane「question」kind 图标。 */
+export function CommentIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 12 11H7.5L5 13v-2H4A1.5 1.5 0 0 1 2.5 9.5v-5z" />
+    </svg>
+  )
+}

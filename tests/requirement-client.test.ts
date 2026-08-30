@@ -40,7 +40,7 @@ function errJson(code: string, detail?: string, status = 400): Response {
   })
 }
 
-/** 一条合法 requirement。 */
+/** 一条合法 requirement（Phase 1.2 加 8 个开发意图工作台字段默认值）。 */
 const SAMPLE: Requirement = {
   id: '2026-08-30T12:00:00.000Z-aaaaa1',
   workspaceId: WorkspaceIdSchema.parse('ws-1'),
@@ -51,6 +51,15 @@ const SAMPLE: Requirement = {
   tags: [],
   createdAt: '2026-08-30T12:00:00.000Z',
   updatedAt: '2026-08-30T12:00:00.000Z',
+  // ── Phase 1.2 新增（与 protocol.ts RequirementSchema 默认值一一对应）──
+  stage: 'understand',
+  stageHistory: [{ stage: 'understand', enteredAt: '2026-08-30T12:00:00.000Z' }],
+  aiState: 'idle',
+  aiSessionId: null,
+  aiLastActivityAt: null,
+  interventionQueue: [],
+  artifacts: {},
+  branch: null,
 }
 
 /** 合法 NewRequirement 入参（带 WorkspaceId brand）。 */

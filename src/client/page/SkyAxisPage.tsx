@@ -28,6 +28,7 @@ import { useSyncExternalStore } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkyAxisController, SkyAxisViewKey } from '../controller/sky-axis-controller.ts'
 import { getWorkspaceOps, type WorkspaceOps } from '../index.ts'
+import { Toast } from '../ui/Toast.tsx'
 import { NewRequirementModal } from './sections/NewRequirementModal.tsx'
 import { SkyAxisSidebar } from './sidebar/SkyAxisSidebar.tsx'
 import { HomeView } from './views/HomeView.tsx'
@@ -36,6 +37,7 @@ import { PersonalView } from './views/PersonalView.tsx'
 import { RequirementsView } from './views/RequirementsView.tsx'
 import { ReportsView } from './views/ReportsView.tsx'
 import { SettingsView } from './views/SettingsView.tsx'
+import { RequirementDetailPage } from './views/RequirementDetailPage.tsx'
 import css from './SkyAxisPage.module.css'
 
 export interface SkyAxisPageProps {
@@ -60,7 +62,11 @@ function BackIcon(): JSX.Element {
 export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.Element {
   // 订阅 controller —— viewKey / requirements / workspaces 任一变化时整组件重渲染。
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  const { viewKey, sidebarCollapsed, personalExpanded, requirements, workspaces, requirementsLoading, requirementsError } = snapshot
+  const {
+    viewKey, sidebarCollapsed, personalExpanded,
+    requirements, workspaces, requirementsLoading, requirementsError,
+    selectedRequirementId, detailLoading, detailError,
+  } = snapshot
 
   /* ── 弹窗状态（modal 是 QuickActions 触发，渲染在 page 顶层）── */
   const [modalOpen, setModalOpen] = useState(false)
@@ -102,9 +108,22 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
     void controller.deleteRequirement(id)
   }, [controller])
 
+  // Phase 1.2：详情页路由回调
+  const handleOpen = useCallback((id: string): void => {
+    controller.openDetail(id)
+  }, [controller])
+  const handleBackFromDetail = useCallback((): void => {
+    controller.closeDetail()
+  }, [controller])
+
   const onSelect = (k: SkyAxisViewKey): void => { controller.setView(k) }
   const onToggleCollapse = (): void => { controller.toggleSidebar() }
   const onPersonalToggle = (): void => { controller.togglePersonalExpanded() }
+
+  // 当前详情 requirement（从列表里找）
+  const detailRequirement = selectedRequirementId !== null
+    ? requirements.find(r => r.id === selectedRequirementId) ?? null
+    : null
 
   return (
     <div className={css.page} data-dsh-part="sky-axis-page">
@@ -139,25 +158,58 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
           hasWorkspace={workspaces.length > 0}
         />
         <div className={css.viewArea}>
-          {viewKey === 'home'     && (
-            <HomeView t={t} />
+          {/* Phase 1.2：详情页路由 —— 顶层短路渲染。
+             *  与 viewKey 独立：详情打开不影响 viewKey，回到列表仍是当前 viewKey。
+             *  detailRequirement 缺失（被并发删除 / 列表还没拉到）时降级空态。 */}
+          {selectedRequirementId !== null ? (
+            detailRequirement !== null ? (
+              <RequirementDetailPage
+                t={t}
+                requirement={detailRequirement}
+                workspaces={workspaces}
+                detailLoading={detailLoading}
+                detailError={detailError}
+                onBack={handleBackFromDetail}
+              />
+            ) : (
+              <div className={css.view}>
+                <header className={css.viewHeader}>
+                  <h2 className={css.viewTitle}>{t('requirement.detail.title')}</h2>
+                  <p className={css.viewSubtitle}>{t('requirement.detail.notFound')}</p>
+                </header>
+                <button
+                  type="button"
+                  className={css.viewPrimaryButton}
+                  onClick={handleBackFromDetail}
+                >
+                  {t('requirement.detail.back')}
+                </button>
+              </div>
+            )
+          ) : (
+            <>
+              {viewKey === 'home'     && (
+                <HomeView t={t} />
+              )}
+              {viewKey === 'team'     && <TeamView t={t} />}
+              {viewKey === 'personal' && <PersonalView t={t} />}
+              {viewKey === 'requirements' && (
+                <RequirementsView
+                  t={t}
+                  requirements={requirements}
+                  workspaces={workspaces}
+                  loading={requirementsLoading}
+                  error={requirementsError}
+                  onDelete={handleDelete}
+                  onNewRequirement={openModal}
+                  hasWorkspace={workspaces.length > 0}
+                  onOpen={handleOpen}
+                />
+              )}
+              {viewKey === 'reports'  && <ReportsView t={t} />}
+              {viewKey === 'settings' && <SettingsView t={t} />}
+            </>
           )}
-          {viewKey === 'team'     && <TeamView t={t} />}
-          {viewKey === 'personal' && <PersonalView t={t} />}
-          {viewKey === 'requirements' && (
-            <RequirementsView
-              t={t}
-              requirements={requirements}
-              workspaces={workspaces}
-              loading={requirementsLoading}
-              error={requirementsError}
-              onDelete={handleDelete}
-              onNewRequirement={openModal}
-              hasWorkspace={workspaces.length > 0}
-            />
-          )}
-          {viewKey === 'reports'  && <ReportsView t={t} />}
-          {viewKey === 'settings' && <SettingsView t={t} />}
         </div>
       </main>
 
@@ -185,6 +237,9 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
           onClose={closeModal}
         />
       )}
+
+      {/* Phase 1.2：Toast 全局错误提示（订阅 controller.requirementsError / detailError） */}
+      <Toast controller={controller} t={t as unknown as (k: string) => string} />
     </div>
   )
 }

@@ -87,17 +87,44 @@
 
 .item {
   display: flex;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 6px 8px;
   background: var(--dsw-alias-bg-primary, #ffffff);
   border: 1px solid var(--dsw-alias-border-secondary, #e8eaef);
   border-radius: 8px;
   transition: border-color 120ms ease, box-shadow 120ms ease;
+  align-items: stretch;
 }
 
 .item:hover {
   border-color: var(--dsw-alias-border-primary, #c8ccd5);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* Phase 1.2 增量：li 内的整行可点按钮（点开详情页）。
+   用 button 重置样式（无背景/无边框）+ 内部 flex 布局，让视觉与原 li 一致。 */
+.itemMainButton {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.itemMainButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(59, 110, 245, 0.06));
+}
+
+.itemMainButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #3b6ef5);
+  outline-offset: 2px;
 }
 
 .itemMain {

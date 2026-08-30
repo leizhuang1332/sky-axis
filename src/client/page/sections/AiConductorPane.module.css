@@ -1,0 +1,231 @@
+/* AiConductorPane —— 详情页左列 AI 协奏面板。
+   颜色全部 --dsw-alias-* 令牌。 */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── 状态卡 ── */
+
+.statusCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  position: relative;
+  min-width: 0;
+}
+
+.statusCard[data-level="running"]   { border-color: color-mix(in srgb, var(--dsw-alias-state-business-success, #22c55e) 50%, transparent); }
+.statusCard[data-level="paused"]    { border-color: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 50%, transparent); }
+.statusCard[data-level="errored"]   { border-color: color-mix(in srgb, #ef4444 50%, transparent); }
+.statusCard[data-level="awaiting"]  { border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 50%, transparent); }
+
+.statusIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statusCard[data-level="running"] .statusIcon   { background: color-mix(in srgb, var(--dsw-alias-state-business-success, #22c55e) 18%, transparent); color: var(--dsw-alias-state-business-success, #22c55e); }
+.statusCard[data-level="paused"] .statusIcon    { background: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 18%, transparent); color: var(--dsw-alias-state-business-warning, #f59e0b); }
+.statusCard[data-level="errored"] .statusIcon   { background: color-mix(in srgb, #ef4444 18%, transparent); color: #ef4444; }
+.statusCard[data-level="awaiting"] .statusIcon  { background: var(--dsw-alias-state-business-secondary); color: var(--dsw-alias-state-business-primary); }
+
+.statusIconSvg {
+  display: inline-flex;
+}
+
+.statusText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.statusLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.statusHint {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.dotRunning {
+  background: var(--dsw-alias-state-business-success, #22c55e);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.3); }
+}
+
+/* ── 最近活动 ── */
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+}
+
+.metaLabel {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.metaValue {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+/* ── 操作按钮组 ── */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.actionsRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  flex: 1;
+  min-width: 0;
+}
+
+.primaryButton {
+  background: var(--dsw-alias-state-business-primary);
+  color: #ffffff;
+}
+
+.primaryButton:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.primaryButton:disabled {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l1);
+}
+
+.secondaryButton:disabled {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-tertiary);
+  border-color: var(--dsw-alias-border-l1);
+  cursor: not-allowed;
+}
+
+.buttonIcon {
+  display: inline-flex;
+}
+
+/* ── 阶段推进 ── */
+
+.stageActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-separator-secondary);
+}
+
+.stageActionsTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Phase 1 占位 ── */
+
+.placeholder {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 35%, transparent);
+}
+
+.placeholderText {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.5;
+}

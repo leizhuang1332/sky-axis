@@ -9,6 +9,10 @@
  *   - requirementOptions.workspaces: workspace 选项（来自 ctx.workspaces 订阅）
  *   - requirementsLoading: 列表是否在 fetch 中
  *   - requirementsError: 最近一次失败原因（用于 UI 提示）
+ *   - selectedRequirementId: 当前打开的需求详情 id（详情路由）；
+ *                            非 null 时 viewArea 整体渲染 RequirementDetailPage
+ *   - detailLoading: 单条详情 fetch 中（与 requirementsLoading 区分开）
+ *   - detailError: 单条详情最近失败原因
  *
  * 关键不变式：
  *   - 打开页面（openPage）时强制 viewKey 重置为 'home'
@@ -16,6 +20,9 @@
  *   - setView 仅在 pageOpen=true 时生效
  *   - 折叠状态与 pageOpen 完全独立
  *   - requirements 与 workspaces 改动必触发 notify（引用必变，React 重渲染）
+ *   - selectedRequirementId 与 viewKey 互相独立：开详情不切 viewKey（让「团队 →
+ *     详情 → 返回」自然回「团队」），closeDetail 不切 viewKey（让「需求列表
+ *     → 详情 → 返回」自然回「需求列表」）
  *
  * 实现方式：单一可变 snapshot + Set<listener>。subscribe 返回 unsubscribe；
  * getSnapshot 返回引用，每次状态变化时构造新 snapshot 对象。
@@ -63,11 +70,60 @@ export interface SkyAxisSnapshot {
   requirementsLoading: boolean
   /** 最近一次 CRUD / SSE 失败原因（null = 无错误）。UI 用来显示 toast 或 inline 提示。 */
   requirementsError: RequirementError | null
+  /* ── Phase 1.2：详情页路由 ── */
+  /** 当前打开的详情页 requirement id；null = 没打开详情（显示当前 viewKey 视图）。
+   *  与 viewKey 互相独立 —— 详情页全屏占满 viewArea，sidebar 仍可见但 entry 不高亮。 */
+  selectedRequirementId: string | null
+  /** 单条详情 GET 进行中状态（与 requirementsLoading 区分：列表加载 vs 详情加载）。 */
+  detailLoading: boolean
+  /** 单条详情最近失败原因（null = 无错误）。 */
+  detailError: RequirementError | null
+}
+
+/** 5 阶段开发意图工作流的阶段 key —— 与 protocol.ts StageSchema 一一对应。
+ *  controller 镜像 type 与 host schema 保持同名字面量；修改时同步。 */
+export type RequirementStage = 'understand' | 'plan' | 'implement' | 'verify' | 'deliver'
+
+/** AI session 顶层状态 —— 与 protocol.ts AiStateSchema 一一对应。 */
+export type RequirementAiState = 'idle' | 'running' | 'paused' | 'awaiting-input' | 'errored'
+
+/** 介入队列项镜像（client bundle 不依赖 protocol.ts zod）。 */
+export interface RequirementInterventionItem {
+  id: string
+  kind: 'approval' | 'question' | 'review'
+  rpcId: string
+  summary: string
+  createdAt: string
+  /** 原 JSON 帧内容，复杂问答表单读此字段渲染。 */
+  payload: unknown
+}
+
+/** 阶段产物镜像。 */
+export interface RequirementArtifact {
+  id: string
+  kind: 'plan' | 'patch' | 'note' | 'log' | 'report'
+  title: string
+  createdAt: string
+  body: string
+  meta?: Record<string, unknown>
+}
+
+/** 阶段流转历史条目镜像。 */
+export interface RequirementStageHistoryEntry {
+  stage: RequirementStage
+  enteredAt: string
+  leftAt?: string
+  outcome?: 'completed' | 'manual' | 'rolled-back' | 'errored'
 }
 
 /** 极简 Requirement 镜像（与 host Requirement schema 同字段子集）。
  *  此处重定义而非直接 import 是为了 client bundle 不依赖 protocol.ts 的 zod
- *  schema（让 client 体积更小）。host 端 schema 仍为权威源。 */
+ *  schema（让 client 体积更小）。host 端 schema 仍为权威源。
+ *
+ *  Phase 1.2 增量：加 8 个开发意图工作台字段（全部 optional）。
+ *  - 旧 KV 记录若缺这些字段（storage domain v1 时段的记录），client 解析为
+ *    undefined，由 detail UI 做兜底（默认 'idle' / 空数组）。
+ *  - Phase 2 升 v2 + host 主动写默认值后，这里改为必填。 */
 export interface RequirementEntry {
   id: string
   workspaceId: string
@@ -78,6 +134,15 @@ export interface RequirementEntry {
   tags: string[]
   createdAt: string
   updatedAt: string
+  /* ── Phase 1.2 新增（全部 optional 保持 v1 兼容）── */
+  stage?: RequirementStage
+  stageHistory?: RequirementStageHistoryEntry[]
+  aiState?: RequirementAiState
+  aiSessionId?: string | null
+  aiLastActivityAt?: string | null
+  interventionQueue?: RequirementInterventionItem[]
+  artifacts?: Record<string, RequirementArtifact>
+  branch?: string | null
 }
 
 /** CRUD / SSE 错误（轻量版，client UI 展示用）。 */
@@ -91,10 +156,19 @@ export interface RequirementError {
     | 'internal-error'
     | 'network-error'
     | 'workspace-create-failed'
+    /* ── Phase 1.2 新增（AI / 详情 / 产物 / 阶段错误码）── */
+    | 'ai-not-configured'
+    | 'ai-session-missing'
+    | 'ai-event-failed'
+    | 'artifact-not-found'
+    | 'stage-invalid'
   detail?: string
 }
 
-/** Requirement 流事件（SSE）。 */
+/** Requirement 流事件（SSE）。
+ *  Phase 1 仅保留 2 个基本操作（与 host 端 SSE 帧对齐）；
+ *  Phase 2/3 扩展为 8 个（stageChanged / aiStateChanged / interventionAdded /
+ *  interventionRemoved / artifactUpdated / aiError），详见 Plan §2.3。 */
 export type RequirementStreamEvent =
   | { operation: 'put'; item: RequirementEntry }
   | { operation: 'deleted'; id: string }
@@ -150,6 +224,26 @@ export interface SkyAxisController {
 
   /** 处理 SSE 事件（来自 subscribeRequirementEvents 回调）。 */
   handleStreamEvent(event: RequirementStreamEvent): void
+
+  /* ── Phase 1.2：详情页路由 ── */
+
+  /** 打开详情页（幂等）。
+   *  - 设 selectedRequirementId；**不**改 viewKey（让「列表 → 详情 → 返回」自然回列表）
+   *  - 自动触发 loadDetail 拉最新数据
+   *  - id 不存在时：清 selectedRequirementId + 写 detailError
+   */
+  openDetail(id: string): void
+
+  /** 关闭详情页（幂等）。
+   *  - selectedRequirementId = null；**不**改 viewKey
+   */
+  closeDetail(): void
+
+  /** 当前打开的详情 requirement id（无则 null）。 */
+  getSelectedRequirementId(): string | null
+
+  /** 拉取单条详情（host get 路由）；可选 —— openDetail 已自动触发。 */
+  loadDetail(id: string): Promise<void>
 }
 
 /**
@@ -158,6 +252,7 @@ export interface SkyAxisController {
  * @param loadImpl - 拉取列表的实现（由调用方注入 RequirementClient.list）
  * @param createImpl - 新建需求的实现（注入 RequirementClient.create）
  * @param deleteImpl - 删除需求的实现（注入 RequirementClient.remove）
+ * @param detailImpl - 拉取单条详情的实现（Phase 2 接 host get 路由；Phase 1 可选）
  */
 export function createSkyAxisController(deps: {
   loadImpl?: () => Promise<{ ok: boolean; items?: RequirementEntry[]; error?: RequirementError }>
@@ -169,6 +264,8 @@ export function createSkyAxisController(deps: {
     tags?: string[]
   }) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
   deleteImpl?: (id: string) => Promise<{ ok: boolean; error?: RequirementError }>
+  /** Phase 1.2 增量：单条详情 GET（host /requirements/get?id=...）。 */
+  detailImpl?: (id: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
@@ -179,6 +276,10 @@ export function createSkyAxisController(deps: {
     workspaces: [],
     requirementsLoading: false,
     requirementsError: null,
+    // ── Phase 1.2 详情页路由初始状态 ──
+    selectedRequirementId: null,
+    detailLoading: false,
+    detailError: null,
   }
   const listeners = new Set<() => void>()
 
@@ -343,6 +444,88 @@ export function createSkyAxisController(deps: {
         snapshot = { ...snapshot, requirements: next.sort((a, b) => b.id.localeCompare(a.id)) }
       } else {
         snapshot = { ...snapshot, requirements: snapshot.requirements.filter(r => r.id !== event.id) }
+      }
+      notify()
+    },
+
+    /* ── Phase 1.2：详情页路由 ── */
+
+    openDetail(id) {
+      // 幂等：相同 id 已在详情页 → no-op（避免重复触发 loadDetail）
+      if (snapshot.selectedRequirementId === id) return
+      // 关闭当前详情错误状态（避免旧错误残留）
+      const isNew = snapshot.selectedRequirementId !== id
+      snapshot = { ...snapshot, selectedRequirementId: id, detailError: null }
+      notify()
+      // 打开后自动拉详情（detailImpl 在 Phase 2 由 client/index.ts 注入）
+      if (isNew) {
+        void this.loadDetail(id)
+      }
+    },
+
+    closeDetail() {
+      if (snapshot.selectedRequirementId === null && snapshot.detailError === null) return
+      snapshot = { ...snapshot, selectedRequirementId: null, detailError: null }
+      notify()
+    },
+
+    getSelectedRequirementId() {
+      return snapshot.selectedRequirementId
+    },
+
+    async loadDetail(id) {
+      // 本地优先：列表里已有就直接合并（openDetail 触发的初次拉取，列表刚加载完的场景）
+      const local = snapshot.requirements.find(r => r.id === id)
+      if (local !== undefined && local.stage !== undefined) {
+        // 列表里有完整 stage 等字段（host 已写默认值），无需重复 GET
+        // 这里什么也不做 —— openDetail 已经把 selectedRequirementId 设上，
+        // UI 端会从 snapshot.requirements 找到该 id 并渲染。
+        return
+      }
+      // 缺 detailImpl（Phase 1 demo）：纯本地模式兜底，不写错误干扰 UI
+      //   - 本地有数据（即便字段不全）→ UI 端会用 stage ?? 'understand' 等兜底渲染
+      //   - 本地无数据 → 写 requirement-not-found 错误（防御，正常情况不会发生）
+      if (deps.detailImpl === undefined) {
+        if (local !== undefined) return
+        snapshot = {
+          ...snapshot,
+          detailError: projectError(
+            'requirement-not-found',
+            `requirement ${id} not in local cache and detailImpl not injected`,
+          ),
+        }
+        notify()
+        return
+      }
+      snapshot = { ...snapshot, detailLoading: true, detailError: null }
+      notify()
+      try {
+        const result = await deps.detailImpl(id)
+        if (result.ok && result.item !== undefined) {
+          const item = projectItem(result.item)
+          // 合并到列表（如果列表里没有这条 —— 比如列表还没加载完就 openDetail）
+          const exists = snapshot.requirements.some(r => r.id === item.id)
+          const nextList = exists
+            ? snapshot.requirements.map(r => r.id === item.id ? item : r)
+            : [item, ...snapshot.requirements]
+          snapshot = {
+            ...snapshot,
+            requirements: nextList.sort((a, b) => b.id.localeCompare(a.id)),
+            detailLoading: false,
+          }
+        } else if (!result.ok) {
+          snapshot = {
+            ...snapshot,
+            detailLoading: false,
+            detailError: result.error ?? projectError('internal-error'),
+          }
+        }
+      } catch (e) {
+        snapshot = {
+          ...snapshot,
+          detailLoading: false,
+          detailError: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }
       }
       notify()
     },

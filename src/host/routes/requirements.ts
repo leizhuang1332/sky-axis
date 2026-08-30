@@ -71,8 +71,13 @@ function mapStatus(code: SkyAxisErrorCode): number {
   switch (code) {
     case 'validation-failed':       return 400
     case 'workspace-not-found':
-    case 'requirement-not-found':   return 404
-    case 'workspace-list-failed':   return 502
+    case 'requirement-not-found':
+    case 'artifact-not-found':      return 404
+    case 'stage-invalid':           return 422
+    case 'workspace-list-failed':
+    case 'ai-event-failed':         return 502
+    case 'ai-not-configured':       return 503
+    case 'ai-session-missing':      return 409
     case 'invalid-record':          return 500
     case 'internal-error':          return 500
   }
