@@ -11,9 +11,12 @@
 .sidebar {
   flex: none;
   width: 208px;
-  /* 与整页 padding 对齐：上下留 6px，左右用 sidebar 自身 padding */
-  margin: -12px 0 -12px -16px;
-  padding: 12px 10px 14px;
+  /* 上下用负 margin 与 page 上下边缘对齐；左右由 page 的 16px padding 制造
+     sidebar 与 page 内容区的自然间距 —— 不再 margin-left: -16px 把 sidebar
+     紧贴 page 内容左边，避免 entry / QuickActions 按钮视觉上"贴 sidebar 左边"
+     看起来像被截断。 */
+  margin: -12px 0;
+  padding: 12px 12px 14px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
