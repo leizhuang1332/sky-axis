@@ -76,6 +76,6 @@ export function apply(ctx: ClientContext): void {
 
 // 包表面：cordis 加载所需的 apply + 命名空间 key 类型
 export type { HelloKey }
-export type { HelloController, HelloSnapshot } from './controller/hello-controller.ts'
+export type { HelloController, HelloSnapshot, HelloViewKey } from './controller/hello-controller.ts'
 export { ENTRY_SELECTOR } from './mount/sidebar-entry.ts'
 export { HELLO_VIEW_SELECTOR } from './mount/hello-page-mount.tsx'

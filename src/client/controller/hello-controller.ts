@@ -1,71 +1,102 @@
 /**
- * Hello 页面控制器 —— 极小状态机，仅持有 pageOpen 标志位与订
- * 阅器。
+ * Hello 控制器 —— 纯状态机（无 DOM / 无 React）。
  *
- * 设计上与 dsh-task-board / dsh-ssh 的 PanelController 一致：
- * 暴露 getSnapshot + subscribe 两个对 React useSyncExternalStore
- * 友好的接口；sidebar entry 用 subscribe + isOpen 维持 active 高亮，
- * mount.tsx 用 getSnapshot 读取状态、用 setState 写入。
+ * 状态面（HelloSnapshot）：
+ *   - pageOpen: 主列整页是否打开
+ *   - viewKey:  当前选中的内部视图（仅在 pageOpen=true 时有意义）
  *
- * 真正的「切换激活态」逻辑（与 task-board / ssh 的协调、sidebar
- * context click 让出）由 hello-page-mount.tsx 调用本控制器实现。
+ * 关键不变式：
+ *   - 打开页面（openPage）时强制 viewKey 重置为 'home'，避免上次关闭时
+ *     留在非首页视图造成「打开却看不到 dashboard」的歧义
+ *   - 关闭页面（closePage）时**保留** viewKey，下次打开仍在原视图
+ *     （与 dsh-shell 的「保留用户视图」习惯一致）
+ *   - setView 仅在 pageOpen=true 时生效（关掉后视图切换无视觉意义）
+ *
+ * 实现方式：单一可变 snapshot + Set<listener>。subscribe 返回 unsubscribe；
+ * getSnapshot 返回引用（React useSyncExternalStore 友好 —— 每次状态变化
+ * snapshot 引用必变，触发重渲染）。
  */
 
-/** 控制器持有的快照形状。 */
+/** hello 内部 5 个视图 key。 */
+export type HelloViewKey = 'home' | 'team' | 'personal' | 'reports' | 'settings'
+
+/** controller 暴露给订阅者的快照。 */
 export interface HelloSnapshot {
-  /** 主列 page 是否正占据 conversation。 */
   pageOpen: boolean
+  viewKey: HelloViewKey
 }
 
-/** Hello 控制器公开接口。 */
+/** controller 公开 API。 */
 export interface HelloController {
-  /** 订阅快照变化（用于 React 与 sidebar entry 同步）。 */
+  /** 订阅状态变化，返回 unsubscribe。 */
   subscribe(listener: () => void): () => void
-  /** 读取当前快照（用于 React useSyncExternalStore）。 */
+  /** 读取当前快照（引用稳定，仅在状态变化时切新对象）。 */
   getSnapshot(): HelloSnapshot
-  /** 同步读取 pageOpen 状态（sidebar active bridge 用）。 */
+  /** pageOpen === true（避免 React 端每次解构判断）。 */
   isPageOpen(): boolean
-  /** 打开 hello 页面（mount 负责发 ACTIVATE 事件 + 设 html data attr）。 */
+  /** 打开主列页面（幂等）；同时把 viewKey 重置为 'home'。 */
   openPage(): void
-  /** 关闭 hello 页面（mount 负责清理 html data attr）。 */
+  /** 关闭主列页面（幂等）；保留 viewKey 不变。 */
   closePage(): void
-  /** 切换。 */
+  /** openPage / closePage 翻转。 */
   togglePage(): void
+  /** 切换内部视图（仅在 pageOpen=true 时生效）。 */
+  setView(view: HelloViewKey): void
+  /** 当前视图（pageOpen=false 时返回上次保留值）。 */
+  getView(): HelloViewKey
 }
 
-/** 构造一个全新控制器。 */
+/** 创建 hello 控制器实例（每次 apply 调用产生一个，与 cordis 生命周期对应）。 */
 export function createHelloController(): HelloController {
-  let snapshot: HelloSnapshot = { pageOpen: false }
+  let snapshot: HelloSnapshot = { pageOpen: false, viewKey: 'home' }
   const listeners = new Set<() => void>()
 
   const notify = (): void => {
-    for (const listener of listeners) listener()
+    for (const l of listeners) l()
   }
 
   return {
-    subscribe(listener: () => void): () => void {
+    subscribe(listener) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    getSnapshot(): HelloSnapshot {
+    getSnapshot() {
       return snapshot
     },
-    isPageOpen(): boolean {
+    isPageOpen() {
       return snapshot.pageOpen
     },
-    openPage(): void {
+    openPage() {
       if (snapshot.pageOpen) return
-      snapshot = { pageOpen: true }
+      // 打开时同时设 pageOpen + viewKey（重置为首页）。新对象让
+      // useSyncExternalStore 识别到变化。
+      snapshot = { pageOpen: true, viewKey: 'home' }
       notify()
     },
-    closePage(): void {
+    closePage() {
       if (!snapshot.pageOpen) return
-      snapshot = { pageOpen: false }
+      // 关闭时只翻 pageOpen，保留 viewKey（下次打开仍在原视图）。
+      snapshot = { pageOpen: false, viewKey: snapshot.viewKey }
       notify()
     },
-    togglePage(): void {
-      snapshot = { pageOpen: !snapshot.pageOpen }
+    togglePage() {
+      if (snapshot.pageOpen) {
+        // 与 closePage 行为一致：保留 viewKey
+        snapshot = { pageOpen: false, viewKey: snapshot.viewKey }
+      } else {
+        // 打开时重置到首页
+        snapshot = { pageOpen: true, viewKey: 'home' }
+      }
       notify()
+    },
+    setView(view) {
+      if (!snapshot.pageOpen) return
+      if (snapshot.viewKey === view) return
+      snapshot = { pageOpen: true, viewKey: view }
+      notify()
+    },
+    getView() {
+      return snapshot.viewKey
     },
   }
 }

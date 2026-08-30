@@ -1,6 +1,6 @@
 /* Hello 完整页面 —— 视觉契约与 dsh-task-board 的 board 完全一致。
    颜色全部走 --dsw-* 设计令牌，自动跟随 light/dark/skins。
-   整页布局（page / header / main / footer）+ center-column takeover。
+   整页布局（page / header / body / sidebar / viewArea / footer）+ center-column takeover。
 
    ⚠️ 顺序约束：本文件必须把 .page / .header / .backButton 等组件规则
    放在前面，把中心列 takeover 规则放在文件最后。接管规则依赖位置后
@@ -89,45 +89,49 @@
   white-space: nowrap;
 }
 
-/* ── 主区（开发工作台仪表板）── */
+/* ── body：左侧 sidebar + 右侧 viewArea（flex row）── */
 
-.main {
+.body {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex-direction: row;
+  gap: 0;
+  overflow: hidden;
+  /* 滚动交给 sidebar/viewArea 各自处理 */
+}
+
+/* 右侧视图区（与 sidebar 等高，滚动独立） */
+.viewArea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px;
   overflow-y: auto;
   /* 滚动条配色 —— 与 task-board 一致 */
   scrollbar-color: var(--dsw-alias-border-l3) var(--dsw-alias-interactive-bg-hover);
   scrollbar-width: thin;
 }
 
-.main::-webkit-scrollbar {
+.viewArea::-webkit-scrollbar {
   width: 10px;
 }
 
-.main::-webkit-scrollbar-track {
+.viewArea::-webkit-scrollbar-track {
   background: var(--dsw-alias-interactive-bg-hover);
   border-radius: 999px;
 }
 
-.main::-webkit-scrollbar-thumb {
+.viewArea::-webkit-scrollbar-thumb {
   background: var(--dsw-alias-border-l3);
   background-clip: content-box;
   border: 2px solid transparent;
   border-radius: 999px;
 }
 
-.main::-webkit-scrollbar-thumb:hover {
+.viewArea::-webkit-scrollbar-thumb:hover {
   background: var(--dsw-alias-border-l4);
   background-clip: content-box;
-}
-
-/* 主区下 dashboard 容器占满剩余高度；dashboardGrid 自身 2 列 → 1 列 */
-.dashboardGrid {
-  flex: 1;
-  min-height: 0;
 }
 
 /* ── 底部状态条（对应 .detailFooter 视觉）── */

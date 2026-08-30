@@ -1,25 +1,33 @@
 /**
- * Dashboard section 4 — 底部 3 个快捷入口按钮。
+ * Dashboard section 4 — 底部 3 个快捷入口按钮（由 HelloSidebar 引用）。
  *
  * 全部 mock：点击只 console.info + window.alert，不调任何 RPC。
  * 让用户预览「开发工作台」3 个常见动作的入口位置。
- * 真实接入时把 onClick 改为 dispatch 命令或路由跳转即可。
+ *
+ * 位置：上一轮在 HelloPage 底部；这一轮改为挂在 HelloSidebar 底部，
+ *      任何视图都可见（语义升级为「全局快捷入口」）。
+ *
+ * 图标：使用 src/client/icons/icons.tsx 提供的 SVG 组件（替代 unicode）。
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import {
+  PlusIcon, BranchIcon, MergeRequestIcon,
+  type IconComponent,
+} from '../../icons/icons.tsx'
 import css from './dashboard.module.css'
 
 type QuickActionKey = 'newRequirement' | 'newBranch' | 'newMr'
 
 interface QuickActionData {
   key: QuickActionKey
-  icon: string
+  Icon: IconComponent
 }
 
 /** 演示快捷入口 —— 3 个常见动作。 */
 const ACTIONS: readonly QuickActionData[] = [
-  { key: 'newRequirement', icon: '＋' },
-  { key: 'newBranch',      icon: '⎘' },
-  { key: 'newMr',          icon: '⇄' },
+  { key: 'newRequirement', Icon: PlusIcon },
+  { key: 'newBranch',      Icon: BranchIcon },
+  { key: 'newMr',          Icon: MergeRequestIcon },
 ] as const
 
 export interface QuickActionsProps {
@@ -32,6 +40,7 @@ export function QuickActions({ t }: QuickActionsProps): JSX.Element {
   return (
     <div className={css.quickActions}>
       {ACTIONS.map((a) => {
+        const Icon = a.Icon
         const label = t(`dashboard.quickActions.${a.key}`)
         const onClick = (): void => {
           // mock：仅 console + alert，不调任何 RPC
@@ -47,7 +56,9 @@ export function QuickActions({ t }: QuickActionsProps): JSX.Element {
             className={css.quickButton}
             onClick={onClick}
           >
-            <span className={css.quickButtonIcon} aria-hidden="true">{a.icon}</span>
+            <span className={css.quickButtonIcon}>
+              <Icon size={14} />
+            </span>
             <span>{label}</span>
           </button>
         )

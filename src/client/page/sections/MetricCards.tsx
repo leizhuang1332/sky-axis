@@ -5,9 +5,16 @@
  * 数字写在组件文件顶部 const，便于将来切换为真实数据源时
  * 把 useEffect 接入 ctx.* 即可，props 接口不变。
  *
+ * 图标：使用 src/client/icons/icons.tsx 提供的 SVG 组件（替代 emoji），
+ *      自动跟随父级 color 切换 dark/light/skins。
+ *
  * 布局：≥900px 4 列横排，<900px 2×2 堆叠。
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import {
+  TodoIcon, ProgressIcon, MergeIcon, AlertIcon,
+  type IconComponent,
+} from '../../icons/icons.tsx'
 import css from './dashboard.module.css'
 
 type MetricKey = 'todo' | 'progress' | 'mr' | 'alert'
@@ -15,17 +22,17 @@ type UnitKey = 'item' | 'piece' | 'count'
 
 interface MetricCardData {
   key: MetricKey
-  icon: string
+  Icon: IconComponent  // SVG 组件
   number: number
   unitKey: UnitKey
 }
 
 /** 演示指标数据 —— 真实数据接入时把这里换成 useEffect(ctx.get('xxx'))。 */
 const METRICS: readonly MetricCardData[] = [
-  { key: 'todo',     icon: '📋', number: 7, unitKey: 'item' },
-  { key: 'progress', icon: '🔄', number: 3, unitKey: 'item' },
-  { key: 'mr',       icon: '🔀', number: 5, unitKey: 'piece' },
-  { key: 'alert',    icon: '⚠️', number: 2, unitKey: 'count' },
+  { key: 'todo',     Icon: TodoIcon,     number: 7, unitKey: 'item' },
+  { key: 'progress', Icon: ProgressIcon, number: 3, unitKey: 'item' },
+  { key: 'mr',       Icon: MergeIcon,    number: 5, unitKey: 'piece' },
+  { key: 'alert',    Icon: AlertIcon,    number: 2, unitKey: 'count' },
 ] as const
 
 export interface MetricCardsProps {
@@ -37,18 +44,23 @@ export interface MetricCardsProps {
 export function MetricCards({ t }: MetricCardsProps): JSX.Element {
   return (
     <div className={css.metricRow}>
-      {METRICS.map((m) => (
-        <article key={m.key} className={css.metricCard}>
-          <div className={css.metricIcon} aria-hidden="true">{m.icon}</div>
-          <div className={css.metricBody}>
-            <p className={css.metricLabel}>{t(`dashboard.metric.${m.key}.label`)}</p>
-            <p className={css.metricNumber}>
-              <span className={css.metricNumberMain}>{m.number}</span>
-              <span className={css.metricNumberUnit}>{t(`dashboard.unit.${m.unitKey}`)}</span>
-            </p>
-          </div>
-        </article>
-      ))}
+      {METRICS.map((m) => {
+        const Icon = m.Icon
+        return (
+          <article key={m.key} className={css.metricCard}>
+            <div className={css.metricIcon}>
+              <Icon size={22} />
+            </div>
+            <div className={css.metricBody}>
+              <p className={css.metricLabel}>{t(`dashboard.metric.${m.key}.label`)}</p>
+              <p className={css.metricNumber}>
+                <span className={css.metricNumberMain}>{m.number}</span>
+                <span className={css.metricNumberUnit}>{t(`dashboard.unit.${m.unitKey}`)}</span>
+              </p>
+            </div>
+          </article>
+        )
+      })}
     </div>
   )
 }

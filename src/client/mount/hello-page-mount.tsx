@@ -80,7 +80,9 @@ export function mountHelloPage(opts: MountHelloOptions): () => void {
     container.className = css.page
     column.appendChild(container)
     root = createRoot(container)
-    root.render(<HelloPage t={t} onClose={() => { controller.closePage() }} />)
+    // 把 controller 传给 HelloPage，由它内部 useSyncExternalStore 订阅
+    // viewKey 变化 —— SPA 风格内部路由不需要路由库。
+    root.render(<HelloPage t={t} onClose={() => { controller.closePage() }} controller={controller} />)
   }
 
   // 框架在 boot 之后才挂主列；MutationObserver 等待它出现。

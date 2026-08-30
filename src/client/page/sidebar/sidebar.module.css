@@ -1,0 +1,128 @@
+/* Hello 内部 sidebar —— 5 entry + QuickActions（底部）。
+   视觉契约与 DSH shell 的左侧 sidebar 接近：窄列（208px）、分隔线、
+   文字色走 label-secondary、active 走 business 主色 + 浅背景。
+   颜色全部走 --dsw-* 设计令牌，自动跟随 light/dark/skins。
+
+   ⚠️ 顺序约束：本文件必须把组件规则放在前面，takeover / 兜底规则
+   放在文件末尾。 */
+
+/* ── sidebar 容器 ── */
+
+.sidebar {
+  flex: none;
+  width: 208px;
+  /* 与整页 padding 对齐：上下留 6px，左右用 sidebar 自身 padding */
+  margin: -12px 0 -12px -16px;
+  padding: 12px 10px 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  border-right: 1px solid var(--dsw-alias-separator-primary);
+  overflow-y: auto;
+  /* 滚动条配色 —— 内部 sidebar 不抢眼 */
+  scrollbar-color: var(--dsw-alias-border-l3) transparent;
+  scrollbar-width: thin;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--dsw-alias-border-l3);
+  border-radius: 999px;
+}
+
+/* ── entry 列表 ── */
+
+.entryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.entryItem {
+  margin: 0;
+  padding: 0;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.entry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.entry:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.entry:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.entryActive {
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+  font-weight: 600;
+}
+
+.entryActive:hover {
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.entryIcon {
+  flex: none;
+  /* active 状态：currentColor 已自动跟随；只需微调视觉权重 */
+  display: inline-flex;
+}
+
+.entryLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 分隔线 + QuickActions 区块标题 ── */
+
+.divider {
+  height: 1px;
+  background: var(--dsw-alias-separator-primary);
+  margin: 8px 4px 4px;
+}
+
+.quickLabel {
+  margin: 0;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
