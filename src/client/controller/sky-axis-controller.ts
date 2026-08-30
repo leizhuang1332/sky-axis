@@ -256,6 +256,32 @@ export interface UploadFileInput {
   size: number
 }
 
+/** 上传进度事件（与 client/api/requirement-client.ts 的 UploadProgress 同形）。 */
+export interface UploadProgress { loaded: number; total: number }
+
+/** 上传选项：进度回调 + 取消信号 + 超时。 */
+export interface UploadOptions {
+  onProgress?: (p: UploadProgress) => void
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
+/**
+ * 上传句柄：
+ *   - `promise`：服务端最终结果
+ *   - `abort()`：主动取消（浏览器刷新 / 关闭弹窗 / 用户点取消）
+ *
+ * 注意 promise 总是 resolve（不会 reject）；abort 后 resolve 成
+ * `{ ok: false, error: { code: 'network-error', detail: 'upload aborted' } }`。
+ *
+ * `item` 字段仅在 JSON add 路径携带（用 server record 立即覆盖整条）；
+ * upload 路径不携带 item，由 SSE put 事件同步到 snapshot。
+ */
+export interface UploadHandle {
+  promise: Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+  abort: () => void
+}
+
 /** 物料总数（client 镜像版本 —— 不依赖 protocol.ts zod，保持 client bundle 体积最小）。 */
 export function countRequirementMaterials(m: RequirementMaterials): number {
   return (
@@ -416,26 +442,34 @@ export interface SkyAxisController {
 
   /* ── Phase 2.5：物料 CRUD ── */
 
-  /** 上传一个 PRD 文件（multipart）。乐观插入 tempItem，成功后被服务端 record 替换。 */
-  addPrdFile(requirementId: string, file: UploadFileInput, uploadedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  /** 上传一个 PRD 文件（multipart）。乐观插入 tempItem，成功后被服务端 record 替换。
+   *
+   * 返回 `UploadHandle`（不是裸 Promise）：
+   *   - form 可 await `handle.promise` 等最终 ok/error
+   *   - form 也可调 `handle.abort()` 主动取消（页面刷新 / 关闭弹窗）
+   *   - 进度通过 `opts.onProgress` 上报；signal 透传到 XHR
+   *
+   * 乐观更新策略保持不变 —— controller 内部仍走 runMaterialMutation 骨架。
+   */
+  addPrdFile(requirementId: string, file: UploadFileInput, uploadedBy?: string, opts?: UploadOptions): UploadHandle
 
-  /** 上传一个附件（multipart）。 */
-  addAttachment(requirementId: string, file: UploadFileInput, uploadedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  /** 上传一个附件（multipart）。同 addPrdFile。 */
+  addAttachment(requirementId: string, file: UploadFileInput, uploadedBy?: string, opts?: UploadOptions): UploadHandle
 
-  /** 添加一个 PRD 链接（JSON）。 */
-  addPrdLink(requirementId: string, payload: AddPrdLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  /** 添加一个 PRD 链接（JSON）。同步返回 UploadHandle（abort 兜底为 noop）。 */
+  addPrdLink(requirementId: string, payload: AddPrdLinkInput, addedBy?: string): UploadHandle
 
   /** 添加一个源码仓库（JSON）。 */
-  addSourceRepo(requirementId: string, payload: AddSourceRepoInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  addSourceRepo(requirementId: string, payload: AddSourceRepoInput, addedBy?: string): UploadHandle
 
   /** 添加一个设计稿链接（JSON）。 */
-  addDesignLink(requirementId: string, payload: AddDesignLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  addDesignLink(requirementId: string, payload: AddDesignLinkInput, addedBy?: string): UploadHandle
 
   /** 添加一个外部链接（JSON）。 */
-  addExternalLink(requirementId: string, payload: AddExternalLinkInput, addedBy?: string): Promise<{ ok: boolean; error?: RequirementError }>
+  addExternalLink(requirementId: string, payload: AddExternalLinkInput, addedBy?: string): UploadHandle
 
-  /** 删除一个物料项（任意 section）。 */
-  removeMaterial(requirementId: string, section: RequirementMaterialSection, itemId: string): Promise<{ ok: boolean; error?: RequirementError }>
+  /** 删除一个物料项（任意 section）。同步返回 UploadHandle（abort 兜底为 noop）。 */
+  removeMaterial(requirementId: string, section: RequirementMaterialSection, itemId: string): UploadHandle
 }
 
 /**
@@ -459,20 +493,29 @@ export function createSkyAxisController(deps: {
   /** Phase 1.2 增量：单条详情 GET（host /requirements/get?id=...）。 */
   detailImpl?: (id: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
   /* ── Phase 2.5：物料 CRUD deps ── */
-  /** JSON add：4 种 section（prdLinks / sourceRepos / designLinks / externalLinks）。 */
+  /** JSON add：4 种 section（prdLinks / sourceRepos / designLinks / externalLinks）。
+   *
+   * 返回 UploadHandle（abort 兜底 noop）；item 字段携带 server record
+   * 立即替换整条。
+   */
   addMaterialImpl?: (input:
     | { section: 'prdLinks'; requirementId: string; payload: AddPrdLinkInput; addedBy: string }
     | { section: 'sourceRepos'; requirementId: string; payload: AddSourceRepoInput; addedBy: string }
     | { section: 'designLinks'; requirementId: string; payload: AddDesignLinkInput; addedBy: string }
     | { section: 'externalLinks'; requirementId: string; payload: AddExternalLinkInput; addedBy: string }
-  ) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
-  /** Multipart upload：2 种 section（prdFiles / attachments）。 */
+  ) => UploadHandle
+  /** Multipart upload：2 种 section（prdFiles / attachments）。
+   *
+   * 返回 `UploadHandle` 而非裸 Promise —— controller 需要把 abort 暴露给
+   * form 组件，让用户能主动取消（页面刷新 / 关闭弹窗）。client api 层
+   * 用 XMLHttpRequest 提供 onProgress + signal 能力。
+   */
   uploadMaterialImpl?: (input:
-    | { section: 'prdFiles'; requirementId: string; file: UploadFileInput; uploadedBy: string }
-    | { section: 'attachments'; requirementId: string; file: UploadFileInput; uploadedBy: string }
-  ) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
-  /** DELETE 移除：6 section 共用。 */
-  removeMaterialImpl?: (requirementId: string, section: RequirementMaterialSection, itemId: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+    | { section: 'prdFiles'; requirementId: string; file: UploadFileInput; uploadedBy: string; opts?: UploadOptions }
+    | { section: 'attachments'; requirementId: string; file: UploadFileInput; uploadedBy: string; opts?: UploadOptions }
+  ) => UploadHandle
+  /** DELETE 移除：6 section 共用。返回 UploadHandle（abort 兜底 noop）。 */
+  removeMaterialImpl?: (requirementId: string, section: RequirementMaterialSection, itemId: string) => UploadHandle
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
@@ -518,24 +561,35 @@ export function createSkyAxisController(deps: {
 
   /**
    * 物料添加类 mutation 的共用骨架：
-   *   1. 用乐观更新把 tempId 临时塞进 snapshot（UI 立刻可见）
-   *   2. 调用 impl（注入 / fetch）
-   *   3. 成功：用服务端真实 record 替换整条（tempId 自动消失）
-   *   4. 失败（result.ok === false）：snapshot 回滚到 before
-   *   5. 异常（throw）：捕获后写 network-error + snapshot 回滚到 before
+   *   1. 用乐观更新把 tempItem 临时塞进 snapshot（UI 立刻可见）
+   *   2. 调用 impl（注入的 fetch / XHR 实现，统一返回 UploadHandle）
+   *   3. 成功：用服务端真实 record 替换整条（tempItem 自动消失）
+   *   4. 失败（result.ok === false）：仅回滚 `requirements` 字段，
+   *      保留 `workspaces` / `selectedRequirementId` / `error` / `loading` 等
+   *      —— 否则「上传前抓拍的空 workspaces」会把后续推送的工作区清掉
+   *   5. 异常（promise reject）：同上，仅回滚 requirements
    *
-   * @param tempId 乐观插入时用的临时 id；服务端 record 替换整条时自然消失
-   * @param callImpl 调注入的 fetch 实现
+   * 同步返回 `UploadHandle`：form 拿到 `handle.promise` await 结果，
+   * 也可在上传中调 `handle.abort()` 主动取消。
+   *
+   * @param callImpl 返回 UploadHandle；JSON add 的 abort 兜底为 noop
    * @param patchWithTempItem 在 requirement 上应用乐观修改（把 tempItem 加到正确 section）
    */
-  const runMaterialMutation = async (
+  const runMaterialMutation = (
     requirementId: string,
     _tempId: string,
-    callImpl: () => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>,
+    callImpl: () => UploadHandle,
     patchWithTempItem: (req: RequirementEntry) => RequirementEntry,
     now: string,
-  ): Promise<{ ok: boolean; error?: RequirementError }> => {
-    const before = snapshot
+  ): UploadHandle => {
+    // 只快照 requirements 字段 —— 不快照整个 snapshot（保留 workspaces 等）。
+    const beforeRequirements = snapshot.requirements
+    let aborted = false
+    const rollback = (): void => {
+      snapshot = { ...snapshot, requirements: beforeRequirements }
+      notify()
+    }
+    // 乐观插入 —— UI 立刻可见 tempItem
     snapshot = {
       ...snapshot,
       requirements: snapshot.requirements.map(r =>
@@ -543,21 +597,52 @@ export function createSkyAxisController(deps: {
       ),
     }
     notify()
+
+    let handle: UploadHandle
     try {
-      const result = await callImpl()
-      if (result.ok && result.item !== undefined) {
-        // 用 server record 覆盖（包含真实 id / uploadedAt / path 等所有字段）
-        snapshot = { ...snapshot, requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr) }
-        notify()
-        return { ok: true }
-      }
-      snapshot = before
-      notify()
-      return { ok: false, error: result.error ?? projectError('internal-error') }
+      handle = callImpl()
     } catch (e) {
-      snapshot = before
-      notify()
-      return { ok: false, error: projectError('network-error', e instanceof Error ? e.message : String(e)) }
+      rollback()
+      return {
+        promise: Promise.resolve({
+          ok: false as const,
+          error: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }),
+        abort: () => { aborted = true },
+      }
+    }
+
+    // 用 promise.then 在后台处理回滚/替换 —— 立即返回 handle 给 caller。
+    handle.promise.then((result) => {
+      if (aborted) return
+      if (result.ok) {
+        // 注：上传类 Result 没有 item 字段（仅 ok/error），成功即视为完成；
+        // 服务端会通过 SSE 推 put 事件，下游订阅会同步到 snapshot。
+        // JSON add 类的 Result 带 item：用 server record 立即覆盖整条，
+        // 比等 SSE put 更及时。
+        if (result.item !== undefined) {
+          snapshot = {
+            ...snapshot,
+            requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr),
+          }
+          notify()
+        }
+      } else {
+        rollback()
+      }
+    }).catch((e: unknown) => {
+      if (aborted) return
+      rollback()
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] material mutation rejected:', e)
+    })
+
+    return {
+      promise: handle.promise,
+      abort: () => {
+        aborted = true
+        handle.abort()
+      },
     }
   }
 
@@ -820,9 +905,12 @@ export function createSkyAxisController(deps: {
 
     /* ── Phase 2.5：物料 CRUD（乐观更新 + SSE put 兜底）── */
 
-    async addPrdFile(requirementId, file, uploadedBy = '') {
+    addPrdFile(requirementId, file, uploadedBy = '', opts) {
       if (deps.uploadMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'uploadMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'uploadMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -831,18 +919,21 @@ export function createSkyAxisController(deps: {
         size: file.size, uploadedAt: now, uploadedBy,
         path: '', // temp —— 服务端 record 会覆盖；UI 不展示 path
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
-        () => deps.uploadMaterialImpl!({ section: 'prdFiles', requirementId, file, uploadedBy }),
+        () => deps.uploadMaterialImpl!({ section: 'prdFiles', requirementId, file, uploadedBy, opts }),
         (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, prdFiles: [...req.materials.prdFiles, tempItem] } }),
         now,
       )
     },
 
-    async addAttachment(requirementId, file, uploadedBy = '') {
+    addAttachment(requirementId, file, uploadedBy = '', opts) {
       if (deps.uploadMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'uploadMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'uploadMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -851,18 +942,21 @@ export function createSkyAxisController(deps: {
         size: file.size, uploadedAt: now, uploadedBy,
         path: '',
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
-        () => deps.uploadMaterialImpl!({ section: 'attachments', requirementId, file, uploadedBy }),
+        () => deps.uploadMaterialImpl!({ section: 'attachments', requirementId, file, uploadedBy, opts }),
         (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, attachments: [...req.materials.attachments, tempItem] } }),
         now,
       )
     },
 
-    async addPrdLink(requirementId, payload, addedBy = '') {
+    addPrdLink(requirementId, payload, addedBy = '') {
       if (deps.addMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'addMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -870,7 +964,7 @@ export function createSkyAxisController(deps: {
         id: tempId, url: payload.url, title: payload.title, source: payload.source,
         addedAt: now, addedBy,
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
         () => deps.addMaterialImpl!({ section: 'prdLinks', requirementId, payload, addedBy }),
@@ -879,9 +973,12 @@ export function createSkyAxisController(deps: {
       )
     },
 
-    async addSourceRepo(requirementId, payload, addedBy = '') {
+    addSourceRepo(requirementId, payload, addedBy = '') {
       if (deps.addMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'addMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -890,7 +987,7 @@ export function createSkyAxisController(deps: {
         lastCommitSha: payload.lastCommitSha, description: payload.description,
         addedAt: now, addedBy,
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
         () => deps.addMaterialImpl!({ section: 'sourceRepos', requirementId, payload, addedBy }),
@@ -899,9 +996,12 @@ export function createSkyAxisController(deps: {
       )
     },
 
-    async addDesignLink(requirementId, payload, addedBy = '') {
+    addDesignLink(requirementId, payload, addedBy = '') {
       if (deps.addMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'addMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -910,7 +1010,7 @@ export function createSkyAxisController(deps: {
         thumbnailUrl: payload.thumbnailUrl,
         addedAt: now, addedBy,
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
         () => deps.addMaterialImpl!({ section: 'designLinks', requirementId, payload, addedBy }),
@@ -919,9 +1019,12 @@ export function createSkyAxisController(deps: {
       )
     },
 
-    async addExternalLink(requirementId, payload, addedBy = '') {
+    addExternalLink(requirementId, payload, addedBy = '') {
       if (deps.addMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'addMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'addMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
@@ -930,7 +1033,7 @@ export function createSkyAxisController(deps: {
         description: payload.description,
         addedAt: now, addedBy,
       }
-      return await runMaterialMutation(
+      return runMaterialMutation(
         requirementId,
         tempId,
         () => deps.addMaterialImpl!({ section: 'externalLinks', requirementId, payload, addedBy }),
@@ -939,11 +1042,14 @@ export function createSkyAxisController(deps: {
       )
     },
 
-    async removeMaterial(requirementId, section, itemId) {
+    removeMaterial(requirementId, section, itemId) {
       if (deps.removeMaterialImpl === undefined) {
-        return { ok: false, error: projectError('internal-error', 'removeMaterialImpl not injected') }
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'removeMaterialImpl not injected') }),
+          abort: () => {},
+        }
       }
-      const before = snapshot
+      const beforeRequirements = snapshot.requirements
       const now = new Date().toISOString()
       // 乐观移除：找到 section 数组，filter 掉该 itemId
       snapshot = {
@@ -955,21 +1061,39 @@ export function createSkyAxisController(deps: {
         }),
       }
       notify()
+      let handle: UploadHandle
       try {
-        const result = await deps.removeMaterialImpl(requirementId, section, itemId)
+        handle = deps.removeMaterialImpl!(requirementId, section, itemId)
+      } catch (e) {
+        snapshot = { ...snapshot, requirements: beforeRequirements }
+        notify()
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('network-error', e instanceof Error ? e.message : String(e)) }),
+          abort: () => {},
+        }
+      }
+      let aborted = false
+      handle.promise.then((result) => {
+        if (aborted) return
         if (result.ok && result.item !== undefined) {
           // 服务端返回整 requirement（含完整 materials），用 server record 覆盖
           snapshot = { ...snapshot, requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr) }
           notify()
-          return { ok: true }
+        } else {
+          // 仅回滚 requirements 字段，保留 workspaces 等
+          snapshot = { ...snapshot, requirements: beforeRequirements }
+          notify()
         }
-        snapshot = before
+      }).catch((e: unknown) => {
+        if (aborted) return
+        snapshot = { ...snapshot, requirements: beforeRequirements }
         notify()
-        return { ok: false, error: result.error ?? projectError('internal-error') }
-      } catch (e) {
-        snapshot = before
-        notify()
-        return { ok: false, error: projectError('network-error', e instanceof Error ? e.message : String(e)) }
+        // eslint-disable-next-line no-console
+        console.warn('[sky-axis] removeMaterial rejected:', e)
+      })
+      return {
+        promise: handle.promise,
+        abort: () => { aborted = true; handle.abort() },
       }
     },
   }

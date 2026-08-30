@@ -50,12 +50,13 @@ export function AddExternalLinkForm({ t, requirement, controller, onClose }: Add
     if (!canSubmit) return
     setSubmitting(true)
     setError(null)
-    const r = await controller.addExternalLink(requirement.id, {
+    const handle = controller.addExternalLink(requirement.id, {
       url: url.trim(),
       title: title.trim(),
       kind,
       description: description.trim(),
     })
+    const r = await handle.promise
     setSubmitting(false)
     if (r.ok) {
       onClose()

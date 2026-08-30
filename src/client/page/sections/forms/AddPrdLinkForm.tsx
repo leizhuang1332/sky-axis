@@ -51,11 +51,12 @@ export function AddPrdLinkForm({ t, requirement, controller, onClose }: AddPrdLi
     if (!canSubmit) return
     setSubmitting(true)
     setError(null)
-    const r = await controller.addPrdLink(requirement.id, {
+    const handle = controller.addPrdLink(requirement.id, {
       url: url.trim(),
       title: title.trim(),
       source,
     })
+    const r = await handle.promise
     setSubmitting(false)
     if (r.ok) {
       onClose()

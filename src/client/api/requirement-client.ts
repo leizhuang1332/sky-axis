@@ -41,6 +41,28 @@ export type Result<T> =
   | { ok: true; value: T }
   | { ok: false; code: SkyAxisErrorCode; detail?: string }
 
+/** 上传进度事件（浏览器 XMLHttpRequest ProgressEvent 抽象）。 */
+export interface UploadProgress { loaded: number; total: number }
+
+/** 上传选项（可全部省略以维持 fetch 形态）。 */
+export interface UploadOptions {
+  /** 进度回调；浏览器至少触发两次（0/0 起步 + 100% 收尾）。 */
+  onProgress?: (p: UploadProgress) => void
+  /** 取消信号：signal.aborted 时立即 abort。 */
+  signal?: AbortSignal
+  /** 超时（默认 5 分钟）。0 表示不超时。 */
+  timeoutMs?: number
+}
+
+/** 上传句柄：承载 promise + abort，与 fetch 习惯保持一致扩展。 */
+export interface UploadHandle {
+  promise: Promise<Result<Requirement>>
+  abort: () => void
+}
+
+/** 上传超时默认值：5 分钟（100MB 在良好网络下也足够）。 */
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000
+
 /** sky-axis API 错误响应（host 端 SkyAxisHostError → translateError 产出）。 */
 const ApiErrorSchema = z.object({
   ok: z.literal(false),
@@ -127,40 +149,92 @@ export class RequirementClient {
   /**
    * 上传一个 PRD 文件（multipart）。file.content 是 File / Blob。
    * 100MB 上限由 host busboy `limits.fileSize` 兜底；客户端应预校验避免发大请求。
+   *
+   * 返回 `UploadHandle`（不再是裸 Promise）—— UI 可通过 `handle.promise` await
+   * 结果，或调 `handle.abort()` 主动取消（浏览器刷新 / 关闭弹窗时也可调）。
+   * progress 由 `opts.onProgress` 上报，文件开始流式写入时立即触发 0/0、
+   * 然后随 chunk 推进。
    */
-  async uploadPrdFile(
+  uploadPrdFile(
     requirementId: RequirementId,
     file: { content: Blob; filename: string; mimeType: string; size: number },
     uploadedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.uploadFile('prdFiles', requirementId, file, uploadedBy)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    return this.uploadFile('prdFiles', requirementId, file, uploadedBy, opts)
   }
 
-  /** 上传一个附件（multipart）。 */
-  async uploadAttachment(
+  /** 上传一个附件（multipart）。同 uploadPrdFile。 */
+  uploadAttachment(
     requirementId: RequirementId,
     file: { content: Blob; filename: string; mimeType: string; size: number },
     uploadedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.uploadFile('attachments', requirementId, file, uploadedBy)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    return this.uploadFile('attachments', requirementId, file, uploadedBy, opts)
   }
 
-  private async uploadFile(
+  private uploadFile(
     section: Extract<MaterialSection, 'prdFiles' | 'attachments'>,
     requirementId: RequirementId,
     file: { content: Blob; filename: string; mimeType: string; size: number },
-    uploadedBy?: string,
-  ): Promise<Result<Requirement>> {
-    const form = new FormData()
-    form.append('file', file.content, file.filename)
-    if (uploadedBy !== undefined) form.append('uploadedBy', uploadedBy)
-    const res = await fetch(
-      `${this.baseUrl}/materials/${section}/upload?requirementId=${encodeURIComponent(requirementId)}`,
-      { method: 'POST', body: form, credentials: 'same-origin' },
-    )
-    const parsed = await parseJson(res, RequirementResponseSchema)
-    if (!parsed.ok) return parsed
-    return { ok: true, value: parsed.value.item }
+    uploadedBy: string | undefined,
+    opts: UploadOptions,
+  ): UploadHandle {
+    // fetch + FormData 无法报告 upload progress —— 唯一办法是 XMLHttpRequest。
+    // 我们仍解析响应体为 zod 校验过的 Requirement，保留 Result<T> 返回形态。
+    const xhr = new XMLHttpRequest()
+    const promise = new Promise<Result<Requirement>>((resolve) => {
+      xhr.open(
+        'POST',
+        `${this.baseUrl}/materials/${section}/upload?requirementId=${encodeURIComponent(requirementId)}`,
+        true,
+      )
+      xhr.withCredentials = true
+      xhr.responseType = 'text'
+      xhr.timeout = opts.timeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS
+      xhr.upload.onprogress = (e): void => {
+        if (!e.lengthComputable) return
+        opts.onProgress?.({ loaded: e.loaded, total: e.total })
+      }
+      xhr.onload = (): void => {
+        const res = new Response(xhr.response, {
+          status: xhr.status,
+          headers: { 'content-type': 'application/json' },
+        })
+        void parseJson(res, RequirementResponseSchema).then((p) => {
+          if (!p.ok) return resolve(p)
+          resolve({ ok: true, value: p.value.item })
+        })
+      }
+      xhr.onerror = (): void =>
+        resolve({ ok: false, code: 'network-error', detail: 'XMLHttpRequest network error' })
+      xhr.onabort = (): void =>
+        resolve({ ok: false, code: 'network-error', detail: 'upload aborted' })
+      xhr.ontimeout = (): void =>
+        resolve({
+          ok: false,
+          code: 'network-error',
+          detail: `upload timeout after ${xhr.timeout}ms`,
+        })
+
+      const form = new FormData()
+      form.append('file', file.content, file.filename)
+      if (uploadedBy !== undefined) form.append('uploadedBy', uploadedBy)
+      xhr.send(form)
+    })
+    const abort = (): void => {
+      // 已完成 / 已失败 / 已 abort —— xhr.abort() 再次调用无副作用
+      try { xhr.abort() } catch { /* noop */ }
+    }
+    if (opts.signal !== undefined) {
+      if (opts.signal.aborted) {
+        abort()
+      } else {
+        opts.signal.addEventListener('abort', abort, { once: true })
+      }
+    }
+    return { promise, abort }
   }
 
   /** 添加一个 PRD 链接（JSON）。 */

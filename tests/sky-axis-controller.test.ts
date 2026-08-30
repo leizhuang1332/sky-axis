@@ -722,3 +722,96 @@ describe('SkyAxisController setDetailTab / getDetailTab（Phase 1.13）', () => 
     expect(c.getView()).toBe('requirements')
   })
 })
+
+/* ── Step 4：物料 mutation 失败时回滚不再冲掉 workspaces ── */
+
+/** 故意失败的 addMaterialImpl —— 返回同步 UploadHandle，promise 立即失败。 */
+function failAddMaterial() {
+  return () => ({
+    promise: Promise.resolve({
+      ok: false as const,
+      error: { code: 'internal-error' as const, detail: 'simulated failure' },
+    }),
+    abort: () => {},
+  })
+}
+
+describe('Step 4：物料 mutation 失败回滚只覆 requirements（保留 workspaces）', () => {
+  it('addPrdLink 失败时 snapshot.workspaces 仍保留（不被 before 全量覆盖）', async () => {
+    const req = makeReq({ id: 'req-step4-1' })
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      // 故意失败的 JSON add impl —— 触发 runMaterialMutation 的 rollback 分支
+      addMaterialImpl: failAddMaterial(),
+    })
+    await c.loadRequirements()
+    // 模拟 ctx.workspaces.list 在 addPrdLink 之前推送过 workspace
+    c.setWorkspaces([{ id: 'ws-1', title: 'Workspace 1', path: '/path/ws-1' }])
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+
+    // 触发失败的 addPrdLink
+    const handle = c.addPrdLink(req.id, { url: 'https://example.com', title: 'example', source: 'custom' }, 'user-1')
+    const r = await handle.promise
+
+    // 失败
+    expect(r.ok).toBe(false)
+    // 回滚后：requirements 的 materials.prdLinks 仍为空（tempItem 已撤回）
+    const after = c.getSnapshot().requirements.find(r2 => r2.id === req.id)
+    expect(after?.materials.prdLinks).toEqual([])
+    // 关键：workspaces 仍保留 —— 不被 before snapshot 全量覆盖
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+    expect(c.getSnapshot().workspaces[0]?.id).toBe('ws-1')
+  })
+
+  it('removeMaterial 失败时 snapshot.workspaces 仍保留', async () => {
+    const req = makeReq({ id: 'req-step4-2' })
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      // removeMaterialImpl 也故意失败 —— 触发 controller 内的 rollback
+      removeMaterialImpl: () => ({
+        promise: Promise.resolve({
+          ok: false as const,
+          error: { code: 'internal-error' as const, detail: 'remove failed' },
+        }),
+        abort: () => {},
+      }),
+    })
+    await c.loadRequirements()
+    c.setWorkspaces([{ id: 'ws-2', title: 'Workspace 2', path: '/path/ws-2' }])
+    // remove 一个不存在的 itemId —— 走不到乐观更新分支（filter 不改变），但失败回滚路径相同
+    const handle = c.removeMaterial(req.id, 'prdLinks', 'non-existent-item-id')
+    const r = await handle.promise
+    expect(r.ok).toBe(false)
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+    expect(c.getSnapshot().workspaces[0]?.id).toBe('ws-2')
+  })
+
+  it('addPrdFile 失败时 snapshot.workspaces 仍保留（upload 路径也走同骨架）', async () => {
+    const req = makeReq({ id: 'req-step4-3' })
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      uploadMaterialImpl: () => ({
+        promise: Promise.resolve({
+          ok: false as const,
+          error: { code: 'internal-error' as const, detail: 'upload failed' },
+        }),
+        abort: () => {},
+      }),
+    })
+    await c.loadRequirements()
+    c.setWorkspaces([{ id: 'ws-3', title: 'Workspace 3', path: '/path/ws-3' }])
+
+    const blob = new Blob(['x'], { type: 'text/plain' })
+    const handle = c.addPrdFile(req.id, {
+      content: blob,
+      filename: '量本利v2.docx',
+      mimeType: 'application/octet-stream',
+      size: blob.size,
+    }, 'user-1')
+    const r = await handle.promise
+    expect(r.ok).toBe(false)
+    // 关键回归：tempItem 已撤回，workspaces 未被冲掉
+    expect(c.getSnapshot().requirements.find(r2 => r2.id === req.id)?.materials.prdFiles).toEqual([])
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+  })
+})

@@ -58,7 +58,8 @@ export function AddSourceRepoForm({ t, requirement, controller, onClose }: AddSo
     if (lastCommitSha.trim() !== '') {
       payload.lastCommitSha = lastCommitSha.trim()
     }
-    const r = await controller.addSourceRepo(requirement.id, payload)
+    const handle = controller.addSourceRepo(requirement.id, payload)
+    const r = await handle.promise
     setSubmitting(false)
     if (r.ok) {
       onClose()

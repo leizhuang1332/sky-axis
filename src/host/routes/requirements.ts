@@ -81,6 +81,7 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'ai-session-missing':      return 409
     case 'invalid-record':          return 500
     case 'internal-error':          return 500
+    case 'network-error':           return 502
   }
 }
 
@@ -211,8 +212,30 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
           return
         }
         sseResponse(res)
+        // safeWrite —— 客户端半路断开（socket EPIPE / ECONNRESET）时，无 listener
+        // 会让 `'error'` 冒泡到 process level → 把整个 host 拖死。这里集中兜住：
+        //   - writableEnded / destroyed 提前返回（避免在已关闭 socket 上写）
+        //   - 写出失败：清心跳 + 退订 + destroy，把这个 SSE 连接干净收掉
+        let sseClosed = false
+        const safeWrite = (chunk: string): void => {
+          if (sseClosed) return
+          if (res.writableEnded || res.destroyed) {
+            sseClosed = true
+            return
+          }
+          try {
+            res.write(chunk)
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('[sky-axis] SSE write failed, dropping client:', err)
+            sseClosed = true
+            clearInterval(heartbeat)
+            unsubscribe()
+            res.destroy()
+          }
+        }
         const writeEvent = (operation: 'put' | 'deleted', payload: unknown): void => {
-          res.write(`event: ${operation}\ndata: ${JSON.stringify(payload)}\n\n`)
+          safeWrite(`event: ${operation}\ndata: ${JSON.stringify(payload)}\n\n`)
         }
         const unsubscribe = service.subscribeDomainChanges((event) => {
           if (event.operation === 'put') {
@@ -223,9 +246,19 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
         })
         // 心跳保活（每 25s 一条注释行，防代理 / 浏览器超时）
         const heartbeat = setInterval(() => {
-          res.write(': heartbeat\n\n')
+          safeWrite(': heartbeat\n\n')
         }, 25_000)
+        // 客户端 socket 报错（half-dead） → 无 listener 会拖死进程。
+        res.on('error', (err) => {
+          // eslint-disable-next-line no-console
+          console.warn('[sky-axis] SSE socket error, dropping client:', err)
+          sseClosed = true
+          clearInterval(heartbeat)
+          unsubscribe()
+          res.destroy()
+        })
         req.on('close', () => {
+          sseClosed = true
           clearInterval(heartbeat)
           unsubscribe()
         })

@@ -19,7 +19,7 @@
  *   - 不存 workspace 元数据快照：仅存 workspaceId（FK），展示标题由 client
  *     端 ctx.workspaces.list 实时 join
  */
-import { mkdir, writeFile, unlink } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
@@ -75,9 +75,19 @@ function makeMaterialItemId(): MaterialItemId {
   return randomUUID() as MaterialItemId
 }
 
+/**
+ * 把 requirementId 转换为文件系统安全的目录名段。
+ * `makeRequirementId` 形如 `2026-08-30T13:44:18.939Z-6hcwlt`，含 `:` 字符
+ * —— macOS / ext4 合法但不利于跨平台（Windows / 部分归档工具）。
+ * 一律 `:` → `-`，跟 `-` 已有分隔风格一致。
+ */
+function safeRequirementIdDir(id: RequirementId): string {
+  return id.replace(/:/g, '-')
+}
+
 /** sky-axis 半区产物根目录（不实际创建，返回路径供 lazy 创建）。 */
 function artifactRoot(workspacePath: string, requirementId: RequirementId): string {
-  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, requirementId)
+  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(requirementId))
 }
 
 /** 某 section 的产物子目录路径（不实际创建）。 */
@@ -86,7 +96,7 @@ function sectionArtifactDir(
   requirementId: RequirementId,
   section: MaterialSection,
 ): string {
-  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, requirementId, section)
+  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(requirementId), section)
 }
 
 /**
@@ -97,6 +107,10 @@ function sectionArtifactDir(
  *   - 剔除开头的点（避免 .bashrc / .ssh 等隐藏文件）
  *   - 空串兜底为 'unnamed'
  *   - 截取最后 200 字符（过长文件名对文件系统不友好）
+ *
+ * mojibake 救回：如果 filename 含有高位字节序列（每字符 ≥ 0x80），
+ * 尝试把它当 latin1 字节重新按 utf8 解码 —— 修 busboy 旧版本 / 老
+ * 客户端遗留下来的乱码文件。救不回来的（含控制字符的）保留原值。
  */
 function sanitizeFilename(name: string): string {
   const cleaned = name
@@ -105,10 +119,28 @@ function sanitizeFilename(name: string): string {
     .replace(/[\x00-\x1f\x7f]/g, '')
     .replace(/^\.+/, '')
     .trim()
-  return cleaned === '' ? 'unnamed' : cleaned.slice(-200)
+  if (cleaned === '') return 'unnamed'
+  const head = cleaned.slice(0, -200)
+  const tail = head === '' ? cleaned : cleaned.slice(-200)
+  if (!/[\x80-\xff]/.test(tail)) return tail
+  try {
+    const recovered = Buffer.from(tail, 'latin1').toString('utf8')
+    // 救回后不能再含控制字符（说明解码失败，留原样）
+    if (/[\x00-\x1f\x7f]/.test(recovered)) return tail
+    return recovered
+  } catch {
+    return tail
+  }
 }
 
-/** 写 PrdFile / Attachment 文件到磁盘，返回相对 workspace 的 path 与绝对路径。 */
+/** 写 PrdFile / Attachment 文件到磁盘，返回相对 workspace 的 path 与绝对路径。
+ *
+ * 写入策略：先写 `.tmp` 临时文件，fsync 完成后 rename 到正式文件名。
+ * 目的：
+ *   1) 上传中途断流 / KV write 失败 → 磁盘上不会留下半成品文件
+ *   2) rename 是 POSIX 原子操作，client 端 list / ls 永远不会看到半写文件
+ *   3) 与文件持久名同步由 itemId 前缀提供（即便 sanitize 后同名也不冲突）
+ */
 async function writeMaterialFile(args: {
   workspacePath: string
   requirementId: RequirementId
@@ -122,8 +154,21 @@ async function writeMaterialFile(args: {
   const sanitized = sanitizeFilename(args.filename)
   const filename = `${args.itemId}-${sanitized}`
   const absolutePath = join(dir, filename)
-  await writeFile(absolutePath, args.content, { mode: 0o600 })
-  const relativePath = join(SKY_AXIS_ARTIFACT_NAMESPACE, args.requirementId, args.section, filename)
+  const tmpPath = join(dir, `.${args.itemId}.tmp`)
+  try {
+    await writeFile(tmpPath, args.content, { mode: 0o600 })
+    await rename(tmpPath, absolutePath)
+  } catch (e) {
+    // 清理可能残留的 tmp
+    await unlinkMaterialFile(args.workspacePath, join(SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(args.requirementId), args.section, `.${args.itemId}.tmp`))
+    throw e
+  }
+  const relativePath = join(
+    SKY_AXIS_ARTIFACT_NAMESPACE,
+    safeRequirementIdDir(args.requirementId),
+    args.section,
+    filename,
+  )
   return { relativePath, absolutePath }
 }
 

@@ -305,9 +305,11 @@ export function MaterialsPane({ t, requirement, controller }: MaterialsPaneProps
 
   // 三态删除：第 1 次 hover 进入「pending」状态；第 2 次点击真实调用 controller.removeMaterial
   // 用 section 绑定的删除点击 —— 真正传到 controller
+  // removeMaterial 返回 UploadHandle（abort 是 noop），乐观更新是同步发生的，
+  // 这里 fire-and-forget promise 即可。
   const handleDeleteClickFor = (section: RequirementMaterialSection) => (id: string): void => {
     if (pendingDeleteId === id) {
-      void controller.removeMaterial(requirement.id, section, id)
+      void controller.removeMaterial(requirement.id, section, id).promise
       setPendingDeleteId(null)
     } else {
       setPendingDeleteId(id)

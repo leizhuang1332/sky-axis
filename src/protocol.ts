@@ -656,6 +656,8 @@ export const SKY_AXIS_ERROR_CODES = [
   // ── Phase 2.5 新增 ──
   /** material CRUD：itemId 不在指定 section 内（可能已被删除）。 */
   'material-not-found',
+  // ── Step 3 新增：client 上传 XHR 兜底错误（abort / timeout / 网络异常）。 */
+  'network-error',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

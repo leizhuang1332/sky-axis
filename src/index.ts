@@ -45,10 +45,35 @@ function jsonResponse(res: ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
+/**
+ * 进程级 safety net —— 把崩溃日志化、不让 DSH 进程被我们拖死。
+ *
+ * DSH 是单进程宿主（一个 Node 进程跑所有插件 + GUI 壳），
+ * sky-axis 的任何未捕获 promise rejection / 异常若不带 listener，
+ * 会顺着 Node 默认行为把整个 host 拉死。**只 console.error，不
+ * `process.exit()`** —— 退出权限属于 DSH 宿主，本插件无权决定。
+ *
+ * 用 module-level guard 防 mountOnce 重入导致重复注册。
+ */
+let safetyNetInstalled = false
+function installSafetyNet(): void {
+  if (safetyNetInstalled) return
+  safetyNetInstalled = true
+  process.on('uncaughtException', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('[sky-axis] uncaughtException at', new Date().toISOString(), err)
+  })
+  process.on('unhandledRejection', (reason) => {
+    // eslint-disable-next-line no-console
+    console.error('[sky-axis] unhandledRejection at', new Date().toISOString(), reason)
+  })
+}
+
 export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
+  installSafetyNet()
   const pingSvc = new SkyAxisPingService()
   // eslint-disable-next-line no-console
-  console.info('[sky-axis] host apply: ready (Phase 1: ping + health + requirements CRUD)')
+  console.info('[sky-axis] host apply: pid=' + process.pid + ' ready (Phase 2.5 + safety-net)')
 
   // 业务服务：构造时启动 storage domain 异步初始化，effect 退出时关闭
   const reqSvc = new RequirementHostService(ctx, ctx.apiProxy, ctx.storageDomain)

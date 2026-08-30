@@ -63,7 +63,8 @@ export function AddDesignLinkForm({ t, requirement, controller, onClose }: AddDe
     if (thumbnailUrl.trim() !== '') {
       payload.thumbnailUrl = thumbnailUrl.trim()
     }
-    const r = await controller.addDesignLink(requirement.id, payload)
+    const handle = controller.addDesignLink(requirement.id, payload)
+    const r = await handle.promise
     setSubmitting(false)
     if (r.ok) {
       onClose()

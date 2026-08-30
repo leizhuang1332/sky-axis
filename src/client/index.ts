@@ -24,7 +24,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型导入：拉取 locale 插件的 ctx.locale 合并
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { RequirementClient, subscribeRequirementEvents } from './api/requirement-client.ts'
-import { createSkyAxisController, type RequirementOption } from './controller/sky-axis-controller.ts'
+import { createSkyAxisController, type RequirementOption, type UploadHandle } from './controller/sky-axis-controller.ts'
 import { mountSidebarEntry } from './mount/sidebar-entry.ts'
 import { mountSkyAxisPage } from './mount/sky-axis-page-mount.tsx'
 import { en, zh, type SkyAxisKey } from './locales.ts'
@@ -63,6 +63,42 @@ interface WorkspaceOps {
 }
 
 let workspaceOps: WorkspaceOps | undefined
+
+/**
+ * 把 client `Result<T>` 包装成 controller `UploadHandle`（abort 兜底 noop）。
+ * 用于 JSON add / removeMaterial 这类没有进度 / 取消语义的 mutation。
+ *
+ * 入参用 `Promise<unknown>`：reqClient 各个方法的成功载荷 schema 各异
+ * （AddPrdLinkRequest / Requirement / { item: Requirement }），不强行统一；
+ * 调用方在 `.then` 里各自负责 item 字段映射（removeMaterial 路径）或
+ * 直接透传（addMaterialImpl 路径 → 已含 item 字段）。
+ */
+function wrapPromise(p: Promise<unknown>): UploadHandle {
+  return {
+    promise: p.then((r) => {
+      const v = r as {
+        ok?: boolean
+        code?: string
+        detail?: string
+        value?: unknown
+        item?: unknown
+      }
+      if (v.ok === true) {
+        // removeMaterial: v.item 是 Requirement；addMaterial: v.value 是 Requirement
+        const item = v.item !== undefined ? v.item : v.value
+        return { ok: true as const, item: item as never }
+      }
+      return {
+        ok: false as const,
+        error: {
+          code: (v.code ?? 'internal-error') as never,
+          detail: v.detail,
+        },
+      }
+    }),
+    abort: () => {},
+  }
+}
 
 /**
  * 组件 mount 时读取 `workspaceOps`（由 apply(ctx) 期间填入）。
@@ -127,38 +163,41 @@ export function apply(ctx: ClientContext): void {
       return { ok: false, error: { code: r.code, detail: r.detail } }
     },
     // Phase 2.5：物料 CRUD 三个新 impl（与 controller 的 7 mutation 方法对接）
-    addMaterialImpl: async (input) => {
+    //
+    // 所有 impl 同步返回 UploadHandle（JSON add / removeMaterial 的 abort
+    // 是 noop；upload 类直接透传 XHR 句柄）。controller 通过 UploadHandle
+    // 拿到 abort 暴露给 UI。
+    addMaterialImpl: (input) => {
       // discriminated union：4 个 JSON section 之一
-      let r
+      let promise: Promise<unknown>
       switch (input.section) {
         case 'prdLinks':
-          r = await reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
+          promise = reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
           break
         case 'sourceRepos':
-          r = await reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy)
+          promise = reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy)
           break
         case 'designLinks':
-          r = await reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
+          promise = reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
           break
         case 'externalLinks':
-          r = await reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
+          promise = reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
           break
       }
-      if (r.ok) return { ok: true, item: { ...r.value } }
-      return { ok: false, error: { code: r.code, detail: r.detail } }
+      return wrapPromise(promise)
     },
-    uploadMaterialImpl: async (input) => {
-      // discriminated union：2 个 upload section 之一
-      const r = input.section === 'prdFiles'
-        ? await reqClient.uploadPrdFile(input.requirementId as never, input.file, input.uploadedBy)
-        : await reqClient.uploadAttachment(input.requirementId as never, input.file, input.uploadedBy)
-      if (r.ok) return { ok: true, item: { ...r.value } }
-      return { ok: false, error: { code: r.code, detail: r.detail } }
+    uploadMaterialImpl: (input) => {
+      // discriminated union：2 个 upload section 之一 —— XHR 直接提供 UploadHandle
+      return input.section === 'prdFiles'
+        ? reqClient.uploadPrdFile(input.requirementId as never, input.file, input.uploadedBy, input.opts ?? {})
+        : reqClient.uploadAttachment(input.requirementId as never, input.file, input.uploadedBy, input.opts ?? {})
     },
-    removeMaterialImpl: async (reqId, section, itemId) => {
-      const r = await reqClient.removeMaterial(reqId as never, section, itemId as never)
-      if (r.ok) return { ok: true, item: { ...r.value.item } }
-      return { ok: false, error: { code: r.code, detail: r.detail } }
+    removeMaterialImpl: (reqId, section, itemId) => {
+      const promise = reqClient.removeMaterial(reqId as never, section, itemId as never)
+      return wrapPromise(promise.then(r => {
+        if (r.ok) return { ok: true as const, item: { ...r.value.item } }
+        return { ok: false as const, error: { code: r.code, detail: r.detail } }
+      }))
     },
   })
 

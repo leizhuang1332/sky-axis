@@ -86,8 +86,15 @@ export async function readMultipartBody(req: IncomingMessage, maxBytes: number):
     )
   }
   return await new Promise((resolve, reject) => {
+    // busboy 1.6.0 在没有 defParamCharset 时 Content-Disposition 参数走
+    // `nullDecoder`（latin1 直通）→ UTF-8 多字节序列（如中文）解码成乱码。
+    // 设 `utf8` 后：
+    //   1) 客户端发 `filename="中文.docx"` → multipart.js 用 utf8 decoder 解码
+    //   2) 客户端发 RFC 5987 `filename*=UTF-8''%E4%B8%AD...` → busboy 优先用 filename*
+    //      再回落到 filename 的 defParamCharset —— 也正确
     const bb = Busboy({
       headers: req.headers,
+      defParamCharset: 'utf8',
       limits: { fileSize: maxBytes, files: 1, fields: 5 },
     })
     let captured: {
@@ -154,6 +161,14 @@ export async function readMultipartBody(req: IncomingMessage, maxBytes: number):
       if (settled) return
       settled = true
       reject(new SkyAxisHostError('validation-failed', `multipart parse error: ${err.message}`))
+    })
+    // 底层 socket 'error'（如 ECONNRESET / EPIPE）—— aborted 只覆盖 client 显式
+    // cancel；TCP reset 走 'error'。没监听 → Node 把 'error' 当 unhandledException，
+    // 把整个 DSH 进程拖死。与同模块 readJsonBody 一致。
+    req.on('error', (err: Error): void => {
+      if (settled) return
+      settled = true
+      reject(new SkyAxisHostError('validation-failed', `request stream error: ${err.message}`))
     })
     req.on('aborted', (): void => {
       if (settled) return

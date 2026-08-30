@@ -91,8 +91,8 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 12 个错误码（Phase 2.5 加 material-not-found）', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(12)
+  it('正好包含 13 个错误码（Phase 2.5 加 material-not-found / Phase 3 加 network-error）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(13)
   })
 
   it('错误码集合稳定', () => {
@@ -104,6 +104,7 @@ describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
       'internal-error',
       'invalid-record',
       'material-not-found',
+      'network-error',
       'requirement-not-found',
       'stage-invalid',
       'validation-failed',
