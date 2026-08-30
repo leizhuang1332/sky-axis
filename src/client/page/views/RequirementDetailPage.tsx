@@ -1,30 +1,32 @@
 /**
  * RequirementDetailPage —— 需求详情页（开发意图工作台核心载体）。
  *
- * 布局（grid 4 行：顶栏 / stepper / body / 产物）：
+ * Phase 1.13 增量：拆出 tab 路由
  *   - 顶栏：← 返回 + 标题 + status/priority pill + workspace + branch
- *   - stepper：5 阶段横向流水线
- *   - body（25 / 50 / 25 三列）：
- *       左  AiConductorPane   AI 协奏
- *       中  StageWorkspacePane  当前阶段工作区
- *       右  InterventionQueue    介入队列
- *   - 底部产物面板（可折叠）—— Phase 1 暂空，Phase 4 实现
+ *   - tab header：需求物料 / AI 工作台 两个 tab
+ *   - tab body：按 detailTabKey 分支渲染
+ *       - 'materials'  → <MaterialsPane>     （需求物料占位）
+ *       - 'workbench'  → <Stepper + 三列布局> （AI 工作台）
+ *
+ * 布局（grid 4 行：顶栏 / error / tab header / body）：
+ *   - 顶栏：标题 + meta（所有 tab 共用）
+ *   - tab header：tab 切换器
+ *   - body：按当前 tab 渲染
  *
  * Phase 1 范围：
- *   - 顶栏 + stepper + 三列布局到位
- *   - AI 状态全 mock（AiConductorPane 显示「启动 AI」按钮，点击无操作）
- *   - 介入队列 Phase 1 显示「空」
- *   - 当前 stage 内容按 stage label/desc 渲染不同文案
+ *   - 「AI 工作台」tab 保留原有 3 列布局 + Stepper
+ *   - 「需求物料」tab 显示 MaterialsPane 占位（Phase 2.5 实现）
+ *   - tab 状态完全由 controller 持有，父组件透传
  *
  * 数据来源：完全受控 props（由 SkyAxisPage 从 controller 投影传入）。
  */
 import { useMemo } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon, StopIcon,
-  WarningTriangleIcon,
+  ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon,
 } from '../../icons/icons.tsx'
 import type {
+  DetailTabKey,
   RequirementEntry,
   RequirementStage,
 } from '../../controller/sky-axis-controller.ts'
@@ -33,6 +35,7 @@ import { Stepper, type StepperItem } from '../../ui/Stepper.tsx'
 import { AiConductorPane } from '../sections/AiConductorPane.tsx'
 import { StageWorkspacePane } from '../sections/StageWorkspacePane.tsx'
 import { InterventionQueuePane } from '../sections/InterventionQueuePane.tsx'
+import { MaterialsPane } from '../sections/MaterialsPane.tsx'
 import css from './RequirementDetailPage.module.css'
 
 export interface RequirementDetailPageProps {
@@ -41,19 +44,14 @@ export interface RequirementDetailPageProps {
   workspaces: readonly RequirementOption[]
   detailLoading: boolean
   detailError: { code: string; detail?: string } | null
+  detailTabKey: DetailTabKey
   onBack: () => void
-}
-
-const STAGE_ICONS: Record<RequirementStage, (p: { size?: number; className?: string }) => JSX.Element> = {
-  understand: ClockIcon,
-  plan: FlagIcon,
-  implement: WorkflowIcon,
-  verify: PlayIcon,
-  deliver: PauseIcon,
+  onTabChange: (tab: DetailTabKey) => void
 }
 
 export function RequirementDetailPage({
-  t, requirement, workspaces, detailLoading, detailError, onBack,
+  t, requirement, workspaces, detailLoading, detailError,
+  detailTabKey, onBack, onTabChange,
 }: RequirementDetailPageProps): JSX.Element {
   // t 强转为 (k: string) => string —— 模板字符串是动态 key
   const tAny = t as unknown as (k: string) => string
@@ -122,31 +120,63 @@ export function RequirementDetailPage({
         </div>
       )}
 
-      {/* Stepper */}
-      <Stepper
-        items={stepperItems}
-        current={requirement.stage ?? 'understand'}
-      />
+      {/* Tab Header —— Phase 1.13 新增 */}
+      <nav className={css.tabHeader} aria-label={t('requirement.detail.tabHeader.ariaLabel')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTabKey === 'materials'}
+          className={`${css.tabButton} ${detailTabKey === 'materials' ? css.tabButtonActive : ''}`}
+          onClick={(): void => { onTabChange('materials') }}
+        >
+          <span>{t('requirement.detail.tabHeader.materials')}</span>
+          <span className={css.tabBadge}>{t('requirement.detail.tabHeader.materialsBadge')}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTabKey === 'workbench'}
+          className={`${css.tabButton} ${detailTabKey === 'workbench' ? css.tabButtonActive : ''}`}
+          onClick={(): void => { onTabChange('workbench') }}
+        >
+          <span>{t('requirement.detail.tabHeader.workbench')}</span>
+        </button>
+      </nav>
 
-      {/* 主体三列 */}
-      <main className={css.body}>
-        <aside className={css.conductor}>
-          <AiConductorPane
-            t={t}
-            requirement={requirement}
-            loading={detailLoading}
+      {/* Tab Body —— 按 detailTabKey 分支渲染 */}
+      {detailTabKey === 'materials' ? (
+        <main className={css.tabBody}>
+          <MaterialsPane t={t} requirement={requirement} />
+        </main>
+      ) : (
+        <>
+          {/* Stepper —— AI 工作台专属 */}
+          <Stepper
+            items={stepperItems}
+            current={requirement.stage ?? 'understand'}
           />
-        </aside>
-        <section className={css.workspace}>
-          <StageWorkspacePane
-            t={t}
-            requirement={requirement}
-          />
-        </section>
-        <aside className={css.queue}>
-          <InterventionQueuePane t={t} items={requirement.interventionQueue ?? []} />
-        </aside>
-      </main>
+
+          {/* 主体三列 */}
+          <main className={css.body}>
+            <aside className={css.conductor}>
+              <AiConductorPane
+                t={t}
+                requirement={requirement}
+                loading={detailLoading}
+              />
+            </aside>
+            <section className={css.workspace}>
+              <StageWorkspacePane
+                t={t}
+                requirement={requirement}
+              />
+            </section>
+            <aside className={css.queue}>
+              <InterventionQueuePane t={t} items={requirement.interventionQueue ?? []} />
+            </aside>
+          </main>
+        </>
+      )}
     </div>
   )
 }
@@ -154,6 +184,5 @@ export function RequirementDetailPage({
 /** 让 component 标识别名在 DevTools 友好。 */
 RequirementDetailPage.displayName = 'RequirementDetailPage'
 
-// 抑制 unused 警告（WarningTriangleIcon 留作 Phase 1.9 替换 icon 用）
-void WarningTriangleIcon
-void STAGE_ICONS
+// 抑制 unused 警告（RequirementStage 留作未来扩展使用）
+void (null as unknown as RequirementStage)

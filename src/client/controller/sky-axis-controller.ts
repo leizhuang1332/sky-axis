@@ -33,6 +33,13 @@
  *  'requirements' 是 sidebar「个人 → 需求列表」二级子项对应的视图。 */
 export type SkyAxisViewKey = 'home' | 'team' | 'personal' | 'requirements' | 'reports' | 'settings'
 
+/** 详情页内 tab key —— Phase 1.13 增量：
+ *  - 'materials'  需求物料（PRD/源码/设计稿/附件/外部链接）
+ *  - 'workbench'  AI 工作台（5 阶段 stepper + 三列布局）
+ *  默认进入详情页时为 'workbench'（保留 Phase 1 行为）；
+ *  closeDetail 时清掉 tabKey（回到默认），openDetail 时重置默认。 */
+export type DetailTabKey = 'materials' | 'workbench'
+
 /** workspace 摘要（client UI 展示用）。 */
 export interface WorkspaceOption {
   /** workspaceId（与 ctx.workspaces.list.items[i].workspaceId 同源）。 */
@@ -78,6 +85,11 @@ export interface SkyAxisSnapshot {
   detailLoading: boolean
   /** 单条详情最近失败原因（null = 无错误）。 */
   detailError: RequirementError | null
+  /* ── Phase 1.13：详情内 tab 路由 ── */
+  /** 详情页内 tab key（'materials' 需求物料 / 'workbench' AI 工作台）。
+   *  与 selectedRequirementId 解耦：tab 切换不切详情路由；
+   *  closeDetail → 重新 openDetail 时重置为 'workbench' 默认值。 */
+  detailTabKey: DetailTabKey
 }
 
 /** 5 阶段开发意图工作流的阶段 key —— 与 protocol.ts StageSchema 一一对应。
@@ -236,6 +248,7 @@ export interface SkyAxisController {
 
   /** 关闭详情页（幂等）。
    *  - selectedRequirementId = null；**不**改 viewKey
+   *  - Phase 1.13：detailTabKey 也重置为 'workbench'（默认）
    */
   closeDetail(): void
 
@@ -244,6 +257,17 @@ export interface SkyAxisController {
 
   /** 拉取单条详情（host get 路由）；可选 —— openDetail 已自动触发。 */
   loadDetail(id: string): Promise<void>
+
+  /* ── Phase 1.13：详情内 tab 切换 ── */
+
+  /** 切换详情页内 tab（'materials' 需求物料 / 'workbench' AI 工作台）。
+   *  - 幂等：相同 tab 不触发 notify
+   *  - selectedRequirementId === null 时 no-op（无详情可切）
+   *  - 不切 viewKey（保留「列表 → 详情 → 返回」语义） */
+  setDetailTab(tab: DetailTabKey): void
+
+  /** 当前详情 tab key。 */
+  getDetailTab(): DetailTabKey
 }
 
 /**
@@ -280,6 +304,8 @@ export function createSkyAxisController(deps: {
     selectedRequirementId: null,
     detailLoading: false,
     detailError: null,
+    // ── Phase 1.13 详情内 tab 路由初始状态 ──
+    detailTabKey: 'workbench',
   }
   const listeners = new Set<() => void>()
 
@@ -455,7 +481,14 @@ export function createSkyAxisController(deps: {
       if (snapshot.selectedRequirementId === id) return
       // 关闭当前详情错误状态（避免旧错误残留）
       const isNew = snapshot.selectedRequirementId !== id
-      snapshot = { ...snapshot, selectedRequirementId: id, detailError: null }
+      // Phase 1.13：打开新详情时重置 tab 为默认 'workbench'，
+      //   不让上个需求的 tab 偏好串到新需求
+      snapshot = {
+        ...snapshot,
+        selectedRequirementId: id,
+        detailError: null,
+        detailTabKey: 'workbench',
+      }
       notify()
       // 打开后自动拉详情（detailImpl 在 Phase 2 由 client/index.ts 注入）
       if (isNew) {
@@ -464,13 +497,33 @@ export function createSkyAxisController(deps: {
     },
 
     closeDetail() {
-      if (snapshot.selectedRequirementId === null && snapshot.detailError === null) return
-      snapshot = { ...snapshot, selectedRequirementId: null, detailError: null }
+      if (snapshot.selectedRequirementId === null && snapshot.detailError === null && snapshot.detailTabKey === 'workbench') return
+      // Phase 1.13：closeDetail 重置 tab 回 'workbench' 默认，避免下次 openDetail
+      // 时残留上次的 'materials' 偏好
+      snapshot = {
+        ...snapshot,
+        selectedRequirementId: null,
+        detailError: null,
+        detailTabKey: 'workbench',
+      }
       notify()
     },
 
     getSelectedRequirementId() {
       return snapshot.selectedRequirementId
+    },
+
+    setDetailTab(tab) {
+      // 无详情时不切（防止外部状态污染）
+      if (snapshot.selectedRequirementId === null) return
+      // 幂等：相同 tab 不触发 notify
+      if (snapshot.detailTabKey === tab) return
+      snapshot = { ...snapshot, detailTabKey: tab }
+      notify()
+    },
+
+    getDetailTab() {
+      return snapshot.detailTabKey
     },
 
     async loadDetail(id) {

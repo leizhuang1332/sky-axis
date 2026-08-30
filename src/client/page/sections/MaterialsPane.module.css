@@ -1,0 +1,235 @@
+/**
+ * MaterialsPane.module.css —— 详情页「需求物料」tab 内容样式。
+ *
+ * 风格契约：
+ *   - 全用 --dsw-alias-* 设计令牌
+ *   - 单 root class
+ *   - 暗色主题 @media (prefers-color-scheme: dark)
+ */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  padding: 20px 24px;
+  background: var(--dsw-alias-bg-primary);
+  color: var(--dsw-alias-label-primary);
+  overflow: auto;
+}
+
+/* ── 头部 ── */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--dsw-alias-separator-secondary);
+}
+
+.headerMain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.5;
+}
+
+.badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-status-warning) 12%, transparent);
+  color: var(--dsw-alias-status-warning);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-status-warning) 30%, transparent);
+  white-space: nowrap;
+}
+
+/* ── 引导提示 ── */
+
+.guidance {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--dsw-alias-status-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-status-info) 20%, transparent);
+  border-radius: 8px;
+}
+
+.guidanceIcon {
+  flex-shrink: 0;
+  color: var(--dsw-alias-status-info);
+  margin-top: 2px;
+}
+
+.guidanceText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── 统计 ── */
+
+.statsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 6px;
+}
+
+.statsLabel {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statsValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section 列表 ── */
+
+.sectionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionItem {
+  border: 1px solid var(--dsw-alias-separator-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: background 120ms ease;
+}
+
+.sectionHeader:hover {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+}
+
+.sectionHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-focus-ring);
+  outline-offset: -2px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sectionChevron {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 160ms ease;
+  display: inline-block;
+}
+
+.sectionChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionBody {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--dsw-alias-separator-secondary);
+  background: var(--dsw-alias-bg-primary);
+}
+
+/* ── Placeholder ── */
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px dashed var(--dsw-alias-separator-tertiary);
+  border-radius: 6px;
+}
+
+.placeholderIcon {
+  flex-shrink: 0;
+  font-size: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.placeholderText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── 底部 ── */
+
+.footer {
+  margin-top: auto;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--dsw-alias-status-warning) 6%, transparent);
+  border-radius: 6px;
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-status-warning) 30%, transparent);
+}
+
+.footerText {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── 暗色主题 ── */
+
+@media (prefers-color-scheme: dark) {
+  .pane {
+    background: var(--dsw-alias-bg-primary);
+  }
+  .sectionItem {
+    background: var(--dsw-alias-bg-layer-1);
+    border-color: var(--dsw-alias-separator-secondary);
+  }
+  .sectionBody {
+    background: var(--dsw-alias-bg-primary);
+    border-color: var(--dsw-alias-separator-secondary);
+  }
+}

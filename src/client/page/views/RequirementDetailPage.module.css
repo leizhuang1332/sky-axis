@@ -3,7 +3,7 @@
 
 .page {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   height: 100%;
   min-width: 0;
   background: var(--dsw-alias-bg-primary);
@@ -181,4 +181,70 @@
     border-left: none;
     border-bottom: 1px solid var(--dsw-alias-separator-primary);
   }
+}
+
+/* ── Tab Header（Phase 1.13 新增）── */
+
+.tabHeader {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--dsw-alias-separator-primary);
+  background: var(--dsw-alias-bg-primary);
+}
+
+.tabButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  position: relative;
+  margin-bottom: -1px; /* 让 active 的 border-bottom 与外层 border-bottom 重合 */
+}
+
+.tabButton:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-focus-ring);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.tabButtonActive {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: var(--dsw-alias-accent-primary);
+}
+
+.tabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-status-warning) 15%, transparent);
+  color: var(--dsw-alias-status-warning);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Tab Body（Phase 1.13 新增）── */
+
+.tabBody {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-primary);
 }

@@ -622,3 +622,93 @@ describe('SkyAxisController openDetail / closeDetail / loadDetail（Phase 1.2）
     expect(s.detailError?.code).toBe('requirement-not-found')
   })
 })
+
+describe('SkyAxisController setDetailTab / getDetailTab（Phase 1.13）', () => {
+  it('初始 detailTabKey = "workbench"', () => {
+    const c = createSkyAxisController()
+    expect(c.getDetailTab()).toBe('workbench')
+    expect(c.getSnapshot().detailTabKey).toBe('workbench')
+  })
+
+  it('openDetail 后 detailTabKey 重置为 "workbench"（避免上个需求 tab 偏好串味）', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([
+        makeReq({ id: 'r-1' }),
+        makeReq({ id: 'r-2' }),
+      ]),
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    c.setDetailTab('materials')
+    expect(c.getDetailTab()).toBe('materials')
+    // 打开第二个需求 → tab 应重置回默认
+    c.openDetail('r-2')
+    expect(c.getDetailTab()).toBe('workbench')
+  })
+
+  it('setDetailTab 切到 materials + 切回 workbench', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]),
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    c.setDetailTab('materials')
+    expect(c.getDetailTab()).toBe('materials')
+    expect(c.getSnapshot().detailTabKey).toBe('materials')
+    c.setDetailTab('workbench')
+    expect(c.getDetailTab()).toBe('workbench')
+  })
+
+  it('setDetailTab 幂等：相同 tab 不触发 notify', async () => {
+    const l = makeListener()
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]),
+    })
+    c.subscribe(l.fn)
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    const callsAfterOpen = l.getCalls()
+    // 重复切到相同 tab → 不触发 notify
+    c.setDetailTab('workbench')
+    expect(l.getCalls()).toBe(callsAfterOpen) // 没增加
+    // 切到另一个
+    c.setDetailTab('materials')
+    expect(l.getCalls()).toBe(callsAfterOpen + 1)
+    // 再次切到 materials → 幂等
+    c.setDetailTab('materials')
+    expect(l.getCalls()).toBe(callsAfterOpen + 1)
+  })
+
+  it('setDetailTab 无详情时 no-op（不污染 detailTabKey）', () => {
+    const c = createSkyAxisController()
+    c.setDetailTab('materials')
+    expect(c.getDetailTab()).toBe('workbench') // 没详情时不允许切
+  })
+
+  it('closeDetail 重置 detailTabKey 为 "workbench"（避免下次 openDetail 残留偏好）', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]),
+    })
+    await c.loadRequirements()
+    c.openDetail('r-1')
+    c.setDetailTab('materials')
+    c.closeDetail()
+    expect(c.getDetailTab()).toBe('workbench')
+    expect(c.getSnapshot().selectedRequirementId).toBeNull()
+  })
+
+  it('setDetailTab 切 tab 不切 viewKey（保留「列表 → 详情 → 返回」语义）', async () => {
+    const c = createSkyAxisController({
+      loadImpl: okLoad([makeReq({ id: 'r-1' })]),
+    })
+    await c.loadRequirements()
+    c.openPage()
+    c.setView('requirements')
+    c.openDetail('r-1')
+    const viewKeyBefore = c.getView()
+    c.setDetailTab('materials')
+    c.setDetailTab('workbench')
+    expect(c.getView()).toBe(viewKeyBefore) // viewKey 没变
+    expect(c.getView()).toBe('requirements')
+  })
+})

@@ -65,7 +65,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   const {
     viewKey, sidebarCollapsed, personalExpanded,
     requirements, workspaces, requirementsLoading, requirementsError,
-    selectedRequirementId, detailLoading, detailError,
+    selectedRequirementId, detailLoading, detailError, detailTabKey,
   } = snapshot
 
   /* ── 弹窗状态（modal 是 QuickActions 触发，渲染在 page 顶层）── */
@@ -114,6 +114,10 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   }, [controller])
   const handleBackFromDetail = useCallback((): void => {
     controller.closeDetail()
+  }, [controller])
+  // Phase 1.13：详情内 tab 切换回调
+  const handleDetailTabChange = useCallback((tab: 'materials' | 'workbench'): void => {
+    controller.setDetailTab(tab)
   }, [controller])
 
   const onSelect = (k: SkyAxisViewKey): void => { controller.setView(k) }
@@ -169,7 +173,9 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
                 workspaces={workspaces}
                 detailLoading={detailLoading}
                 detailError={detailError}
+                detailTabKey={detailTabKey}
                 onBack={handleBackFromDetail}
+                onTabChange={handleDetailTabChange}
               />
             ) : (
               <div className={css.view}>
