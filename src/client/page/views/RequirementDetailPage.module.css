@@ -243,8 +243,13 @@
 
 /* ── Tab Body（Phase 1.13 新增）── */
 
+/* materials tab 路径下的唯一子元素 —— 必须显式占 grid 第 4 行 (1fr) 才能拿到剩余空间;
+   不显式声明时,grid 会把它塞到 row 3 (auto),row 4 空置,子级 height: 100% 失效 → 滚动条不出。 */
 .tabBody {
+  grid-row: 4 / 5;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--dsw-alias-bg-primary);
 }
