@@ -151,6 +151,27 @@
   cursor: not-allowed;
 }
 
+/* workspace select 下方的「+ 创建工作区」链接 —— 蓝字小号，不抢主表单视觉 */
+.linkButton {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-state-business-primary, #3b6ef5);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.linkButton:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.linkButton:disabled {
+  color: var(--dsw-alias-label-tertiary, #8a8f99);
+  cursor: not-allowed;
+}
+
 .footer {
   display: flex;
   justify-content: flex-end;

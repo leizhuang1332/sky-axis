@@ -31,9 +31,9 @@ export interface RequirementsViewProps {
   error: RequirementError | null
   onDelete: (id: string) => void
   /** 触发「新建需求」弹窗（SkyAxisPage 内 setModalOpen 包一层）。
-   *  hasWorkspace=false 时按钮自动 disabled。 */
+   *  按钮始终可点 —— 无 workspace 时 modal 内提供「+ 创建工作区」入口。 */
   onNewRequirement: () => void
-  /** 当前是否有可用 workspace（决定新建按钮是否禁用）。 */
+  /** 当前是否有可用 workspace。按钮始终可点；该值仅作为未来视觉 hint。 */
   hasWorkspace: boolean
 }
 
@@ -51,8 +51,7 @@ export function RequirementsView({
           type="button"
           className={css.viewPrimaryButton}
           onClick={onNewRequirement}
-          disabled={!hasWorkspace}
-          title={!hasWorkspace ? t('dashboard.quickActions.newRequirementDisabledHint') : undefined}
+          disabled={false}
         >
           {t('dashboard.quickActions.newRequirement')}
         </button>

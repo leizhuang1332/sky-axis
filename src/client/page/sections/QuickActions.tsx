@@ -36,7 +36,8 @@ export interface QuickActionsProps {
   t: PropsLocale<'sky-axis'>['t']
   /** 用户点击「新建需求」—— parent 应打开 NewRequirementModal。 */
   onNewRequirement: () => void
-  /** 当前是否有可用 workspace（空列表时「新建需求」按钮 disabled）。 */
+  /** 当前是否有可用 workspace。按钮始终可点；该值仅作为未来视觉 hint
+   *  （例如空状态时显示「需先创建工作区」副标），不再做 disabled 判定。 */
   hasWorkspace: boolean
 }
 
@@ -48,7 +49,9 @@ export function QuickActions({ t, onNewRequirement, hasWorkspace }: QuickActions
         const Icon = a.Icon
         const label = t(`dashboard.quickActions.${a.key}`)
         const isNewRequirement = a.key === 'newRequirement'
-        const disabled = isNewRequirement && !hasWorkspace
+        // 「新建需求」始终可点 —— 无 workspace 时弹窗里提供「+ 创建工作区」入口。
+        // 其他 mock 按钮也始终可点（Phase 2 之前保留 alert）。
+        const disabled = false
         const onClick = (): void => {
           if (isNewRequirement) {
             onNewRequirement()
@@ -67,7 +70,6 @@ export function QuickActions({ t, onNewRequirement, hasWorkspace }: QuickActions
             className={css.quickButton}
             onClick={onClick}
             disabled={disabled}
-            title={disabled ? t('dashboard.quickActions.newRequirementDisabledHint') : undefined}
           >
             <span className={css.quickButtonIcon}>
               <Icon size={14} />

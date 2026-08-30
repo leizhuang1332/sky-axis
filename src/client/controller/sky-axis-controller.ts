@@ -90,6 +90,7 @@ export interface RequirementError {
     | 'invalid-record'
     | 'internal-error'
     | 'network-error'
+    | 'workspace-create-failed'
   detail?: string
 }
 

@@ -40,6 +40,40 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const NS = 'sky-axis'
 
 /**
+ * DSH workspace 平台能力透传 —— 由 `apply(ctx)` 期间填充。
+ *
+ * 设计动机：让 UI（NewRequirementModal）能直接复用 dsh-client-runtime
+ * 暴露的 `ctx.workspaces.pickDirectory()` / `ctx.workspaces.create()`，
+ * 不在 sky-axis 内部拼装任何路径/目录/IO 逻辑。
+ *
+ *   - `pickDirectory`：弹原生目录选择器；用户取消时 resolve `null`。
+ *   - `createWorkspace`：用选中路径调 DSH 平台创建 workspace。
+ *     DSH 失败时 throw `WorkspaceCreateError`，本 helper 捕获后
+ *     映射成 `{ ok: false, error: { code, detail } }` 形态给 UI；
+ *     成功后 ctx.workspaces.list 会自动推送新 snapshot，UI 不需要手动刷新。
+ */
+interface WorkspaceOps {
+  pickDirectory: () => Promise<string | null>
+  createWorkspace: (input: { path: string }) => Promise<{
+    ok: boolean
+    id?: string
+    title?: string
+    error?: { code: 'workspace-create-failed'; detail?: string }
+  }>
+}
+
+let workspaceOps: WorkspaceOps | undefined
+
+/**
+ * 组件 mount 时读取 `workspaceOps`（由 apply(ctx) 期间填入）。
+ * 早期 mount / apply 尚未跑完时返回 undefined —— modal 在该场景下
+ * 隐藏「+ 创建工作区」入口，保留纯选择形态。
+ */
+function getWorkspaceOps(): WorkspaceOps | undefined {
+  return workspaceOps
+}
+
+/**
  * 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
  * - 'locale'     UI 文案
  * - 'workspaces' 工作区列表（订阅 ctx.workspaces.list）
@@ -150,6 +184,31 @@ export function apply(ctx: ClientContext): void {
     return () => { dispose() }
   }, 'sky-axis: subscribe workspaces')
 
+  // 6.5 填充 workspaceOps —— 把 DSH 平台能力透传给 UI（NewRequirementModal）。
+  //     平台创建成功后会自动通过 ctx.workspaces.list 推送新 snapshot，
+  //     上面的 pushWorkspaces effect 自动把新 workspace 注入 controller。
+  workspaceOps = {
+    pickDirectory: () => ctx.workspaces.pickDirectory(),
+    createWorkspace: async (input) => {
+      try {
+        const view = await ctx.workspaces.create({ path: input.path })
+        return {
+          ok: true,
+          id: view.workspaceId as unknown as string,
+          title: view.title,
+        }
+      } catch (e) {
+        return {
+          ok: false,
+          error: {
+            code: 'workspace-create-failed',
+            detail: e instanceof Error ? e.message : String(e),
+          },
+        }
+      }
+    },
+  }
+
   // 7. 订阅 SSE 事件流 → controller.handleStreamEvent
   ctx.effect(() => {
     const sub = subscribeRequirementEvents((event) => {
@@ -200,3 +259,5 @@ export type {
 } from './controller/sky-axis-controller.ts'
 export { ENTRY_SELECTOR } from './mount/sidebar-entry.ts'
 export { SKY_AXIS_VIEW_SELECTOR } from './mount/sky-axis-page-mount.tsx'
+export { getWorkspaceOps }
+export type { WorkspaceOps }

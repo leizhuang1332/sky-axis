@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/sky-axis-controller.ts'
+import type { WorkspaceOps } from '../../index.ts'
 import css from './new-requirement-modal.module.css'
 
 export type Priority = RequirementEntry['priority']
@@ -37,6 +38,9 @@ export interface NewRequirementModalProps {
   submitError?: RequirementError | null
   /** 是否正在提交（submit 按钮显示 loading）。 */
   submitting: boolean
+  /** DSH 平台 workspace 创建能力透传（apply 期间由 client/index.ts 填充）。
+   *  undefined = 当前没有 ctx.workspaces 能力可用，隐藏「+ 创建工作区」入口。 */
+  workspaceOps?: WorkspaceOps
   /** 用户点击提交。parent 调 controller.createRequirement。 */
   onSubmit: (input: {
     workspaceId: string
@@ -68,13 +72,16 @@ function priorityLabel(t: PropsLocale<'sky-axis'>['t'], p: Priority): string {
 }
 
 export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
-  const { t, workspaces, defaultWorkspaceId, submitError, submitting, onSubmit, onClose } = props
+  const { t, workspaces, defaultWorkspaceId, submitError, submitting, workspaceOps, onSubmit, onClose } = props
 
   const [workspaceId, setWorkspaceId] = useState<string>(defaultWorkspaceId ?? '')
   const [title, setTitle] = useState<string>('')
   const [description, setDescription] = useState<string>('')
   const [priority, setPriority] = useState<Priority>('normal')
   const [tagsInput, setTagsInput] = useState<string>('')
+  const [creatingWorkspace, setCreatingWorkspace] = useState<boolean>(false)
+  /** modal 本地的 workspace 创建错误 —— 不污染 props.submitError（后者仅承载创建需求的错误）。 */
+  const [workspaceError, setWorkspaceError] = useState<RequirementError | null>(null)
 
   const titleRef = useRef<HTMLInputElement | null>(null)
   // 打开时聚焦第一个表单字段（workspace select）
@@ -94,7 +101,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
 
   const noWorkspaces = workspaces.length === 0
   const titleInvalid = title.trim().length === 0 || title.length > 120
-  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting
+  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace
 
   const handleTagsChange = (raw: string): void => {
     setTagsInput(raw)
@@ -109,6 +116,34 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
     e.preventDefault()
     if (!canSubmit) return
     onSubmit({ workspaceId, title: title.trim(), description: description.trim(), priority, tags: parsedTags })
+  }
+
+  /**
+   * 「+ 创建工作区」链接回调 —— 调 DSH 平台能力：
+   *   1. pickDirectory 弹原生目录选择器（用户取消 → null，静默返回）
+   *   2. createWorkspace 用选中路径创建
+   *   3. 失败 → 错误塞 submitError；成功 → 依赖 ctx.workspaces.list 推送
+   *      自动让 controller.setWorkspaces 注入新项，select 多出一项。
+   *      React rerender 后我们 fallback 显式 setWorkspaceId，避免用户看到
+   *      「刚建好但 select 还没刷新」的一瞬歧义。
+   */
+  const handleCreateWorkspace = async (): Promise<void> => {
+    if (workspaceOps === undefined || creatingWorkspace) return
+    setCreatingWorkspace(true)
+    try {
+      const path = await workspaceOps.pickDirectory()
+      if (path === null) return
+      const result = await workspaceOps.createWorkspace({ path })
+      if (result.ok && result.id !== undefined) {
+        // 乐观选中新建 workspace，等 ctx.workspaces.list 推送会再次校准。
+        setWorkspaceId(result.id)
+        setWorkspaceError(null)
+      } else if (!result.ok && result.error !== undefined) {
+        setWorkspaceError(result.error as RequirementError)
+      }
+    } finally {
+      setCreatingWorkspace(false)
+    }
   }
 
   return (
@@ -141,6 +176,14 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             </div>
           )}
 
+          {workspaceError !== null && (
+            <div className={css.errorBar} role="alert">
+              <strong>{t('requirement.new.errorPrefix')}</strong>
+              <span>{t(`requirement.error.${workspaceError.code}` as never)}</span>
+              {workspaceError.detail !== undefined && <code className={css.errorDetail}>{workspaceError.detail}</code>}
+            </div>
+          )}
+
           {noWorkspaces && (
             <div className={css.warningBar}>
               {t('requirement.new.noWorkspace')}
@@ -151,7 +194,6 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             <select
               className={css.select}
               value={workspaceId}
-              disabled={noWorkspaces}
               onChange={(e) => { setWorkspaceId(e.target.value) }}
               required
             >
@@ -160,6 +202,21 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
                 <option key={ws.id} value={ws.id}>{ws.title}</option>
               ))}
             </select>
+            {/* DSH 平台 workspace 创建入口 —— 复用 ctx.workspaces.pickDirectory + create。
+                apply(ctx) 还没跑完时 workspaceOps 为 undefined，链接隐藏。 */}
+            {workspaceOps !== undefined && (
+              <button
+                type="button"
+                className={css.linkButton}
+                onClick={() => { void handleCreateWorkspace() }}
+                disabled={creatingWorkspace}
+                title={t('requirement.new.createWorkspaceHint')}
+              >
+                {creatingWorkspace
+                  ? t('requirement.new.creatingWorkspace')
+                  : `+ ${t('requirement.new.createWorkspace')}`}
+              </button>
+            )}
           </Field>
 
           <Field label={t('requirement.new.titleLabel')} hint={t('requirement.new.titleHint')}>
