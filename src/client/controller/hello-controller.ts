@@ -21,8 +21,10 @@
  * getSnapshot 返回引用，每次状态变化时构造新 snapshot 对象。
  */
 
-/** hello 内部 5 个视图 key。 */
-export type HelloViewKey = 'home' | 'team' | 'personal' | 'reports' | 'settings'
+/** hello 内部视图 key。
+ *  'personal' 保留作为 PersonalView 的入口（通过个人 entry 子项「个人主页」触发，本轮未暴露 sidebar 入口）；
+ *  'requirements' 作为 sidebar「个人」下的二级目录入口对应的独立视图。 */
+export type HelloViewKey = 'home' | 'team' | 'personal' | 'requirements' | 'reports' | 'settings'
 
 /** workspace 摘要（client UI 展示用）。 */
 export interface WorkspaceOption {
@@ -48,6 +50,11 @@ export interface HelloSnapshot {
   /** sidebar 是否折叠（默认 false = 展开）。与 pageOpen 独立持久：
    *  关掉 Hello 再打开仍保留折叠状态，符合 sidebar 用户偏好习惯。 */
   sidebarCollapsed: boolean
+  /** sidebar「个人」分组是否展开（默认 true = 展开）。独立于 pageOpen / sidebarCollapsed：
+   *  - 关掉 Hello 再打开仍保留展开偏好（用户偏好持久）
+   *  - sidebar 折叠态（icon rail）下二级菜单不可见，本字段不影响可见性
+   *  - 5 个视图 entry 里只有「个人」带子菜单，其它 entry 无二级目录 */
+  personalExpanded: boolean
   /** 全部需求（按 id 倒序，最新在前）。 */
   requirements: readonly RequirementEntry[]
   /** workspace 选项（来自 ctx.workspaces.list 推送；空数组表示当前无 workspace）。 */
@@ -113,6 +120,10 @@ export interface HelloController {
   toggleSidebar(): void
   /** sidebar 是否折叠（避免 React 端每次解构判断）。 */
   isSidebarCollapsed(): boolean
+  /** 切换 sidebar「个人」分组的二级菜单展开 / 收起（与 pageOpen、sidebarCollapsed 独立）。 */
+  togglePersonalExpanded(): void
+  /** sidebar「个人」分组是否展开。 */
+  isPersonalExpanded(): boolean
 
   /* ── Requirement CRUD ── */
 
@@ -162,6 +173,7 @@ export function createHelloController(deps: {
     pageOpen: false,
     viewKey: 'home',
     sidebarCollapsed: false,
+    personalExpanded: true, // 默认展开二级菜单：首次进入即可看见「个人 → 需求列表」入口
     requirements: [],
     workspaces: [],
     requirementsLoading: false,
@@ -228,6 +240,13 @@ export function createHelloController(deps: {
     },
     isSidebarCollapsed() {
       return snapshot.sidebarCollapsed
+    },
+    togglePersonalExpanded() {
+      snapshot = { ...snapshot, personalExpanded: !snapshot.personalExpanded }
+      notify()
+    },
+    isPersonalExpanded() {
+      return snapshot.personalExpanded
     },
 
     /* ── Requirement CRUD ── */

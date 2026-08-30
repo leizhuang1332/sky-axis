@@ -68,6 +68,7 @@ describe('HelloController 初始 snapshot', () => {
     expect(s.pageOpen).toBe(false)
     expect(s.viewKey).toBe('home')
     expect(s.sidebarCollapsed).toBe(false)
+    expect(s.personalExpanded).toBe(true)
     expect(s.requirements).toEqual([])
     expect(s.workspaces).toEqual([])
     expect(s.requirementsLoading).toBe(false)
@@ -190,6 +191,74 @@ describe('HelloController toggleSidebar', () => {
     expect(c.isSidebarCollapsed()).toBe(true)
     c.closePage()
     expect(c.isSidebarCollapsed()).toBe(true)
+  })
+})
+
+describe('HelloController personalExpanded 二级菜单状态机', () => {
+  it('初始为 true（首次进入即可见「个人 → 需求列表」）', () => {
+    const c = createHelloController()
+    expect(c.isPersonalExpanded()).toBe(true)
+  })
+
+  it('togglePersonalExpanded 翻转', () => {
+    const c = createHelloController()
+    c.togglePersonalExpanded()
+    expect(c.isPersonalExpanded()).toBe(false)
+    c.togglePersonalExpanded()
+    expect(c.isPersonalExpanded()).toBe(true)
+  })
+
+  it('togglePersonalExpanded 与 pageOpen / sidebarCollapsed 完全独立', () => {
+    const c = createHelloController()
+    // 关闭 sidebar 不影响 personalExpanded
+    c.toggleSidebar()
+    expect(c.isPersonalExpanded()).toBe(true)
+    c.togglePersonalExpanded()
+    expect(c.isPersonalExpanded()).toBe(false)
+    c.toggleSidebar() // 重新展开 sidebar
+    expect(c.isPersonalExpanded()).toBe(false) // 仍保留上次选择
+
+    // openPage / closePage 也不影响 personalExpanded
+    c.openPage()
+    expect(c.isPersonalExpanded()).toBe(false)
+    c.closePage()
+    expect(c.isPersonalExpanded()).toBe(false)
+  })
+
+  it('openPage 强制重置 viewKey，但保留 personalExpanded', () => {
+    const c = createHelloController()
+    c.togglePersonalExpanded() // false
+    expect(c.isPersonalExpanded()).toBe(false)
+    c.openPage()
+    c.setView('reports')
+    c.closePage()
+    c.openPage()
+    expect(c.getView()).toBe('home') // viewKey 重置
+    expect(c.isPersonalExpanded()).toBe(false) // personalExpanded 保留
+  })
+})
+
+describe('HelloController setView 支持 requirements', () => {
+  it('pageOpen=true 时切到 requirements 视图', () => {
+    const c = createHelloController()
+    c.openPage()
+    c.setView('requirements')
+    expect(c.getView()).toBe('requirements')
+  })
+
+  it('从 personal 切到 requirements', () => {
+    const c = createHelloController()
+    c.openPage()
+    c.setView('personal')
+    expect(c.getView()).toBe('personal')
+    c.setView('requirements')
+    expect(c.getView()).toBe('requirements')
+  })
+
+  it('pageOpen=false 时 setView 无效', () => {
+    const c = createHelloController()
+    c.setView('requirements') // pageOpen=false，应被忽略
+    expect(c.getView()).toBe('home')
   })
 })
 

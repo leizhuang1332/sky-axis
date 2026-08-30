@@ -54,6 +54,27 @@ export function ChevronLeftIcon({ size = 14, className }: IconProps): JSX.Elemen
   )
 }
 
+/** Chevron down —— sidebar「个人」分组展开/收起指示器。
+    展开态（默认）朝下表示「可展开」；收起态由 CSS transform: rotate(-90deg) 复用，朝右表示「可展开」。 */
+export function ChevronDownIcon({ size = 12, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <polyline points="3 6 8 11 13 6" />
+    </svg>
+  )
+}
+
+/** 文档 + 勾号 —— sidebar 二级菜单「需求列表」专用。
+    与 PersonalIcon 区分（个人 = 单人头像；需求列表 = 列表文档）。 */
+export function RequirementIcon({ size = 14, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <rect x="3.5" y="2.5" width="9" height="11" rx="1.2" />
+      <path d="M6 6.5h4M6 9h4M6 11.5h2.5" />
+    </svg>
+  )
+}
+
 /** 房子 —— sidebar「首页」。 */
 export function HomeIcon({ size = 16, className }: IconProps): JSX.Element {
   return (

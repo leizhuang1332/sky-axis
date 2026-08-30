@@ -65,6 +65,12 @@
   display: none;
 }
 
+/* 折叠态：二级菜单 + group entry 右侧 chevron 全部隐藏（icon rail 装不下） */
+.collapsed .subList,
+.collapsed .entryChevron {
+  display: none;
+}
+
 .sidebar::-webkit-scrollbar {
   width: 8px;
 }
@@ -141,6 +147,108 @@
 }
 
 .entryLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 「个人」group entry 右侧的 chevron —— 展开态朝下，收起态 CSS 旋转 -90° 朝右 */
+.entryChevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 240ms ease;
+}
+
+.entryChevronExpanded {
+  transform: rotate(0deg);
+}
+
+/* 默认（收起态）：旋转 -90° 让 chevron 朝右，提示「可展开」 */
+.entryChevron:not(.entryChevronExpanded) {
+  transform: rotate(-90deg);
+}
+
+/* ── 二级菜单（个人下的子项）── */
+
+/* 收起态：max-height: 0 + overflow: hidden 把整个 subList 折叠掉；
+   展开态：max-height 给到足够容纳子项的高度（一个子项 ~32px，2 子项 80px 留余量）。
+   用 max-height 过渡实现抽屉式展开 / 收起动画（240ms ease）。 */
+.subList {
+  list-style: none;
+  margin: 2px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 240ms ease, opacity 180ms ease, margin 240ms ease;
+}
+
+.subListExpanded {
+  /* 一级 entry padding-left: 10px + icon 16px + gap 10px ≈ 36px；
+     子项再缩进 12px 让视觉上明显属于「子级」。
+     单子项 ~32px 高度，max-height 给 80px 留余量 + 不被截断。 */
+  max-height: 80px;
+  opacity: 1;
+}
+
+.subItem {
+  margin: 0;
+  padding: 0;
+}
+
+.subEntry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* 子项缩进：一级 entry 已经有 10px padding-left，子项再加 20px（共 30px）形成
+     明显的层级关系。padding-right 与一级 entry 对齐。 */
+  padding: 6px 10px 6px 30px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.subEntry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.subEntry:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.subEntry:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* active 高亮沿用 .entryActive，背景色 / 主色 / 边框规则都继承 */
+.subEntry.entryActive {
+  background: var(--dsw-alias-state-business-secondary);
+  color: var(--dsw-alias-state-business-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+  font-weight: 600;
+}
+
+.subEntryIcon {
+  flex: none;
+  display: inline-flex;
+}
+
+.subEntryLabel {
   flex: 1;
   min-width: 0;
   overflow: hidden;

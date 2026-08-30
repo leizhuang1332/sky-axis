@@ -35,6 +35,57 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── viewHeader 变体：row 布局 + 右侧主操作按钮（RequirementsView 用）── */
+
+.viewHeaderWithAction {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.viewHeaderMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.viewPrimaryButton {
+  flex: none;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.viewPrimaryButton:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.viewPrimaryButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.viewPrimaryButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.viewPrimaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* ── viewBlock（视图内子块卡片）── */
 
 .viewBlock {

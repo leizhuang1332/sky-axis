@@ -31,6 +31,7 @@ import { HelloSidebar } from './sidebar/HelloSidebar.tsx'
 import { HomeView } from './views/HomeView.tsx'
 import { TeamView } from './views/TeamView.tsx'
 import { PersonalView } from './views/PersonalView.tsx'
+import { RequirementsView } from './views/RequirementsView.tsx'
 import { ReportsView } from './views/ReportsView.tsx'
 import { SettingsView } from './views/SettingsView.tsx'
 import css from './HelloPage.module.css'
@@ -57,7 +58,7 @@ function BackIcon(): JSX.Element {
 export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Element {
   // 订阅 controller —— viewKey / requirements / workspaces 任一变化时整组件重渲染。
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  const { viewKey, sidebarCollapsed, requirements, workspaces, requirementsLoading, requirementsError } = snapshot
+  const { viewKey, sidebarCollapsed, personalExpanded, requirements, workspaces, requirementsLoading, requirementsError } = snapshot
 
   /* ── 弹窗状态（modal 是 QuickActions 触发，渲染在 page 顶层）── */
   const [modalOpen, setModalOpen] = useState(false)
@@ -97,6 +98,7 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
 
   const onSelect = (k: HelloViewKey): void => { controller.setView(k) }
   const onToggleCollapse = (): void => { controller.toggleSidebar() }
+  const onPersonalToggle = (): void => { controller.togglePersonalExpanded() }
 
   return (
     <div className={css.page} data-dsh-part="hello-page">
@@ -123,6 +125,8 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
           t={t}
           viewKey={viewKey}
           onSelect={onSelect}
+          onPersonalToggle={onPersonalToggle}
+          personalExpanded={personalExpanded}
           collapsed={sidebarCollapsed}
           onToggleCollapse={onToggleCollapse}
           onNewRequirement={openModal}
@@ -130,17 +134,22 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
         />
         <div className={css.viewArea}>
           {viewKey === 'home'     && (
-            <HomeView
+            <HomeView t={t} />
+          )}
+          {viewKey === 'team'     && <TeamView t={t} />}
+          {viewKey === 'personal' && <PersonalView t={t} />}
+          {viewKey === 'requirements' && (
+            <RequirementsView
               t={t}
               requirements={requirements}
               workspaces={workspaces}
               loading={requirementsLoading}
               error={requirementsError}
               onDelete={handleDelete}
+              onNewRequirement={openModal}
+              hasWorkspace={workspaces.length > 0}
             />
           )}
-          {viewKey === 'team'     && <TeamView t={t} />}
-          {viewKey === 'personal' && <PersonalView t={t} />}
           {viewKey === 'reports'  && <ReportsView t={t} />}
           {viewKey === 'settings' && <SettingsView t={t} />}
         </div>
