@@ -321,15 +321,11 @@
 /* ── QuickActions ── */
 
 .quickActions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-@media (max-width: 600px) {
-  .quickActions {
-    grid-template-columns: 1fr;
-  }
+  /* 3 个按钮从上到下排成 1 列 —— 不依赖容器宽度，永远显式纵向。
+     与 sidebar 5 entry 的纵向节奏一致；按钮内部仍保持「图标左 + 标签右」横向布局。 */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .quickButton {
