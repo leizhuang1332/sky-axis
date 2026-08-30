@@ -11,12 +11,20 @@
  *   切换可见性；与 task-board / ssh 共享 `dsh-panel-activate` 协议避免
  *   互相打架。
  *
+ * Phase 1 增量：
+ *   - inject 加 'workspaces'：订阅 ctx.workspaces.list → controller.setWorkspaces
+ *   - 创建 RequirementClient（fetch host 半区 Requirement CRUD）
+ *   - 注入 client/createHelloController 的 loadImpl / createImpl / deleteImpl
+ *   - subscribeRequirementEvents → controller.handleStreamEvent
+ *   - controller.loadRequirements() 拉初始列表
+ *
  * 旧的 sidebar.footer.action slot 注册已废弃（弹窗卡片形态被整页取代）。
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // 类型导入：拉取 locale 插件的 ctx.locale 合并
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { createHelloController } from './controller/hello-controller.ts'
+import { RequirementClient, subscribeRequirementEvents } from './api/requirement-client.ts'
+import { createHelloController, type RequirementOption } from './controller/hello-controller.ts'
 import { mountSidebarEntry } from './mount/sidebar-entry.ts'
 import { mountHelloPage } from './mount/hello-page-mount.tsx'
 import { en, zh, type HelloKey } from './locales.ts'
@@ -31,12 +39,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** 本插件拥有的字典命名空间。 */
 const NS = 'hello'
 
-/** 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
- *  注意：不再 inject sessions，因为新仪表板不订阅会话数据。 */
-export const inject = ['locale']
+/**
+ * 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
+ * - 'locale'     UI 文案
+ * - 'workspaces' 工作区列表（订阅 ctx.workspaces.list）
+ * - 'slots'      已被 sidebar-entry.ts 隐式使用
+ *
+ * 注意：不再 inject sessions，因为新仪表板不订阅会话数据。
+ */
+export const inject = ['locale', 'workspaces', 'slots']
 
 /**
- * 挂载 sidebar entry + 主列 page。
+ * 挂载 sidebar entry + 主列 page + 装配 requirement 控制器。
  *
  * 失败策略（沿用 dsh-task-board）：DOM 挂载错误只 console.error，绝
  * 不 throw —— DSH web shell 会在插件 apply 抛错时让整个 boot 失败，
@@ -46,19 +60,66 @@ export function apply(ctx: ClientContext): void {
   // 1. 注册 zh / en 字典（effect 等待 locale 服务就绪）。
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'hello: dictionaries')
 
-  // 2. 构造控制器（pageOpen 状态机）。
-  const controller = createHelloController()
+  // 2. Requirement HTTP client（同源 fetch /api/hello/...）。
+  const reqClient = new RequirementClient()
 
-  // 3. Sidebar 主树 entry —— DOM 直挂。
-  //    mountSidebarEntry 内部自带 MutationObserver 等待 sidebar 渲染，
-  //    同步调用即可。
+  // 3. 构造控制器，注入 host fetch impl。
+  const controller = createHelloController({
+    loadImpl: async () => {
+      const r = await reqClient.list()
+      if (r.ok) {
+        return { ok: true, items: r.value.map(item => ({
+          id: item.id,
+          workspaceId: item.workspaceId,
+          title: item.title,
+          description: item.description,
+          priority: item.priority,
+          status: item.status,
+          tags: item.tags,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        })) }
+      }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+    createImpl: async (input) => {
+      const r = await reqClient.create({
+        workspaceId: input.workspaceId as never,
+        title: input.title,
+        description: input.description ?? '',
+        priority: input.priority ?? 'normal',
+        tags: input.tags ?? [],
+      })
+      if (r.ok) {
+        return { ok: true, item: {
+          id: r.value.id,
+          workspaceId: r.value.workspaceId,
+          title: r.value.title,
+          description: r.value.description,
+          priority: r.value.priority,
+          status: r.value.status,
+          tags: r.value.tags,
+          createdAt: r.value.createdAt,
+          updatedAt: r.value.updatedAt,
+        } }
+      }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+    deleteImpl: async (id) => {
+      const r = await reqClient.remove(id as never)
+      if (r.ok) return { ok: true }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+  })
+
+  // 4. Sidebar 主树 entry —— DOM 直挂。
   try {
     mountSidebarEntry(controller)
   } catch (error) {
     console.error('[dsh-hello] sidebar entry mount failed:', error)
   }
 
-  // 4. 主列 page mount —— 在 effect 内执行，确保 locale.bind 在字典
+  // 5. 主列 page mount —— 在 effect 内执行，确保 locale.bind 在字典
   //    注册完成之后调用，t 函数能正确解析 key。
   ctx.effect(() => {
     const t = ctx.locale.bind(NS)
@@ -72,10 +133,70 @@ export function apply(ctx: ClientContext): void {
       dispose?.()
     }
   }, 'hello: mount page')
+
+  // 6. 订阅 ctx.workspaces.list → controller.setWorkspaces
+  ctx.effect(() => {
+    const pushWorkspaces = (): void => {
+      const items = ctx.workspaces.list.getSnapshot().items
+      const opts: RequirementOption[] = items.map(item => ({
+        id: item.workspaceId as unknown as string,
+        title: item.title !== '' ? item.title : basename(item.path),
+        path: item.path,
+      }))
+      controller.setWorkspaces(opts)
+    }
+    pushWorkspaces()
+    const dispose = ctx.workspaces.list.subscribe(pushWorkspaces)
+    return () => { dispose() }
+  }, 'hello: subscribe workspaces')
+
+  // 7. 订阅 SSE 事件流 → controller.handleStreamEvent
+  ctx.effect(() => {
+    const sub = subscribeRequirementEvents((event) => {
+      if (event.operation === 'put') {
+        controller.handleStreamEvent({
+          operation: 'put',
+          item: {
+            id: event.item.id,
+            workspaceId: event.item.workspaceId,
+            title: event.item.title,
+            description: event.item.description,
+            priority: event.item.priority,
+            status: event.item.status,
+            tags: event.item.tags,
+            createdAt: event.item.createdAt,
+            updatedAt: event.item.updatedAt,
+          },
+        })
+      } else {
+        controller.handleStreamEvent({ operation: 'deleted', id: event.id as string })
+      }
+    })
+    return () => { sub.dispose() }
+  }, 'hello: subscribe requirement events')
+
+  // 8. 初次拉取列表（在 effect 启动后跑，确保 workspaces 已经首推过一次）
+  ctx.effect(() => {
+    void controller.loadRequirements()
+    return () => {}
+  }, 'hello: load requirements (initial)')
+}
+
+/** 简单 basename（避免再引 node:path）。 */
+function basename(p: string): string {
+  const i = p.lastIndexOf('/')
+  return i === -1 ? p : p.slice(i + 1)
 }
 
 // 包表面：cordis 加载所需的 apply + 命名空间 key 类型
 export type { HelloKey }
-export type { HelloController, HelloSnapshot, HelloViewKey } from './controller/hello-controller.ts'
+export type {
+  HelloController,
+  HelloSnapshot,
+  HelloViewKey,
+  RequirementEntry,
+  RequirementStreamEvent,
+  RequirementError,
+} from './controller/hello-controller.ts'
 export { ENTRY_SELECTOR } from './mount/sidebar-entry.ts'
 export { HELLO_VIEW_SELECTOR } from './mount/hello-page-mount.tsx'

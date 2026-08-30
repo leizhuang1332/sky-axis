@@ -54,10 +54,14 @@ export interface HelloSidebarProps {
   collapsed: boolean
   /** 点击顶部 toggle 按钮回调（HelloPage 内 controller.toggleSidebar 包一层）。 */
   onToggleCollapse: () => void
+  /** 点击「新建需求」按钮回调（HelloPage 内维护 modal 状态）。 */
+  onNewRequirement: () => void
+  /** 当前是否有可用 workspace（空列表时「新建需求」按钮 disabled）。 */
+  hasWorkspace: boolean
 }
 
 export function HelloSidebar({
-  t, viewKey, onSelect, collapsed, onToggleCollapse,
+  t, viewKey, onSelect, collapsed, onToggleCollapse, onNewRequirement, hasWorkspace,
 }: HelloSidebarProps): JSX.Element {
   const sidebarClass = collapsed ? `${css.sidebar} ${css.collapsed}` : css.sidebar
   // 字面量 key 用联合类型让 t() 在编译期校验（HelloKey 联合类型）
@@ -99,7 +103,7 @@ export function HelloSidebar({
       </ul>
       <div className={css.divider} aria-hidden="true" />
       <p className={css.quickLabel}>{t('sidebar.quickActions.label')}</p>
-      <QuickActions t={t} />
+      <QuickActions t={t} onNewRequirement={onNewRequirement} hasWorkspace={hasWorkspace} />
     </nav>
   )
 }

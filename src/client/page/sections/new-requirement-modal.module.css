@@ -1,0 +1,220 @@
+/**
+ * NewRequirementModal 样式 —— 与 dsh-task-board modal 视觉一致。
+ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 18, 28, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 120ms ease;
+}
+
+.root {
+  width: min(560px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--dsw-alias-bg-primary, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-secondary, #e8eaef);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.closeButton {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.closeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #f3f5f8);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.form {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.errorBar {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(220, 53, 69, 0.08);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  color: #b3261e;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.errorBar strong {
+  font-weight: 600;
+}
+
+.errorDetail {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: #6b1a15;
+  word-break: break-all;
+}
+
+.warningBar {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 193, 7, 0.08);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  color: #8a6d00;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.fieldHint {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  background: var(--dsw-alias-bg-primary, #ffffff);
+  border: 1px solid var(--dsw-alias-border-secondary, #d0d4dc);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.textarea {
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--dsw-alias-state-business-primary, #3b6ef5);
+  box-shadow: 0 0 0 2px rgba(59, 110, 245, 0.2);
+}
+
+.input:disabled,
+.select:disabled,
+.textarea:disabled {
+  background: var(--dsw-alias-bg-secondary, #f5f6f8);
+  color: var(--dsw-alias-label-secondary, #5b6470);
+  cursor: not-allowed;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-border-secondary, #e8eaef);
+}
+
+.cancelButton,
+.submitButton {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.cancelButton {
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+  border: 1px solid var(--dsw-alias-border-secondary, #d0d4dc);
+}
+
+.cancelButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #f3f5f8);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.submitButton {
+  background: var(--dsw-alias-state-business-primary, #3b6ef5);
+  color: #ffffff;
+  border: 1px solid transparent;
+}
+
+.submitButton:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.submitButton:disabled,
+.cancelButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .overlay {
+    background: rgba(0, 0, 0, 0.65);
+  }
+  .errorBar {
+    background: rgba(248, 81, 73, 0.12);
+    color: #f85149;
+  }
+  .errorDetail {
+    color: #f0b4b1;
+  }
+  .warningBar {
+    background: rgba(255, 193, 7, 0.12);
+    color: #f5d563;
+  }
+}

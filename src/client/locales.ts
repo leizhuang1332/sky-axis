@@ -50,6 +50,7 @@ export const zh = {
   'dashboard.quickActions.newBranch': '创建分支',
   'dashboard.quickActions.newMr': '发起合并请求',
   'dashboard.quickActions.toastPrefix': '（演示）这是一个 mock 按钮：',
+  'dashboard.quickActions.newRequirementDisabledHint': '请先在 DSH 工作区管理创建一个工作区',
 
   // 内部 sidebar
   'sidebar.ariaLabel': '工作台导航',
@@ -113,6 +114,54 @@ export const zh = {
   'view.settings.profile.email': '邮箱',
   'view.settings.save': '保存',
   'view.settings.saveToast': '（演示）保存按钮未实现',
+
+  /* ── Requirement 新建 / 列表 / 错误 / 状态 / 优先级 ── */
+  'requirement.list.title': '需求列表',
+  'requirement.list.subtitle': '按工作区分组，支持新建、查看与删除',
+  'requirement.list.loading': '加载中…',
+  'requirement.list.empty': '暂无需求。点击左侧「新建需求」创建第一条。',
+  'requirement.list.errorPrefix': '加载失败：',
+  'requirement.list.delete': '删除需求',
+
+  'requirement.workspace.removed': '（工作区已删除）',
+
+  'requirement.new.title': '新建需求',
+  'requirement.new.workspace': '工作区',
+  'requirement.new.workspaceHint': '该需求产生的文件和产物将保存到此工作区',
+  'requirement.new.workspacePlaceholder': '请选择工作区',
+  'requirement.new.titleLabel': '标题',
+  'requirement.new.titleHint': '1-120 字',
+  'requirement.new.titlePlaceholder': '简要描述需求',
+  'requirement.new.descriptionLabel': '描述',
+  'requirement.new.descriptionHint': '可选，最多 4000 字',
+  'requirement.new.descriptionPlaceholder': '详细需求内容、验收标准、参考链接…',
+  'requirement.new.priorityLabel': '优先级',
+  'requirement.new.tagsLabel': '标签',
+  'requirement.new.tagsHint': '逗号或空格分隔，每个 1-32 字，最多 20 个',
+  'requirement.new.tagsPlaceholder': '例如：前端, 紧急, 优化',
+  'requirement.new.noWorkspace': '当前 DSH 没有可用工作区。请先在 DSH 工作区管理创建一个工作区。',
+  'requirement.new.errorPrefix': '提交失败：',
+  'requirement.new.cancel': '取消',
+  'requirement.new.submit': '创建',
+  'requirement.new.submitting': '创建中…',
+
+  'requirement.status.open': '待处理',
+  'requirement.status.in_progress': '进行中',
+  'requirement.status.done': '已完成',
+  'requirement.status.cancelled': '已取消',
+
+  'requirement.priority.low': '低',
+  'requirement.priority.normal': '中',
+  'requirement.priority.high': '高',
+  'requirement.priority.urgent': '紧急',
+
+  'requirement.error.validation-failed': '输入校验失败',
+  'requirement.error.workspace-not-found': '工作区不存在，请刷新工作区列表',
+  'requirement.error.workspace-list-failed': '无法获取工作区列表',
+  'requirement.error.requirement-not-found': '需求不存在或已被删除',
+  'requirement.error.invalid-record': '存储数据校验失败',
+  'requirement.error.internal-error': '服务器内部错误',
+  'requirement.error.network-error': '网络请求失败',
 }
 
 /** hello 命名空间的 key 联合类型。 */
@@ -159,6 +208,7 @@ export const en: Record<HelloKey, string> = {
   'dashboard.quickActions.newBranch': 'Create branch',
   'dashboard.quickActions.newMr': 'Open merge request',
   'dashboard.quickActions.toastPrefix': '(demo) This is a mock button:',
+  'dashboard.quickActions.newRequirementDisabledHint': 'Please create a workspace in DSH workspace manager first',
 
   // Internal sidebar
   'sidebar.ariaLabel': 'Workbench navigation',
@@ -222,4 +272,52 @@ export const en: Record<HelloKey, string> = {
   'view.settings.profile.email': 'Email',
   'view.settings.save': 'Save',
   'view.settings.saveToast': '(demo) Save is not implemented',
+
+  /* ── Requirement new / list / error / status / priority ── */
+  'requirement.list.title': 'Requirements',
+  'requirement.list.subtitle': 'Grouped by workspace — create, view and delete',
+  'requirement.list.loading': 'Loading…',
+  'requirement.list.empty': 'No requirements yet. Click "New requirement" in the sidebar to create one.',
+  'requirement.list.errorPrefix': 'Failed to load: ',
+  'requirement.list.delete': 'Delete requirement',
+
+  'requirement.workspace.removed': '(workspace removed)',
+
+  'requirement.new.title': 'New requirement',
+  'requirement.new.workspace': 'Workspace',
+  'requirement.new.workspaceHint': 'Files and artifacts produced by this requirement will be saved to this workspace',
+  'requirement.new.workspacePlaceholder': 'Select a workspace',
+  'requirement.new.titleLabel': 'Title',
+  'requirement.new.titleHint': '1-120 chars',
+  'requirement.new.titlePlaceholder': 'Brief description of the requirement',
+  'requirement.new.descriptionLabel': 'Description',
+  'requirement.new.descriptionHint': 'Optional, up to 4000 chars',
+  'requirement.new.descriptionPlaceholder': 'Detailed description, acceptance criteria, references…',
+  'requirement.new.priorityLabel': 'Priority',
+  'requirement.new.tagsLabel': 'Tags',
+  'requirement.new.tagsHint': 'Comma or whitespace separated, each 1-32 chars, up to 20',
+  'requirement.new.tagsPlaceholder': 'e.g. frontend, urgent, perf',
+  'requirement.new.noWorkspace': 'No DSH workspace available. Please create one in DSH workspace manager first.',
+  'requirement.new.errorPrefix': 'Submit failed: ',
+  'requirement.new.cancel': 'Cancel',
+  'requirement.new.submit': 'Create',
+  'requirement.new.submitting': 'Creating…',
+
+  'requirement.status.open': 'Open',
+  'requirement.status.in_progress': 'In progress',
+  'requirement.status.done': 'Done',
+  'requirement.status.cancelled': 'Cancelled',
+
+  'requirement.priority.low': 'Low',
+  'requirement.priority.normal': 'Normal',
+  'requirement.priority.high': 'High',
+  'requirement.priority.urgent': 'Urgent',
+
+  'requirement.error.validation-failed': 'Input validation failed',
+  'requirement.error.workspace-not-found': 'Workspace does not exist; please refresh the workspace list',
+  'requirement.error.workspace-list-failed': 'Failed to fetch workspace list',
+  'requirement.error.requirement-not-found': 'Requirement does not exist or has been deleted',
+  'requirement.error.invalid-record': 'Stored data validation failed',
+  'requirement.error.internal-error': 'Internal server error',
+  'requirement.error.network-error': 'Network request failed',
 }

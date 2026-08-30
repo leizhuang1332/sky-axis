@@ -1,0 +1,158 @@
+/**
+ * hello 插件 client 半区 —— 与 host 半区 Requirement HTTP API 通信的 fetch helper。
+ *
+ * 协议：所有调用同源（DSH 主进程 webServer 路由），无需 token / 跨域配置。
+ * 响应 schema 用 protocol.ts 的 zod schemas 校验（host 端写入时也用同一套
+ * schema，保证跨面契约一致）。
+ *
+ * 设计：
+ *   - 一个轻量 `RequirementClient` 类，构造接收 `baseUrl`（默认 `/api/hello`）
+ *   - 每个方法返回 `Result<T, HelloError>` 而非 throw —— 让 UI 层显式分支
+ *     错误码（参考 task-board 的 `RpcResult<T>` 风格）
+ *   - SSE 客户端：`subscribeEvents()` 返回 EventSource + 订阅 put/deleted 事件
+ */
+import { z } from 'zod'
+import {
+  HELLO_API_PREFIX,
+  NewRequirementSchema,
+  RequirementSchema,
+  RequirementsListResponseSchema,
+  RequirementResponseSchema,
+  WorkspacesListResponseSchema,
+  type HelloErrorCode,
+  type NewRequirement,
+  type Requirement,
+  type RequirementId,
+  type WorkspaceSummary,
+} from '../../protocol.ts'
+
+/** 统一返回类型：成功载荷或带错误码的失败（避免 throw 打断 UI 流程）。 */
+export type Result<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: HelloErrorCode; detail?: string }
+
+/** hello API 错误响应（host 端 HelloHostError → translateError 产出）。 */
+const ApiErrorSchema = z.object({
+  ok: z.literal(false),
+  error: z.string(),
+  detail: z.string().optional(),
+})
+
+async function parseJson<T>(res: Response, schema: z.ZodType<T>): Promise<Result<T>> {
+  let raw: unknown
+  try {
+    raw = await res.json()
+  } catch (e) {
+    // 非 JSON 响应体（典型：网关 502 返回 HTML）
+    if (!res.ok) return { ok: false, code: 'internal-error', detail: `HTTP ${res.status} (non-JSON body)` }
+    return { ok: false, code: 'internal-error', detail: `failed to parse JSON: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  // host 真实行为：translateError 用 mapStatus() 把 HelloErrorCode 翻译成
+  // 400 / 404 / 500 等 HTTP status code，**响应体仍是 `{ ok: false, error, detail }`**。
+  // 所以无论 res.ok 与否，都先尝试 ApiErrorSchema 解析，让 error code 正确透传。
+  const parsed = ApiErrorSchema.safeParse(raw)
+  if (parsed.success) {
+    return { ok: false, code: parsed.data.error as HelloErrorCode, detail: parsed.data.detail }
+  }
+  if (!res.ok) {
+    return { ok: false, code: 'internal-error', detail: `HTTP ${res.status} (non-ApiError body)` }
+  }
+  const ok = schema.safeParse(raw)
+  if (!ok.success) {
+    return { ok: false, code: 'internal-error', detail: `response schema mismatch: ${JSON.stringify(ok.error.issues).slice(0, 500)}` }
+  }
+  return { ok: true, value: ok.data }
+}
+
+/** hello 半区 Requirement CRUD + workspace fetch 客户端。 */
+export class RequirementClient {
+  constructor(private readonly baseUrl: string = HELLO_API_PREFIX) {}
+
+  /** 拉取全部需求。 */
+  async list(): Promise<Result<Requirement[]>> {
+    const res = await fetch(`${this.baseUrl}/requirements`, { method: 'GET', credentials: 'same-origin' })
+    const parsed = await parseJson(res, RequirementsListResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.items }
+  }
+
+  /** 新建一条需求。host 端会校验 workspace 真实存在。 */
+  async create(input: NewRequirement): Promise<Result<Requirement>> {
+    // 客户端预校验：防止提交明显错误（host 仍会兜底校验）
+    const check = NewRequirementSchema.safeParse(input)
+    if (!check.success) {
+      return { ok: false, code: 'validation-failed', detail: `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}` }
+    }
+    const res = await fetch(`${this.baseUrl}/requirements/create`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(check.data),
+    })
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
+    // RequirementResponseSchema 已内嵌校验 item 是合法 Requirement；这里直接取。
+    return { ok: true, value: parsed.value.item }
+  }
+
+  /** 删除一条需求。 */
+  async remove(id: RequirementId): Promise<Result<{ id: RequirementId }>> {
+    const res = await fetch(`${this.baseUrl}/requirements/delete?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    })
+    return parseJson(res, z.object({ ok: z.literal(true), id: RequirementSchema.shape.id }))
+  }
+
+  /** 拉取 workspace 元数据快照（client 注入失败时的降级方案）。 */
+  async listWorkspaces(): Promise<Result<WorkspaceSummary[]>> {
+    const res = await fetch(`${this.baseUrl}/workspaces`, { method: 'GET', credentials: 'same-origin' })
+    const parsed = await parseJson(res, WorkspacesListResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.items }
+  }
+}
+
+/** SSE 事件类型（与 host 端 writeEvent 格式对齐）。 */
+export interface RequirementPutEvent { item: Requirement }
+export interface RequirementDeletedEvent { id: RequirementId }
+export type RequirementStreamEvent =
+  | { operation: 'put'; item: Requirement }
+  | { operation: 'deleted'; id: RequirementId }
+
+/**
+ * 订阅 Requirement 变更事件流（SSE）。返回 EventSource + disposer。
+ * host 端 25s 心跳；连接断开由 EventSource 自动重连。
+ */
+export function subscribeRequirementEvents(
+  onEvent: (event: RequirementStreamEvent) => void,
+  baseUrl: string = HELLO_API_PREFIX,
+): { source: EventSource; dispose: () => void } {
+  const source = new EventSource(`${baseUrl}/requirements/events`, { withCredentials: true })
+  const handlePut = (e: MessageEvent<string>): void => {
+    try {
+      const parsed = RequirementSchema.safeParse(JSON.parse(e.data))
+      if (parsed.success) onEvent({ operation: 'put', item: parsed.data })
+    } catch {
+      // ignore malformed event
+    }
+  }
+  const handleDeleted = (e: MessageEvent<string>): void => {
+    try {
+      const data = JSON.parse(e.data) as { id?: unknown }
+      if (typeof data.id === 'string') onEvent({ operation: 'deleted', id: data.id as RequirementId })
+    } catch {
+      // ignore
+    }
+  }
+  source.addEventListener('put', handlePut as EventListener)
+  source.addEventListener('deleted', handleDeleted as EventListener)
+  return {
+    source,
+    dispose: () => {
+      source.removeEventListener('put', handlePut as EventListener)
+      source.removeEventListener('deleted', handleDeleted as EventListener)
+      source.close()
+    },
+  }
+}
