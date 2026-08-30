@@ -1,6 +1,6 @@
-# Hello 插件 bundle patch —— 将插件行插入 web profile 角色表。
+# SkyAxis 插件 bundle patch —— 将插件行插入 web profile 角色表。
 # 作为 bundle 层被自动加载（package.json 的 dsh.bundle.patch 字段）。
 # 安装命令：dsh plugin --profile web add link:/Users/Ray/TraeProjects/dsh-hello
 - insert:
-    - id: ui-hello
-      name: '@deepseek-ai/dsh-client-ui-hello'
+    - id: ui-sky-axis
+      name: '@leizhuang/sky-axis'

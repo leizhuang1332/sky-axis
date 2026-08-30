@@ -1,5 +1,5 @@
 /**
- * Dashboard section 4 — 底部 3 个快捷入口按钮（由 HelloSidebar 引用）。
+ * Dashboard section 4 — 底部 3 个快捷入口按钮（由 SkyAxisSidebar 引用）。
  *
  * Phase 1 升级：
  *   - 「新建需求」按钮改成真实入口 —— 通过 props.onNewRequirement 回调
@@ -32,8 +32,8 @@ const ACTIONS: readonly QuickActionData[] = [
 ] as const
 
 export interface QuickActionsProps {
-  /** Locale 文案函数（'hello' 命名空间）。 */
-  t: PropsLocale<'hello'>['t']
+  /** Locale 文案函数（'sky-axis' 命名空间）。 */
+  t: PropsLocale<'sky-axis'>['t']
   /** 用户点击「新建需求」—— parent 应打开 NewRequirementModal。 */
   onNewRequirement: () => void
   /** 当前是否有可用 workspace（空列表时「新建需求」按钮 disabled）。 */
@@ -55,7 +55,7 @@ export function QuickActions({ t, onNewRequirement, hasWorkspace }: QuickActions
             return
           }
           // 其他两个动作保留 mock
-          console.info(`[dsh-hello] mock quick action: ${a.key}`)
+          console.info(`[sky-axis] mock quick action: ${a.key}`)
           if (typeof window !== 'undefined') {
             window.alert(`${t('dashboard.quickActions.toastPrefix')}${label}`)
           }

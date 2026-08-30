@@ -13,7 +13,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './views.module.css'
 
 export interface PersonalViewProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 type TaskStatus = 'todo' | 'progress' | 'review' | 'done'
@@ -75,7 +75,7 @@ const SCHEDULE: readonly ScheduleItem[] = [
   { time: '17:00', title: '团队周会',           tag: '会议' },
 ] as const
 
-function statusLabel(t: PropsLocale<'hello'>['t'], s: TaskStatus): { label: string; cls: string } {
+function statusLabel(t: PropsLocale<'sky-axis'>['t'], s: TaskStatus): { label: string; cls: string } {
   switch (s) {
     case 'todo':     return { label: '待办',     cls: css.tagBadge }
     case 'progress': return { label: '进行中',   cls: `${css.tagBadge} ${css.tagBadgeAccent}`  }

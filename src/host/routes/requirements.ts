@@ -1,12 +1,12 @@
 /**
- * hello host 半区 webServer 路由 —— Requirement CRUD + SSE。
+ * sky-axis host 半区 webServer 路由 —— Requirement CRUD + SSE。
  *
- * 路由表（与 protocol.ts HelloEndpoints 字面量一一对应）：
- *   GET    /api/hello/requirements          → list（JSON）
- *   POST   /api/hello/requirements/create   → create（JSON in / out）
- *   DELETE /api/hello/requirements/delete   → remove（query ?id=xxx）
- *   GET    /api/hello/requirements/events   → SSE 事件流
- *   GET    /api/hello/workspaces            → workspace 列表快照（client 降级用）
+ * 路由表（与 protocol.ts SkyAxisEndpoints 字面量一一对应）：
+ *   GET    /api/sky-axis/requirements          → list（JSON）
+ *   POST   /api/sky-axis/requirements/create   → create（JSON in / out）
+ *   DELETE /api/sky-axis/requirements/delete   → remove（query ?id=xxx）
+ *   GET    /api/sky-axis/requirements/events   → SSE 事件流
+ *   GET    /api/sky-axis/workspaces            → workspace 列表快照（client 降级用）
  *
  * 模式：参考 dsh-task-board host-routes —— 每个 handler 先 await service.ready()
  * 等 domain open 完成，再调业务方法；错误用统一 translateError() 翻译成
@@ -18,15 +18,15 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
-  HelloEndpoints,
+  SkyAxisEndpoints,
   NewRequirementSchema,
   RequirementIdSchema,
   type ApiError,
-  type HelloErrorCode,
+  type SkyAxisErrorCode,
   type Requirement,
   type WorkspaceSummary,
 } from '../../protocol.ts'
-import { HelloHostError, type RequirementHostService, fetchWorkspaces } from '../requirement-service.ts'
+import { SkyAxisHostError, type RequirementHostService, fetchWorkspaces } from '../requirement-service.ts'
 
 /** webServer 注册的 route shape（参考 dsh-host-webserver 公开类型）。 */
 interface Route {
@@ -49,15 +49,15 @@ function sseResponse(res: ServerResponse): void {
     'connection': 'keep-alive',
     'x-accel-buffering': 'no',
   })
-  res.write(': hello requirement event stream open\n\n')
+  res.write(': sky-axis requirement event stream open\n\n')
 }
 
-/** 把 HelloHostError → ApiError 响应。 */
+/** 把 SkyAxisHostError → ApiError 响应。 */
 function translateError(res: ServerResponse, error: unknown): void {
   if (error instanceof Error && 'code' in error) {
-    const helloErr = error as HelloHostError
-    const status = mapStatus(helloErr.code)
-    const body: ApiError = { ok: false, error: helloErr.code as HelloErrorCode, detail: helloErr.message }
+    const skyAxisErr = error as SkyAxisHostError
+    const status = mapStatus(skyAxisErr.code)
+    const body: ApiError = { ok: false, error: skyAxisErr.code as SkyAxisErrorCode, detail: skyAxisErr.message }
     jsonResponse(res, status, body)
     return
   }
@@ -66,8 +66,8 @@ function translateError(res: ServerResponse, error: unknown): void {
   jsonResponse(res, 500, { ok: false, error: 'internal-error', detail: message } satisfies ApiError)
 }
 
-/** HelloErrorCode → HTTP status code。 */
-function mapStatus(code: HelloErrorCode): number {
+/** SkyAxisErrorCode → HTTP status code。 */
+function mapStatus(code: SkyAxisErrorCode): number {
   switch (code) {
     case 'validation-failed':       return 400
     case 'workspace-not-found':
@@ -87,7 +87,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
     req.on('data', (chunk: Buffer) => {
       total += chunk.length
       if (total > BODY_LIMIT_BYTES) {
-        reject(new HelloHostError('validation-failed', `request body exceeds ${BODY_LIMIT_BYTES} bytes`))
+        reject(new SkyAxisHostError('validation-failed', `request body exceeds ${BODY_LIMIT_BYTES} bytes`))
         req.destroy()
         return
       }
@@ -102,7 +102,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
       try {
         resolve(JSON.parse(raw))
       } catch (e) {
-        reject(new HelloHostError('validation-failed', `invalid JSON: ${e instanceof Error ? e.message : String(e)}`))
+        reject(new SkyAxisHostError('validation-failed', `invalid JSON: ${e instanceof Error ? e.message : String(e)}`))
       }
     })
     req.on('error', reject)
@@ -110,11 +110,11 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /** zod safeParse 失败的统一包装。 */
-function zodParseOrThrow<T>(schema: { safeParse: (input: unknown) => { success: true; data: T } | { success: false; error: { issues?: unknown } } }, input: unknown, errorCode: HelloErrorCode = 'validation-failed'): T {
+function zodParseOrThrow<T>(schema: { safeParse: (input: unknown) => { success: true; data: T } | { success: false; error: { issues?: unknown } } }, input: unknown, errorCode: SkyAxisErrorCode = 'validation-failed'): T {
   const result = schema.safeParse(input)
   if (!result.success) {
     const issueText = JSON.stringify(result.error.issues ?? result.error, null, 0).slice(0, 500)
-    throw new HelloHostError(errorCode, `zod parse failed: ${issueText}`)
+    throw new SkyAxisHostError(errorCode, `zod parse failed: ${issueText}`)
   }
   return result.data
 }
@@ -130,7 +130,7 @@ function getQueryParam(req: IncomingMessage, name: string): string | undefined {
 }
 
 /**
- * hello host 路由工厂。接收 RequirementHostService 实例，返回所有路由的
+ * sky-axis host 路由工厂。接收 RequirementHostService 实例，返回所有路由的
  * 列表供 webServer.register() 批量注册。
  */
 export function makeRequirementRoutes(service: RequirementHostService): Route[] {
@@ -138,7 +138,7 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
     /* ── GET /requirements ── */
     {
       kind: 'exact',
-      path: HelloEndpoints.requirements,
+      path: SkyAxisEndpoints.requirements,
       handler: async (_req, res) => {
         try {
           const items = await service.list()
@@ -152,7 +152,7 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
     /* ── POST /requirements/create ── */
     {
       kind: 'exact',
-      path: HelloEndpoints.requirementCreate,
+      path: SkyAxisEndpoints.requirementCreate,
       handler: async (req, res) => {
         if (req.method !== 'POST') {
           jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
@@ -172,7 +172,7 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
     /* ── DELETE /requirements/delete?id=xxx ── */
     {
       kind: 'exact',
-      path: HelloEndpoints.requirementDelete,
+      path: SkyAxisEndpoints.requirementDelete,
       handler: async (req, res) => {
         if (req.method !== 'DELETE') {
           jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
@@ -181,12 +181,12 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
         try {
           const idRaw = getQueryParam(req, 'id')
           if (idRaw === undefined || idRaw === '') {
-            throw new HelloHostError('validation-failed', 'missing required query param: id')
+            throw new SkyAxisHostError('validation-failed', 'missing required query param: id')
           }
           const id = zodParseOrThrow(RequirementIdSchema, idRaw)
           const deleted = await service.remove(id)
           if (!deleted) {
-            throw new HelloHostError('requirement-not-found', `requirement '${idRaw}' does not exist`)
+            throw new SkyAxisHostError('requirement-not-found', `requirement '${idRaw}' does not exist`)
           }
           jsonResponse(res, 200, { ok: true, id })
         } catch (error) {
@@ -198,7 +198,7 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
     /* ── GET /requirements/events (SSE) ── */
     {
       kind: 'exact',
-      path: HelloEndpoints.requirementEvents,
+      path: SkyAxisEndpoints.requirementEvents,
       handler: async (req, res) => {
         if (req.method !== 'GET') {
           jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
@@ -229,7 +229,7 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
     /* ── GET /workspaces（client 降级方案用）── */
     {
       kind: 'exact',
-      path: HelloEndpoints.workspaceList,
+      path: SkyAxisEndpoints.workspaceList,
       handler: async (_req, res) => {
         try {
           const items = await fetchWorkspaces(service.apiProxy)

@@ -1,5 +1,5 @@
 /**
- * hello 插件 host 半区业务服务 —— 持有 domain + apiProxy 引用，
+ * sky-axis 插件 host 半区业务服务 —— 持有 domain + apiProxy 引用，
  * 封装所有「需求」相关的业务逻辑（list / get / create / delete），
  * 供 host routes 调用。
  *
@@ -29,23 +29,23 @@ import type {
   NewRequirement,
   Requirement,
   RequirementId,
-  WorkspaceId as HelloWorkspaceId,
-  HelloErrorCode,
+  WorkspaceId as SkyAxisWorkspaceId,
+  SkyAxisErrorCode,
 } from '../protocol.ts'
-import { helloRequest } from './rpc-helper.ts'
+import { skyAxisRequest } from './rpc-helper.ts'
 import { requirementDomain } from './storage/requirement-domain.ts'
 
-/** hello 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
-const HELLO_ARTIFACT_NAMESPACE = '.dsh-hello'
+/** sky-axis 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
+const SKY_AXIS_ARTIFACT_NAMESPACE = '.sky-axis'
 
-/** hello 自定义错误（host routes 捕获并翻译为 ApiError 响应）。 */
-export class HelloHostError extends Error {
+/** sky-axis 自定义错误（host routes 捕获并翻译为 ApiError 响应）。 */
+export class SkyAxisHostError extends Error {
   constructor(
-    readonly code: HelloErrorCode,
+    readonly code: SkyAxisErrorCode,
     message: string,
   ) {
     super(message)
-    this.name = 'HelloHostError'
+    this.name = 'SkyAxisHostError'
   }
 }
 
@@ -56,13 +56,13 @@ function makeRequirementId(): RequirementId {
   return `${ts}-${rand}` as RequirementId
 }
 
-/** hello 半区产物根目录（不实际创建，返回路径供 lazy 创建）。 */
+/** sky-axis 半区产物根目录（不实际创建，返回路径供 lazy 创建）。 */
 function artifactRoot(workspacePath: string, requirementId: RequirementId): string {
-  return join(workspacePath, HELLO_ARTIFACT_NAMESPACE, requirementId)
+  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, requirementId)
 }
 
 /**
- * hello host 半区业务服务。
+ * sky-axis host 半区业务服务。
  *
  * 异步初始化：构造时不阻塞 cordis apply，routes handler 在第一次调用
  * 时 `await svc.ready()` 阻塞等 storage domain open 完成。
@@ -70,7 +70,7 @@ function artifactRoot(workspacePath: string, requirementId: RequirementId): stri
 export class RequirementHostService {
   private readonly domainPromise: Promise<Domain<typeof requirementDomain>>
   /** workspaceId → 真实 path 的本地缓存（每次 list workspace 后刷新一次）。 */
-  private workspacePathCache = new Map<HelloWorkspaceId, string>()
+  private workspacePathCache = new Map<SkyAxisWorkspaceId, string>()
   /** workspace 列表上次拉取时间（ms epoch），用于缓存 TTL。 */
   private workspaceCacheLoadedAt = 0
   /** 缓存 TTL：60s —— workspace 创建/删除/重命名后最长 60s 同步。 */
@@ -88,9 +88,9 @@ export class RequirementHostService {
   }
 
   /** 等 domain 就绪，返回 typed table handle。多次调用复用同一 promise。 */
-  async ready(): Promise<KvTable<HelloWorkspaceId & string, Requirement>> {
+  async ready(): Promise<KvTable<SkyAxisWorkspaceId & string, Requirement>> {
     const domain = await this.domainPromise
-    return domain.table('requirements') as unknown as KvTable<HelloWorkspaceId & string, Requirement>
+    return domain.table('requirements') as unknown as KvTable<SkyAxisWorkspaceId & string, Requirement>
   }
 
   /**
@@ -110,7 +110,7 @@ export class RequirementHostService {
    */
   async get(id: RequirementId): Promise<Requirement | undefined> {
     const table = await this.ready()
-    return table.get(id as unknown as HelloWorkspaceId & string)
+    return table.get(id as unknown as SkyAxisWorkspaceId & string)
   }
 
   /**
@@ -120,7 +120,7 @@ export class RequirementHostService {
    *   3. 写 KV（持久化）
    *   4. best-effort 创建产物目录（失败不阻塞）
    *
-   * @throws HelloHostError
+   * @throws SkyAxisHostError
    *   - 'workspace-not-found'：workspaceId 不在 DSH 当前 workspace 列表
    *   - 'workspace-list-failed'：apiProxy.workspace.list 返回 RpcResult 失败
    *   - 'internal-error'：其他未捕获异常
@@ -143,12 +143,12 @@ export class RequirementHostService {
       updatedAt: now,
     }
 
-    await table.put(id as unknown as HelloWorkspaceId & string, requirement)
+    await table.put(id as unknown as SkyAxisWorkspaceId & string, requirement)
 
     // best-effort 产物目录预创建 —— 不阻塞，失败 console.warn 即可
     void this.ensureArtifactRoot(workspacePath, id).catch((error: unknown) => {
       // eslint-disable-next-line no-console
-      console.warn(`[dsh-hello] artifact root pre-create failed for ${id}: ${String(error)}`)
+      console.warn(`[sky-axis] artifact root pre-create failed for ${id}: ${String(error)}`)
     })
 
     return requirement
@@ -162,7 +162,7 @@ export class RequirementHostService {
    */
   async remove(id: RequirementId): Promise<boolean> {
     const table = await this.ready()
-    return table.delete(id as unknown as HelloWorkspaceId & string)
+    return table.delete(id as unknown as SkyAxisWorkspaceId & string)
   }
 
   /**
@@ -177,7 +177,7 @@ export class RequirementHostService {
   }
 
   /**
-   * 订阅 hello_requirements domain 的 domain/changed 事件。
+   * 订阅 sky_axis_requirements domain 的 domain/changed 事件。
    * 仅透传属于本 domain 的 put/deleted 事件（其它 domain 一律过滤）。
    * @param cb - 事件回调；返回 disposer 解除订阅。
    */
@@ -200,11 +200,11 @@ export class RequirementHostService {
    * 解析 workspaceId → 真实文件系统 path（同时校验 workspace 存在）。
    * 60s 内不重复拉 apiProxy.workspace.list（缓存命中直接返回）。
    *
-   * @throws HelloHostError
+   * @throws SkyAxisHostError
    *   - 'workspace-not-found'
    *   - 'workspace-list-failed'
    */
-  private async resolveWorkspacePath(workspaceId: HelloWorkspaceId): Promise<string> {
+  private async resolveWorkspacePath(workspaceId: SkyAxisWorkspaceId): Promise<string> {
     const now = Date.now()
     if (
       this.workspacePathCache.has(workspaceId)
@@ -214,25 +214,25 @@ export class RequirementHostService {
       if (cached !== undefined) return cached
     }
 
-    const response = await this.apiProxy.workspace.list(helloRequest({}))
+    const response = await this.apiProxy.workspace.list(skyAxisRequest({}))
     if (!response.result.ok) {
-      throw new HelloHostError(
+      throw new SkyAxisHostError(
         'workspace-list-failed',
         `apiProxy.workspace.list failed: ${response.result.error.code}: ${response.result.error.message}`,
       )
     }
     const items = response.result.value.items
     // 刷新整个缓存（便宜：workspace 列表通常 < 100 条）
-    const fresh = new Map<HelloWorkspaceId, string>()
+    const fresh = new Map<SkyAxisWorkspaceId, string>()
     for (const item of items) {
-      fresh.set(item.workspaceId as unknown as HelloWorkspaceId, item.path)
+      fresh.set(item.workspaceId as unknown as SkyAxisWorkspaceId, item.path)
     }
     this.workspacePathCache = fresh
     this.workspaceCacheLoadedAt = now
 
     const path = this.workspacePathCache.get(workspaceId)
     if (path === undefined) {
-      throw new HelloHostError(
+      throw new SkyAxisHostError(
         'workspace-not-found',
         `workspace '${workspaceId}' is not in the current DSH workspace registry`,
       )
@@ -251,19 +251,19 @@ export class RequirementHostService {
 }
 
 /**
- * hello workspace 元数据拉取（透传给 client，client 端首选 ctx.workspaces.list；
+ * sky-axis workspace 元数据拉取（透传给 client，client 端首选 ctx.workspaces.list；
  * 仅当 client 注入失败 / 老版本兼容时 fallback）。
  */
-export async function fetchWorkspaces(apiProxy: ApiProxy): Promise<Array<{ id: HelloWorkspaceId; title: string; path: string }>> {
-  const response = await apiProxy.workspace.list(helloRequest({}))
+export async function fetchWorkspaces(apiProxy: ApiProxy): Promise<Array<{ id: SkyAxisWorkspaceId; title: string; path: string }>> {
+  const response = await apiProxy.workspace.list(skyAxisRequest({}))
   if (!response.result.ok) {
-    throw new HelloHostError(
+    throw new SkyAxisHostError(
       'workspace-list-failed',
       `apiProxy.workspace.list failed: ${response.result.error.code}: ${response.result.error.message}`,
     )
   }
   return response.result.value.items.map(item => ({
-    id: item.workspaceId as unknown as HelloWorkspaceId,
+    id: item.workspaceId as unknown as SkyAxisWorkspaceId,
     title: item.title !== '' ? item.title : basename(item.path),
     path: item.path,
   }))

@@ -1,7 +1,7 @@
 /**
  * 共享 SVG 图标库 —— 替代所有 emoji / unicode 符号。
  *
- * 风格契约（沿用 HelloPage 的 BackIcon）：
+ * 风格契约（沿用 SkyAxisPage 的 BackIcon）：
  *   - viewBox 一律 `0 0 16 16`
  *   - stroke-width: 1.5（默认）；stroke-linecap/linejoin: round
  *   - fill: none + stroke: currentColor，自动跟随父级 color 切换 dark/light/skins

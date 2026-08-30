@@ -14,7 +14,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './views.module.css'
 
 export interface SettingsViewProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 interface Profile {
@@ -46,7 +46,7 @@ export function SettingsView({ t }: SettingsViewProps): JSX.Element {
   const [weeklyDigest, setWeeklyDigest] = useState(false)
 
   const onSave = (): void => {
-    console.info('[dsh-hello] mock settings save', {
+    console.info('[sky-axis] mock settings save', {
       theme, language, compact, bugAlert, mrReview, mention, weeklyDigest,
     })
     if (typeof window !== 'undefined') {

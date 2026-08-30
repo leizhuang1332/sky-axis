@@ -1,5 +1,5 @@
 /**
- * Standalone tsdown config for the hello plugin.
+ * Standalone tsdown config for the sky-axis plugin.
  *
  * Uses the project-local shared client-bundle preset (shared/tsdown.client.ts —
  * closure-factory artifact for window.__ModuleLoader__, CSS Modules inlined,
@@ -8,7 +8,7 @@
  */
 import { clientBundle } from './shared/tsdown.client.ts'
 
-export default clientBundle('@deepseek-ai/dsh-client-ui-hello', [
+export default clientBundle('@leizhuang/sky-axis', [
   'src/index.ts',
   'src/invariant.ts',
 ])

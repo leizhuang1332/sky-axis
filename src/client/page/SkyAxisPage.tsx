@@ -1,18 +1,19 @@
 /**
- * Hello 完整页面 —— 在主列整页渲染「开发工作台」SPA。
+ * SkyAxis 完整页面 —— 在主列整页渲染「开发工作台」SPA。
  *
  * 视觉规范与 dsh-task-board 的 board 一致（同一套 --dsw-* 设计令
- * 牌、字体、间距、卡片样式），让 hello 页面看起来与 DSH 自带页面无
+ * 牌、字体、间距、卡片样式），让 sky-axis 页面看起来与 DSH 自带页面无
  * 缝衔接。
  *
  * 布局（5 视图 SPA 形态）：
  *   - 顶栏：返回按钮 + 「开发工作台」标题 + 徽章
  *   - body（flex row, gap 0）：
- *       左  HelloSidebar  内部 sidebar（5 entry + QuickActions 底部）
+ *       左  SkyAxisSidebar  内部 sidebar（5 entry + QuickActions 底部）
  *       右  viewArea      按 controller.viewKey 渲染对应视图
- *           ├── HomeView      MetricCards + ActivityStream + TeamOverview + RequirementsList
+ *           ├── HomeView      MetricCards + ActivityStream + TeamOverview
  *           ├── TeamView      团队详情（mock）
  *           ├── PersonalView  个人页（mock）
+ *           ├── RequirementsView  需求列表（host CRUD + SSE）
  *           ├── ReportsView   报表 + SVG 图表（mock）
  *           └── SettingsView  设置 + 表单（mock）
  *   - 底部：footer meta + 返回会话按钮
@@ -25,24 +26,24 @@
 import { useCallback, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { HelloController, HelloViewKey } from '../controller/hello-controller.ts'
+import type { SkyAxisController, SkyAxisViewKey } from '../controller/sky-axis-controller.ts'
 import { NewRequirementModal } from './sections/NewRequirementModal.tsx'
-import { HelloSidebar } from './sidebar/HelloSidebar.tsx'
+import { SkyAxisSidebar } from './sidebar/SkyAxisSidebar.tsx'
 import { HomeView } from './views/HomeView.tsx'
 import { TeamView } from './views/TeamView.tsx'
 import { PersonalView } from './views/PersonalView.tsx'
 import { RequirementsView } from './views/RequirementsView.tsx'
 import { ReportsView } from './views/ReportsView.tsx'
 import { SettingsView } from './views/SettingsView.tsx'
-import css from './HelloPage.module.css'
+import css from './SkyAxisPage.module.css'
 
-export interface HelloPageProps {
+export interface SkyAxisPageProps {
   /** locale 文案函数（由 sidebar shell 注入）。 */
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
   /** 关闭页面回调 —— 让出主列回 conversation。 */
   onClose: () => void
   /** 控制器（pageOpen + viewKey + requirements + workspaces 状态机）。 */
-  controller: HelloController
+  controller: SkyAxisController
 }
 
 /** 返回箭头 SVG —— 与 shell 内置 icon 风格一致。 */
@@ -55,7 +56,7 @@ function BackIcon(): JSX.Element {
 }
 
 /** 整页「开发工作台」SPA 主体。 */
-export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Element {
+export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.Element {
   // 订阅 controller —— viewKey / requirements / workspaces 任一变化时整组件重渲染。
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { viewKey, sidebarCollapsed, personalExpanded, requirements, workspaces, requirementsLoading, requirementsError } = snapshot
@@ -96,12 +97,12 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
     void controller.deleteRequirement(id)
   }, [controller])
 
-  const onSelect = (k: HelloViewKey): void => { controller.setView(k) }
+  const onSelect = (k: SkyAxisViewKey): void => { controller.setView(k) }
   const onToggleCollapse = (): void => { controller.toggleSidebar() }
   const onPersonalToggle = (): void => { controller.togglePersonalExpanded() }
 
   return (
-    <div className={css.page} data-dsh-part="hello-page">
+    <div className={css.page} data-dsh-part="sky-axis-page">
       {/* 顶栏 —— 沿用 dsh-task-board 的 boardHeader 视觉 */}
       <header className={css.header}>
         <button
@@ -119,9 +120,9 @@ export function HelloPage({ t, onClose, controller }: HelloPageProps): JSX.Eleme
         <span className={css.badge}>{t('page.badge')}</span>
       </header>
 
-      {/* body —— 左侧 HelloSidebar + 右侧 viewArea */}
+      {/* body —— 左侧 SkyAxisSidebar + 右侧 viewArea */}
       <main className={css.body}>
-        <HelloSidebar
+        <SkyAxisSidebar
           t={t}
           viewKey={viewKey}
           onSelect={onSelect}

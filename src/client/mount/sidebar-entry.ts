@@ -3,26 +3,26 @@
  *
  * The DOM injection / self-healing / idempotency logic lives exactly once in
  * sidebar-entry-core.ts (vendored copy from dsh-web-ui/shared/client/); this
- * wrapper supplies the hello icon, copy, CSS module, and the page toggle.
+ * wrapper supplies the sky-axis icon, copy, CSS module, and the page toggle.
  *
  * The row is plain DOM (no React tree) so it can never disturb the shell's
  * reconciliation; the page view it toggles is a separate React root mounted
- * in the center column (see hello-page-mount.tsx).
+ * in the center column (see sky-axis-page-mount.tsx).
  *
- * Sidebar entry 文案 hardcode 英文 'Hello'（与 dsh-ssh / dsh-task-board 的
+ * Sidebar entry 文案 hardcode 英文 'SkyAxis'（与 dsh-ssh / dsh-task-board 的
  * 做法一致：sidebar row 的 label 在 shell 启动时即写入 innerHTML，locale
  * 动态切换不会回流更新 DOM）。面板内部仍然跟随 locale。
  */
-import type { HelloController } from '../controller/hello-controller.ts'
+import type { SkyAxisController } from '../controller/sky-axis-controller.ts'
 import { mountSidebarEntry as mountSharedSidebarEntry } from '../shared/sidebar-entry-core.ts'
 import css from './sidebar-entry.module.css'
 
 /** Stable data attribute identifying the injected entry row. */
-export const ENTRY_SELECTOR = '[data-dsh-hello-entry]'
+export const ENTRY_SELECTOR = '[data-sky-axis-entry]'
 
 /** 静态 label —— 与 shell 视觉节奏一致。 */
-const LABEL = 'Hello'
-const TOOLTIP = 'Open the hello page'
+const LABEL = 'SkyAxis'
+const TOOLTIP = 'Open the sky-axis page'
 
 /**
  * 16px 手势图标（描边 + 实心圆点），与 shell 内置 nav icon 同视觉风格。
@@ -32,14 +32,14 @@ const ICON = '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke
 /**
  * Mount the sidebar entry, waiting for the shell to render and self-healing
  * on later React re-renders.
- * @param controller - the hello page controller the entry toggles.
+ * @param controller - the sky-axis page controller the entry toggles.
  * @returns disposer removing the entry and its observers.
  */
-export function mountSidebarEntry(controller: HelloController): () => void {
+export function mountSidebarEntry(controller: SkyAxisController): () => void {
   return mountSharedSidebarEntry({
-    rowAttribute: 'data-dsh-hello-entry',
+    rowAttribute: 'data-sky-axis-entry',
     rowSelector: ENTRY_SELECTOR,
-    plugin: 'hello',
+    plugin: 'sky-axis',
     icon: ICON,
     css,
     label: () => LABEL,

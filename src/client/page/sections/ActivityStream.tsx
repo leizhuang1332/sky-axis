@@ -32,15 +32,15 @@ const ACTIVITIES: readonly ActivityItem[] = [
 ] as const
 
 export interface ActivityStreamProps {
-  /** Locale 文案函数（'hello' 命名空间）。 */
-  t: PropsLocale<'hello'>['t']
+  /** Locale 文案函数（'sky-axis' 命名空间）。 */
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 /** 「我的动态流」事件列表卡片。 */
 export function ActivityStream({ t }: ActivityStreamProps): JSX.Element {
   return (
-    <section className={css.section} aria-labelledby="hello-activity-title">
-      <h3 id="hello-activity-title" className={css.sectionTitle}>
+    <section className={css.section} aria-labelledby="sky-axis-activity-title">
+      <h3 id="sky-axis-activity-title" className={css.sectionTitle}>
         {t('dashboard.activity.title')}
       </h3>
       <ul className={css.activityList}>

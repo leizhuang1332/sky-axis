@@ -36,8 +36,8 @@ const METRICS: readonly MetricCardData[] = [
 ] as const
 
 export interface MetricCardsProps {
-  /** Locale 文案函数（'hello' 命名空间）。 */
-  t: PropsLocale<'hello'>['t']
+  /** Locale 文案函数（'sky-axis' 命名空间）。 */
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 /** 顶部 4 个指标卡（响应式：≥900px 4 列，<900px 2×2）。 */

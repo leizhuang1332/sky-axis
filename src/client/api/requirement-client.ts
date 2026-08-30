@@ -1,25 +1,25 @@
 /**
- * hello 插件 client 半区 —— 与 host 半区 Requirement HTTP API 通信的 fetch helper。
+ * sky-axis 插件 client 半区 —— 与 host 半区 Requirement HTTP API 通信的 fetch helper。
  *
  * 协议：所有调用同源（DSH 主进程 webServer 路由），无需 token / 跨域配置。
  * 响应 schema 用 protocol.ts 的 zod schemas 校验（host 端写入时也用同一套
  * schema，保证跨面契约一致）。
  *
  * 设计：
- *   - 一个轻量 `RequirementClient` 类，构造接收 `baseUrl`（默认 `/api/hello`）
- *   - 每个方法返回 `Result<T, HelloError>` 而非 throw —— 让 UI 层显式分支
+ *   - 一个轻量 `RequirementClient` 类，构造接收 `baseUrl`（默认 `/api/sky-axis`）
+ *   - 每个方法返回 `Result<T, SkyAxisError>` 而非 throw —— 让 UI 层显式分支
  *     错误码（参考 task-board 的 `RpcResult<T>` 风格）
  *   - SSE 客户端：`subscribeEvents()` 返回 EventSource + 订阅 put/deleted 事件
  */
 import { z } from 'zod'
 import {
-  HELLO_API_PREFIX,
+  SKY_AXIS_API_PREFIX,
   NewRequirementSchema,
   RequirementSchema,
   RequirementsListResponseSchema,
   RequirementResponseSchema,
   WorkspacesListResponseSchema,
-  type HelloErrorCode,
+  type SkyAxisErrorCode,
   type NewRequirement,
   type Requirement,
   type RequirementId,
@@ -29,9 +29,9 @@ import {
 /** 统一返回类型：成功载荷或带错误码的失败（避免 throw 打断 UI 流程）。 */
 export type Result<T> =
   | { ok: true; value: T }
-  | { ok: false; code: HelloErrorCode; detail?: string }
+  | { ok: false; code: SkyAxisErrorCode; detail?: string }
 
-/** hello API 错误响应（host 端 HelloHostError → translateError 产出）。 */
+/** sky-axis API 错误响应（host 端 SkyAxisHostError → translateError 产出）。 */
 const ApiErrorSchema = z.object({
   ok: z.literal(false),
   error: z.string(),
@@ -47,12 +47,12 @@ async function parseJson<T>(res: Response, schema: z.ZodType<T>): Promise<Result
     if (!res.ok) return { ok: false, code: 'internal-error', detail: `HTTP ${res.status} (non-JSON body)` }
     return { ok: false, code: 'internal-error', detail: `failed to parse JSON: ${e instanceof Error ? e.message : String(e)}` }
   }
-  // host 真实行为：translateError 用 mapStatus() 把 HelloErrorCode 翻译成
+  // host 真实行为：translateError 用 mapStatus() 把 SkyAxisErrorCode 翻译成
   // 400 / 404 / 500 等 HTTP status code，**响应体仍是 `{ ok: false, error, detail }`**。
   // 所以无论 res.ok 与否，都先尝试 ApiErrorSchema 解析，让 error code 正确透传。
   const parsed = ApiErrorSchema.safeParse(raw)
   if (parsed.success) {
-    return { ok: false, code: parsed.data.error as HelloErrorCode, detail: parsed.data.detail }
+    return { ok: false, code: parsed.data.error as SkyAxisErrorCode, detail: parsed.data.detail }
   }
   if (!res.ok) {
     return { ok: false, code: 'internal-error', detail: `HTTP ${res.status} (non-ApiError body)` }
@@ -64,9 +64,9 @@ async function parseJson<T>(res: Response, schema: z.ZodType<T>): Promise<Result
   return { ok: true, value: ok.data }
 }
 
-/** hello 半区 Requirement CRUD + workspace fetch 客户端。 */
+/** sky-axis 半区 Requirement CRUD + workspace fetch 客户端。 */
 export class RequirementClient {
-  constructor(private readonly baseUrl: string = HELLO_API_PREFIX) {}
+  constructor(private readonly baseUrl: string = SKY_AXIS_API_PREFIX) {}
 
   /** 拉取全部需求。 */
   async list(): Promise<Result<Requirement[]>> {
@@ -126,7 +126,7 @@ export type RequirementStreamEvent =
  */
 export function subscribeRequirementEvents(
   onEvent: (event: RequirementStreamEvent) => void,
-  baseUrl: string = HELLO_API_PREFIX,
+  baseUrl: string = SKY_AXIS_API_PREFIX,
 ): { source: EventSource; dispose: () => void } {
   const source = new EventSource(`${baseUrl}/requirements/events`, { withCredentials: true })
   const handlePut = (e: MessageEvent<string>): void => {

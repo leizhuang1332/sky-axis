@@ -1,19 +1,19 @@
 /**
- * Locale dictionaries for the hello plugin. zh 为 key 集真源，en 完整对照
+ * Locale dictionaries for the sky-axis plugin. zh 为 key 集真源，en 完整对照
  * （包级双语文案规则）。通过 ctx.locale.register(NS, { zh, en }) 注册。
  *
  * 命名空间分层：
  *   - entry.* / page.*     DSH shell 入口与整页框架
  *   - dashboard.*          dashboard section 共用文案（MetricCards / Activity / Team / QuickActions）
- *   - sidebar.*            hello 内部 sidebar 的 5 entry 标签
+ *   - sidebar.*            sky-axis 内部 sidebar 的 5 entry 标签
  *   - view.*               5 个视图的标题、副标题与子块标题
  */
 
 /** 简体中文字典（key 集真源）。 */
 export const zh = {
-  // Sidebar trigger —— sidebar-entry.ts hardcode 'Hello' 显示，文案保留以备动态切换 locale
+  // Sidebar trigger —— sidebar-entry.ts hardcode 'SkyAxis' 显示，文案保留以备动态切换 locale
   'entry.label': '打个招呼',
-  'entry.tooltip': '点击打开 hello 页面',
+  'entry.tooltip': '点击打开 sky-axis 页面',
 
   // 完整页面（占主列）
   'page.title': '开发工作台',
@@ -21,7 +21,7 @@ export const zh = {
   'page.close': '返回会话',
   'page.back': '返回',
   'page.badge': '插件',
-  'page.footerMeta': '由 hello 插件提供 · 演示仪表板',
+  'page.footerMeta': '由 sky-axis 插件提供 · 演示仪表板',
 
   // 顶部 4 个指标卡片
   'dashboard.metric.todo.label': '待办任务',
@@ -167,14 +167,14 @@ export const zh = {
   'requirement.error.network-error': '网络请求失败',
 }
 
-/** hello 命名空间的 key 联合类型。 */
-export type HelloKey = keyof typeof zh
+/** sky-axis 命名空间的 key 联合类型。 */
+export type SkyAxisKey = keyof typeof zh
 
 /** 英文字典，与 zh 一一对应。 */
-export const en: Record<HelloKey, string> = {
+export const en: Record<SkyAxisKey, string> = {
   // Sidebar trigger
-  'entry.label': 'Say hello',
-  'entry.tooltip': 'Click to open the hello page',
+  'entry.label': 'Say sky-axis',
+  'entry.tooltip': 'Click to open the sky-axis page',
 
   // 完整页面（占主列）
   'page.title': 'Developer Workbench',
@@ -182,7 +182,7 @@ export const en: Record<HelloKey, string> = {
   'page.close': 'Back to chat',
   'page.back': 'Back',
   'page.badge': 'plugin',
-  'page.footerMeta': 'Provided by the hello plugin · demo dashboard',
+  'page.footerMeta': 'Provided by the sky-axis plugin · demo dashboard',
 
   // Top 4 metric cards
   'dashboard.metric.todo.label': 'To-dos',

@@ -13,7 +13,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './views.module.css'
 
 export interface ReportsViewProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 interface BarSeries {

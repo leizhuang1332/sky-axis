@@ -1,5 +1,5 @@
 /**
- * Hello 插件跨面共享契约（host + client 共用）。
+ * SkyAxis 插件跨面共享契约（host + client 共用）。
  *
  * host 半区（Node 进程）注册的 webServer 路由与 client 半区 fetch 调用的
  * 路径字面量必须**唯一**地来自本文件，避免拼写漂移。响应 schema 用 zod
@@ -10,7 +10,7 @@
  *   - workspaceId 是 schema 层强制约束（NewRequirementSchema.workspaceId
  *     无 default、min(1)、brand），不是 UI 层软约束 —— host 路由 zod parse
  *     自动拒绝缺字段
- *   - hello **不**冗余存 workspace 元数据（path/title/createdAt），仅存
+ *   - sky-axis **不**冗余存 workspace 元数据（path/title/createdAt），仅存
  *     workspaceId 这个 FK；展示标题时 client 通过 ctx.workspaces.list 实时
  *     join，避免 workspace rename 后两边数据不一致
  *   - ID 用 `${ISO}-${rand6}`（秒级时间戳 + 6 位随机后缀）—— 可排序、碰撞
@@ -21,33 +21,33 @@ import { z } from 'zod'
 /* ── 端点路径 ── */
 
 /** webServer 端点前缀（host 注册 + client fetch 同源）。 */
-export const HELLO_API_PREFIX = '/api/hello'
+export const SKY_AXIS_API_PREFIX = '/api/sky-axis'
 
 /** 端点路径字面量（host 注册时用 path，client fetch 时用同一个字符串）。 */
-export const HelloEndpoints = {
+export const SkyAxisEndpoints = {
   /** 调试端点：返回当前时间戳与包名，验证双半区联通。 */
-  ping: `${HELLO_API_PREFIX}/ping`,
+  ping: `${SKY_AXIS_API_PREFIX}/ping`,
   /** 健康检查：返回进程 uptime + API 前缀。 */
-  health: `${HELLO_API_PREFIX}/health`,
+  health: `${SKY_AXIS_API_PREFIX}/health`,
 
   /* ── Requirement CRUD（Phase 1）── */
   /** 列出全部需求（client 首屏渲染用）。 */
-  requirements: `${HELLO_API_PREFIX}/requirements`,
+  requirements: `${SKY_AXIS_API_PREFIX}/requirements`,
   /** 新建需求（POST body = NewRequirementSchema）。 */
-  requirementCreate: `${HELLO_API_PREFIX}/requirements/create`,
+  requirementCreate: `${SKY_AXIS_API_PREFIX}/requirements/create`,
   /** 删除需求（DELETE ?id=xxx）。 */
-  requirementDelete: `${HELLO_API_PREFIX}/requirements/delete`,
+  requirementDelete: `${SKY_AXIS_API_PREFIX}/requirements/delete`,
   /** SSE：DomainChanged 事件流（持久连接，client 用 EventSource）。 */
-  requirementEvents: `${HELLO_API_PREFIX}/requirements/events`,
-  /** 客户端拉取 workspace 元数据快照（hello 专用 API，不直接代理 DSH apiProxy —— 避免 host 二次转发；客户端应优先用 ctx.workspaces.list）。 */
-  workspaceList: `${HELLO_API_PREFIX}/workspaces`,
+  requirementEvents: `${SKY_AXIS_API_PREFIX}/requirements/events`,
+  /** 客户端拉取 workspace 元数据快照（sky-axis 专用 API，不直接代理 DSH apiProxy —— 避免 host 二次转发；客户端应优先用 ctx.workspaces.list）。 */
+  workspaceList: `${SKY_AXIS_API_PREFIX}/workspaces`,
 } as const
 
 /* ── 共享子 schema ── */
 
 /**
  * workspaceId brand —— 与 DSH IWorkspaces 的 WorkspaceId 同源（Branded<'WorkspaceId'>），
- * 在 hello 插件内部用 zod brand 表达，避免 brand 字面量字符串漂移。
+ * 在 sky-axis 插件内部用 zod brand 表达，避免 brand 字面量字符串漂移。
  * 客户端必须从 ctx.workspaces.list 拿到真实 id 再传入；UI 选择器只暴露有效 id。
  */
 export const WorkspaceIdSchema = z.string().min(1).brand<'WorkspaceId'>()
@@ -137,7 +137,7 @@ export const HealthResponseSchema = z.object({
   ok: z.literal(true),
   /** 进程启动至今毫秒数。 */
   uptimeMs: z.number().int().nonnegative(),
-  /** 当前 hello API 路径前缀（与 HELLO_API_PREFIX 一致，便于运行时校验）。 */
+  /** 当前 sky-axis API 路径前缀（与 SKY_AXIS_API_PREFIX 一致，便于运行时校验）。 */
   apiPrefix: z.string(),
 })
 export type HealthResponse = z.infer<typeof HealthResponseSchema>
@@ -187,7 +187,7 @@ export type RequirementEvent = z.infer<typeof RequirementEventSchema>
  * - invalid-record：KV 中已存的记录 schema 校验失败（极少见，理论上 domain open 时就拦住了）
  * - internal-error：未捕获异常
  */
-export const HELLO_ERROR_CODES = [
+export const SKY_AXIS_ERROR_CODES = [
   'validation-failed',
   'workspace-not-found',
   'workspace-list-failed',
@@ -195,11 +195,11 @@ export const HELLO_ERROR_CODES = [
   'invalid-record',
   'internal-error',
 ] as const
-export type HelloErrorCode = typeof HELLO_ERROR_CODES[number]
+export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 
 export interface ApiError {
   ok: false
-  error: HelloErrorCode
+  error: SkyAxisErrorCode
   /** 详细错误信息（zod issue 列表 / 内部错误堆栈摘要）。 */
   detail?: string
 }

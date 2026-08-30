@@ -1,5 +1,5 @@
 /**
- * Host loader entry —— hello 插件 host 半区入口。
+ * Host loader entry —— sky-axis 插件 host 半区入口。
  *
  * Phase 0：注册两个调试端点（ping / health）验证双半区联通。
  * Phase 1：注册 Requirement CRUD + SSE 路由，host 端持久化到 storage domain，
@@ -16,7 +16,7 @@
  *
  * 后续 Phase 2+ 将追加：
  *   - list 分页 / 索引
- *   - 需求-会话绑定（让 LLM 在 hello workspace 内执行任务）
+ *   - 需求-会话绑定（让 LLM 在 sky-axis workspace 内执行任务）
  *   - 产物上传接口
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -26,11 +26,11 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mountOnce } from './host/shared/mount-once.ts'
-import { HelloPingService } from './host/ping-service.ts'
+import { SkyAxisPingService } from './host/ping-service.ts'
 import { RequirementHostService } from './host/requirement-service.ts'
 import { makeRequirementRoutes } from './host/routes/requirements.ts'
 import {
-  HelloEndpoints,
+  SkyAxisEndpoints,
   type PingResponse,
   type HealthResponse,
 } from './protocol.ts'
@@ -44,10 +44,10 @@ function jsonResponse(res: ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-export const apply = mountOnce('@deepseek-ai/dsh-client-ui-hello', (ctx: Context): void => {
-  const pingSvc = new HelloPingService()
+export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
+  const pingSvc = new SkyAxisPingService()
   // eslint-disable-next-line no-console
-  console.info('[dsh-hello] host apply: ready (Phase 1: ping + health + requirements CRUD)')
+  console.info('[sky-axis] host apply: ready (Phase 1: ping + health + requirements CRUD)')
 
   // 业务服务：构造时启动 storage domain 异步初始化，effect 退出时关闭
   const reqSvc = new RequirementHostService(ctx, ctx.apiProxy, ctx.storageDomain)
@@ -57,7 +57,7 @@ export const apply = mountOnce('@deepseek-ai/dsh-client-ui-hello', (ctx: Context
     const disposers: (() => void)[] = [
       ctx.webServer.register({
         kind: 'exact',
-        path: HelloEndpoints.ping,
+        path: SkyAxisEndpoints.ping,
         handler: (req: IncomingMessage, res: ServerResponse): void => {
           if (req.method !== 'GET') {
             jsonResponse(res, 405, { ok: false, error: 'method-not-allowed' })
@@ -68,7 +68,7 @@ export const apply = mountOnce('@deepseek-ai/dsh-client-ui-hello', (ctx: Context
       }),
       ctx.webServer.register({
         kind: 'exact',
-        path: HelloEndpoints.health,
+        path: SkyAxisEndpoints.health,
         handler: (req: IncomingMessage, res: ServerResponse): void => {
           if (req.method !== 'GET') {
             jsonResponse(res, 405, { ok: false, error: 'method-not-allowed' })
@@ -85,5 +85,5 @@ export const apply = mountOnce('@deepseek-ai/dsh-client-ui-hello', (ctx: Context
       for (const d of disposers) d()
       void reqSvc.close()
     }
-  }, 'hello: register ping/health/requirements routes')
+  }, 'sky-axis: register ping/health/requirements routes')
 })

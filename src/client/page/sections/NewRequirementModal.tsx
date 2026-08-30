@@ -21,14 +21,14 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/hello-controller.ts'
+import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/sky-axis-controller.ts'
 import css from './new-requirement-modal.module.css'
 
 export type Priority = RequirementEntry['priority']
 
 export interface NewRequirementModalProps {
   /** locale 文案函数。 */
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
   /** workspace 列表（来自 ctx.workspaces.list 推送）。 */
   workspaces: readonly RequirementOption[]
   /** 默认预选的 workspaceId（通常是 ctx.workspaces.list.recentWorkspaceId）。 */
@@ -63,7 +63,7 @@ function Field({ label, children, hint }: { label: string; children: React.React
 const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent']
 
 /** 把 priority key 翻译为本地化标签。 */
-function priorityLabel(t: PropsLocale<'hello'>['t'], p: Priority): string {
+function priorityLabel(t: PropsLocale<'sky-axis'>['t'], p: Priority): string {
   return t(`requirement.priority.${p}`)
 }
 

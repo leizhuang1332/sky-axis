@@ -1,12 +1,12 @@
-name: '@deepseek-ai/dsh-client-ui-hello'
+name: '@leizhuang/sky-axis'
 description:
-  en: 'Browser-only DSH web GUI plugin: adds a sidebar-foot button whose click opens a dialog showing hello world.'
-  zh: '纯浏览器 DSH Web GUI 插件：在 sidebar 底部加一个按钮，点击弹窗显示 hello world。'
+  en: 'Browser-only DSH web GUI plugin: developer workspace sidebar with collapsible icon rail, two-level menu, 5 views (home / team / personal / requirements / reports / settings), requirement CRUD + SSE.'
+  zh: '纯浏览器 DSH Web GUI 插件：开发工作台 sidebar + 可折叠 icon rail + 二级目录 + 5 视图 + 需求 CRUD/SSE。'
 category: ui
 tags:
-  - example
+  - sky-axis
   - sidebar
-  - tutorial
+  - workspace
 bundle:
   patch: ./cordis.patch.yml
 client:

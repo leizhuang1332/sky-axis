@@ -19,18 +19,18 @@ import type {
   RequirementEntry,
   RequirementOption,
   RequirementError,
-} from '../../controller/hello-controller.ts'
+} from '../../controller/sky-axis-controller.ts'
 import { RequirementsList } from '../sections/RequirementsList.tsx'
 import css from './views.module.css'
 
 export interface RequirementsViewProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
   requirements: readonly RequirementEntry[]
   workspaces: readonly RequirementOption[]
   loading: boolean
   error: RequirementError | null
   onDelete: (id: string) => void
-  /** 触发「新建需求」弹窗（HelloPage 内 setModalOpen 包一层）。
+  /** 触发「新建需求」弹窗（SkyAxisPage 内 setModalOpen 包一层）。
    *  hasWorkspace=false 时按钮自动 disabled。 */
   onNewRequirement: () => void
   /** 当前是否有可用 workspace（决定新建按钮是否禁用）。 */
@@ -58,7 +58,7 @@ export function RequirementsView({
         </button>
       </header>
 
-      <section className={css.viewBlock} data-hello-section="requirements">
+      <section className={css.viewBlock} data-sky-axis-section="requirements">
         <RequirementsList
           t={t}
           requirements={requirements}

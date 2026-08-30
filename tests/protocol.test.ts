@@ -6,16 +6,16 @@
  *   - zod schema 解析成功 / 失败路径（host 入参校验 + 响应校验的核心）
  *   - workspaceId 强制必填（NewRequirementSchema 没有 default，缺字段即拒绝）
  *   - Requirement ID 正则（秒级 ISO + 6 位 base36 后缀）
- *   - 错误码联合（HELLO_ERROR_CODES）6 个值
+ *   - 错误码联合（SKY_AXIS_ERROR_CODES）6 个值
  *
  * 注意：zod 4.x brand 类型不可跨 schema 直接复用，本测试只做 parse 行为
  * 断言，不引出具体 brand 字符串内容。
  */
 import { describe, expect, it } from 'vitest'
 import {
-  HELLO_API_PREFIX,
-  HelloEndpoints,
-  HELLO_ERROR_CODES,
+  SKY_AXIS_API_PREFIX,
+  SkyAxisEndpoints,
+  SKY_AXIS_ERROR_CODES,
   HealthResponseSchema,
   NewRequirementSchema,
   PingResponseSchema,
@@ -42,35 +42,35 @@ const sampleRequirement = {
   updatedAt: '2026-08-30T12:34:56.789Z',
 }
 
-describe('HelloEndpoints 路径字面量', () => {
-  it('API 前缀为 /api/hello', () => {
-    expect(HELLO_API_PREFIX).toBe('/api/hello')
+describe('SkyAxisEndpoints 路径字面量', () => {
+  it('API 前缀为 /api/sky-axis', () => {
+    expect(SKY_AXIS_API_PREFIX).toBe('/api/sky-axis')
   })
 
   it('所有端点共享同一前缀', () => {
-    for (const path of Object.values(HelloEndpoints)) {
-      expect(path.startsWith(HELLO_API_PREFIX)).toBe(true)
+    for (const path of Object.values(SkyAxisEndpoints)) {
+      expect(path.startsWith(SKY_AXIS_API_PREFIX)).toBe(true)
     }
   })
 
   it('包含所有 Phase 1 路由', () => {
-    expect(HelloEndpoints.ping).toBe('/api/hello/ping')
-    expect(HelloEndpoints.health).toBe('/api/hello/health')
-    expect(HelloEndpoints.requirements).toBe('/api/hello/requirements')
-    expect(HelloEndpoints.requirementCreate).toBe('/api/hello/requirements/create')
-    expect(HelloEndpoints.requirementDelete).toBe('/api/hello/requirements/delete')
-    expect(HelloEndpoints.requirementEvents).toBe('/api/hello/requirements/events')
-    expect(HelloEndpoints.workspaceList).toBe('/api/hello/workspaces')
+    expect(SkyAxisEndpoints.ping).toBe('/api/sky-axis/ping')
+    expect(SkyAxisEndpoints.health).toBe('/api/sky-axis/health')
+    expect(SkyAxisEndpoints.requirements).toBe('/api/sky-axis/requirements')
+    expect(SkyAxisEndpoints.requirementCreate).toBe('/api/sky-axis/requirements/create')
+    expect(SkyAxisEndpoints.requirementDelete).toBe('/api/sky-axis/requirements/delete')
+    expect(SkyAxisEndpoints.requirementEvents).toBe('/api/sky-axis/requirements/events')
+    expect(SkyAxisEndpoints.workspaceList).toBe('/api/sky-axis/workspaces')
   })
 })
 
-describe('HELLO_ERROR_CODES 错误码联合', () => {
+describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
   it('正好包含 6 个错误码', () => {
-    expect(HELLO_ERROR_CODES).toHaveLength(6)
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(6)
   })
 
   it('错误码集合稳定', () => {
-    expect([...HELLO_ERROR_CODES].sort()).toEqual([
+    expect([...SKY_AXIS_ERROR_CODES].sort()).toEqual([
       'internal-error',
       'invalid-record',
       'requirement-not-found',
@@ -236,7 +236,7 @@ describe('PingResponseSchema / HealthResponseSchema', () => {
     expect(() => PingResponseSchema.parse({
       ok: true,
       ts: '2026-08-30T12:34:56.789Z',
-      host: '@deepseek-ai/dsh-client-ui-hello',
+      host: '@leizhuang/sky-axis',
     })).not.toThrow()
   })
 
@@ -248,7 +248,7 @@ describe('PingResponseSchema / HealthResponseSchema', () => {
     expect(() => HealthResponseSchema.parse({
       ok: true,
       uptimeMs: 12345,
-      apiPrefix: '/api/hello',
+      apiPrefix: '/api/sky-axis',
     })).not.toThrow()
   })
 

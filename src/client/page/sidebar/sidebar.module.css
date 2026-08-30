@@ -1,4 +1,4 @@
-/* Hello 内部 sidebar —— 5 entry + QuickActions（底部）。
+/* sky-axis 内部 sidebar —— 5 entry + QuickActions（底部）。
    视觉契约与 DSH shell 的左侧 sidebar 接近：窄列（208px）、分隔线、
    文字色走 label-secondary、active 走 business 主色 + 浅背景。
    颜色全部走 --dsw-* 设计令牌，自动跟随 light/dark/skins。

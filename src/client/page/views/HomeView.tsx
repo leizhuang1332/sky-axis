@@ -15,7 +15,7 @@ import { TeamOverview } from '../sections/TeamOverview.tsx'
 import css from './views.module.css'
 
 export interface HomeViewProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 export function HomeView({ t }: HomeViewProps): JSX.Element {

@@ -1,6 +1,6 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-hello",
-  "description": "DSH web GUI 插件 hello：在 sidebar 底部加一个按钮，点击弹窗显示 hello world。纯浏览器插件，不修改 DSH 源码。",
+  "name": "@leizhuang/sky-axis",
+  "description": "DSH web GUI 插件 sky-axis：开发工作台 sidebar + 二级目录 + 5 视图 + 需求 CRUD/SSE。纯浏览器插件，不修改 DSH 源码。",
   "version": "0.1.0",
   "type": "module",
   "main": "lib/index.js",

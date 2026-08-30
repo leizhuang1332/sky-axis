@@ -17,9 +17,9 @@
 
 /** Per-package configuration for one sidebar entry row. */
 export interface SidebarEntryOptions {
-  /** Full attribute name identifying the injected row (idempotency key), e.g. 'data-dsh-hello-entry'. */
+  /** Full attribute name identifying the injected row (idempotency key), e.g. 'data-sky-axis-entry'. */
   rowAttribute: string
-  /** CSS selector matching the injected row, e.g. '[data-dsh-hello-entry]'. */
+  /** CSS selector matching the injected row, e.g. '[data-sky-axis-entry]'. */
   rowSelector: string
   /**
    * L2 semantic-attribute plugin id. When set, the row also

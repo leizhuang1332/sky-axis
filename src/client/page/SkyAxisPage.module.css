@@ -1,0 +1,160 @@
+/* SkyAxis 完整页面 —— 顶栏 + body(sidebar + viewArea) + footer + modal 槽。
+   颜色全部走 --dsw-* 设计令牌，自动跟随 light/dark/skins。 */
+
+/* ── 容器 ── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+/* ── 顶栏 ── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--dsw-alias-separator-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.backButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.backButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+}
+
+.headerSpacer {
+  flex: 1;
+}
+
+.badge {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-secondary);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent);
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ── body：sidebar + viewArea ── */
+
+.body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  /* sidebar 宽度变化时 viewArea 自动平滑扩缩，不在 viewArea 上加 transition（会触发文字 reflow 闪烁） */
+}
+
+.viewArea {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+/* ── footer ── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--dsw-alias-separator-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.footerMeta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closeButton {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.closeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+/* ── 接管主列 ── */
+/* 与 dsh-task-board / dsh-ssh 共享的 takeover CSS 协议：
+   - 本插件容器：data-sky-axis-view
+   - 本插件活跃：<html data-sky-axis-active>
+   - 兄弟 panel 的 active 属性（task-board / ssh）会被 mountSkyAxisPage evict */
+
+[data-sky-axis-view] {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* 我们的 active 且兄弟 panel 未激活 → 显示本容器（让 conversation 列成为定位上下文） */
+html[data-sky-axis-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-sky-axis-view] {
+  display: flex;
+}
+
+/* 同条件下：conversation 列的非本插件子节点隐藏（避免双 panel 同时可见）。 */
+html[data-sky-axis-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-sky-axis-view]) {
+  display: none !important;
+}

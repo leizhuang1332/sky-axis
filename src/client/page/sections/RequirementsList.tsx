@@ -15,11 +15,11 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   RequirementEntry,
   RequirementOption,
-} from '../../controller/hello-controller.ts'
+} from '../../controller/sky-axis-controller.ts'
 import css from './requirements-list.module.css'
 
 export interface RequirementsListProps {
-  t: PropsLocale<'hello'>['t']
+  t: PropsLocale<'sky-axis'>['t']
   requirements: readonly RequirementEntry[]
   workspaces: readonly RequirementOption[]
   loading: boolean

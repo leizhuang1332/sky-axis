@@ -1,5 +1,5 @@
 /**
- * HelloController 状态机单元测试。
+ * SkyAxisController 状态机单元测试。
  *
  * 测试覆盖（按状态机维度）：
  *   - 初始 snapshot 默认值
@@ -18,10 +18,10 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createHelloController,
+  createSkyAxisController,
   type RequirementEntry,
   type RequirementError,
-} from '../src/client/controller/hello-controller.ts'
+} from '../src/client/controller/sky-axis-controller.ts'
 
 /** 一条最小可用的 requirement fixture。 */
 function makeReq(overrides: Partial<RequirementEntry> = {}): RequirementEntry {
@@ -61,9 +61,9 @@ function makeListener() {
   return { fn, getCalls: () => calls }
 }
 
-describe('HelloController 初始 snapshot', () => {
+describe('SkyAxisController 初始 snapshot', () => {
   it('默认值正确', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const s = c.getSnapshot()
     expect(s.pageOpen).toBe(false)
     expect(s.viewKey).toBe('home')
@@ -76,7 +76,7 @@ describe('HelloController 初始 snapshot', () => {
   })
 
   it('未注入 impl 时 loadImpl / createImpl / deleteImpl 都空跑', async () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     await c.loadRequirements()
     expect(c.getSnapshot().requirements).toEqual([])
 
@@ -90,9 +90,9 @@ describe('HelloController 初始 snapshot', () => {
   })
 })
 
-describe('HelloController pageOpen 状态机', () => {
+describe('SkyAxisController pageOpen 状态机', () => {
   it('openPage 幂等', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const l = makeListener()
     c.subscribe(l.fn)
     c.openPage()
@@ -102,7 +102,7 @@ describe('HelloController pageOpen 状态机', () => {
   })
 
   it('closePage 幂等', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.openPage()
     const l = makeListener()
     c.subscribe(l.fn)
@@ -113,7 +113,7 @@ describe('HelloController pageOpen 状态机', () => {
   })
 
   it('openPage 强制重置 viewKey 为 home（即使之前是其他视图）', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.openPage()
     c.setView('settings')
     expect(c.getView()).toBe('settings')
@@ -123,7 +123,7 @@ describe('HelloController pageOpen 状态机', () => {
   })
 
   it('closePage 保留 viewKey 不变（关闭再开仍是上次视图）', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.openPage()
     c.setView('reports')
     c.closePage()
@@ -133,7 +133,7 @@ describe('HelloController pageOpen 状态机', () => {
   })
 
   it('togglePage 在关闭态打开，在打开态关闭', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     expect(c.isPageOpen()).toBe(false)
     c.togglePage()
     expect(c.isPageOpen()).toBe(true)
@@ -142,7 +142,7 @@ describe('HelloController pageOpen 状态机', () => {
   })
 
   it('subscribe 返回 unsubscribe，可停止监听', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const l = makeListener()
     const unsub = c.subscribe(l.fn)
     c.openPage()
@@ -152,9 +152,9 @@ describe('HelloController pageOpen 状态机', () => {
   })
 })
 
-describe('HelloController setView / getView', () => {
+describe('SkyAxisController setView / getView', () => {
   it('仅在 pageOpen=true 时切换视图', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.setView('team') // pageOpen=false，应被忽略
     expect(c.getView()).toBe('home')
 
@@ -168,9 +168,9 @@ describe('HelloController setView / getView', () => {
   })
 })
 
-describe('HelloController toggleSidebar', () => {
+describe('SkyAxisController toggleSidebar', () => {
   it('与 pageOpen 独立，可任意时机切换', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     expect(c.isSidebarCollapsed()).toBe(false)
     c.toggleSidebar()
     expect(c.isSidebarCollapsed()).toBe(true)
@@ -184,7 +184,7 @@ describe('HelloController toggleSidebar', () => {
   })
 
   it('openPage / closePage 不重置 sidebarCollapsed', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.toggleSidebar()
     expect(c.isSidebarCollapsed()).toBe(true)
     c.openPage()
@@ -194,14 +194,14 @@ describe('HelloController toggleSidebar', () => {
   })
 })
 
-describe('HelloController personalExpanded 二级菜单状态机', () => {
+describe('SkyAxisController personalExpanded 二级菜单状态机', () => {
   it('初始为 true（首次进入即可见「个人 → 需求列表」）', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     expect(c.isPersonalExpanded()).toBe(true)
   })
 
   it('togglePersonalExpanded 翻转', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.togglePersonalExpanded()
     expect(c.isPersonalExpanded()).toBe(false)
     c.togglePersonalExpanded()
@@ -209,7 +209,7 @@ describe('HelloController personalExpanded 二级菜单状态机', () => {
   })
 
   it('togglePersonalExpanded 与 pageOpen / sidebarCollapsed 完全独立', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     // 关闭 sidebar 不影响 personalExpanded
     c.toggleSidebar()
     expect(c.isPersonalExpanded()).toBe(true)
@@ -226,7 +226,7 @@ describe('HelloController personalExpanded 二级菜单状态机', () => {
   })
 
   it('openPage 强制重置 viewKey，但保留 personalExpanded', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.togglePersonalExpanded() // false
     expect(c.isPersonalExpanded()).toBe(false)
     c.openPage()
@@ -238,16 +238,16 @@ describe('HelloController personalExpanded 二级菜单状态机', () => {
   })
 })
 
-describe('HelloController setView 支持 requirements', () => {
+describe('SkyAxisController setView 支持 requirements', () => {
   it('pageOpen=true 时切到 requirements 视图', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.openPage()
     c.setView('requirements')
     expect(c.getView()).toBe('requirements')
   })
 
   it('从 personal 切到 requirements', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.openPage()
     c.setView('personal')
     expect(c.getView()).toBe('personal')
@@ -256,15 +256,15 @@ describe('HelloController setView 支持 requirements', () => {
   })
 
   it('pageOpen=false 时 setView 无效', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     c.setView('requirements') // pageOpen=false，应被忽略
     expect(c.getView()).toBe('home')
   })
 })
 
-describe('HelloController setWorkspaces', () => {
+describe('SkyAxisController setWorkspaces', () => {
   it('快照引用变化，触发 notify', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const l = makeListener()
     c.subscribe(l.fn)
     c.setWorkspaces([{ id: 'ws-1', title: 'Workspace 1', path: '/tmp/ws-1' }])
@@ -274,7 +274,7 @@ describe('HelloController setWorkspaces', () => {
   })
 
   it('每次都换新数组引用（即使内容相同），确保 React 重渲染', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const ws = [{ id: 'ws-1', title: 'Workspace 1', path: '/tmp/ws-1' }]
     c.setWorkspaces(ws)
     const before = c.getSnapshot().workspaces
@@ -285,9 +285,9 @@ describe('HelloController setWorkspaces', () => {
   })
 })
 
-describe('HelloController loadRequirements', () => {
+describe('SkyAxisController loadRequirements', () => {
   it('成功：替换 requirements，按 id 倒序', async () => {
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: okLoad([
         makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa1' }),
         makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa2' }),
@@ -304,7 +304,7 @@ describe('HelloController loadRequirements', () => {
 
   it('成功：loading 阶段先翻为 true', async () => {
     let resolveLoad: ((v: { ok: true; items: RequirementEntry[] }) => void) | undefined
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: () => new Promise((resolve) => { resolveLoad = resolve }),
     })
     const p = c.loadRequirements()
@@ -315,7 +315,7 @@ describe('HelloController loadRequirements', () => {
   })
 
   it('失败（result.ok=false）：写错误但不替换列表', async () => {
-    const c = createHelloController({ loadImpl: failLoad('workspace-list-failed', 'rpc timeout') })
+    const c = createSkyAxisController({ loadImpl: failLoad('workspace-list-failed', 'rpc timeout') })
     await c.loadRequirements()
     const s = c.getSnapshot()
     expect(s.requirements).toEqual([])
@@ -324,7 +324,7 @@ describe('HelloController loadRequirements', () => {
   })
 
   it('异常（throw）：写 network-error', async () => {
-    const c = createHelloController({ loadImpl: throwLoad('connect ECONNREFUSED') })
+    const c = createSkyAxisController({ loadImpl: throwLoad('connect ECONNREFUSED') })
     await c.loadRequirements()
     const s = c.getSnapshot()
     expect(s.requirementsError?.code).toBe('network-error')
@@ -334,7 +334,7 @@ describe('HelloController loadRequirements', () => {
   it('成功加载后清空之前的错误', async () => {
     // 单个 loadImpl 内部按调用次数切换行为，模拟「先失败后成功」
     let calls = 0
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: async () => {
         calls += 1
         if (calls === 1) return { ok: false as const, error: { code: 'internal-error' as const, detail: 'first' } }
@@ -351,11 +351,11 @@ describe('HelloController loadRequirements', () => {
   })
 })
 
-describe('HelloController createRequirement', () => {
+describe('SkyAxisController createRequirement', () => {
   it('成功：乐观写入列表头部，去重同 id', async () => {
     const existing = makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa1' })
     const newItem = makeReq({ id: '2026-08-30T12:00:00.000Z-bbbbb2', title: 'new' })
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: okLoad([existing]),
       createImpl: async () => ({ ok: true, item: newItem }),
     })
@@ -371,7 +371,7 @@ describe('HelloController createRequirement', () => {
   })
 
   it('失败：保留原列表，写错误', async () => {
-    const c = createHelloController({
+    const c = createSkyAxisController({
       createImpl: async () => ({ ok: false as const, error: { code: 'workspace-not-found', detail: 'gone' } }),
     })
     const r = await c.createRequirement({ workspaceId: 'ws-gone', title: 't' })
@@ -381,7 +381,7 @@ describe('HelloController createRequirement', () => {
   })
 
   it('异常：捕获后返回 network-error', async () => {
-    const c = createHelloController({
+    const c = createSkyAxisController({
       createImpl: async () => { throw new Error('socket hang up') },
     })
     const r = await c.createRequirement({ workspaceId: 'ws-1', title: 't' })
@@ -390,11 +390,11 @@ describe('HelloController createRequirement', () => {
   })
 })
 
-describe('HelloController deleteRequirement', () => {
+describe('SkyAxisController deleteRequirement', () => {
   it('成功：本地立即移除', async () => {
     const a = makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa1' })
     const b = makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa2' })
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: okLoad([a, b]),
       deleteImpl: async (id) => {
         expect(id).toBe(a.id)
@@ -409,7 +409,7 @@ describe('HelloController deleteRequirement', () => {
 
   it('失败：原列表保留，写错误', async () => {
     const a = makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa1' })
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: okLoad([a]),
       deleteImpl: async () => ({ ok: false as const, error: { code: 'requirement-not-found' } }),
     })
@@ -420,7 +420,7 @@ describe('HelloController deleteRequirement', () => {
   })
 
   it('异常：捕获后返回 network-error', async () => {
-    const c = createHelloController({
+    const c = createSkyAxisController({
       deleteImpl: async () => { throw new Error('boom') },
     })
     const r = await c.deleteRequirement('2026-08-30T00:00:00.000Z-aaaaa1')
@@ -429,9 +429,9 @@ describe('HelloController deleteRequirement', () => {
   })
 })
 
-describe('HelloController handleStreamEvent（SSE）', () => {
+describe('SkyAxisController handleStreamEvent（SSE）', () => {
   it('put 新项：插入头部并排序', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const item = makeReq({ id: '2026-08-30T12:00:00.000Z-bbbbb2' })
     c.handleStreamEvent({ operation: 'put', item })
     const s = c.getSnapshot()
@@ -440,7 +440,7 @@ describe('HelloController handleStreamEvent（SSE）', () => {
   })
 
   it('put 已有 id：替换（去重后保留单条）', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const item = makeReq({ id: '2026-08-30T12:00:00.000Z-bbbbb2' })
     c.handleStreamEvent({ operation: 'put', item })
     const updated = { ...item, title: 'updated' }
@@ -451,7 +451,7 @@ describe('HelloController handleStreamEvent（SSE）', () => {
   })
 
   it('deleted：按 id 移除', () => {
-    const c = createHelloController({
+    const c = createSkyAxisController({
       loadImpl: okLoad([
         makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa1' }),
         makeReq({ id: '2026-08-30T00:00:00.000Z-aaaaa2' }),
@@ -466,7 +466,7 @@ describe('HelloController handleStreamEvent（SSE）', () => {
 
   it('optimistic + SSE 去重：本地创建后 SSE put 同一 id 不会重复', async () => {
     const newItem = makeReq({ id: '2026-08-30T12:00:00.000Z-bbbbb2' })
-    const c = createHelloController({
+    const c = createSkyAxisController({
       createImpl: async () => ({ ok: true, item: newItem }),
     })
     await c.createRequirement({ workspaceId: 'ws-1', title: 'new' })
@@ -478,9 +478,9 @@ describe('HelloController handleStreamEvent（SSE）', () => {
   })
 })
 
-describe('HelloController subscribe 引用语义', () => {
+describe('SkyAxisController subscribe 引用语义', () => {
   it('多次状态变化只触发一次 notify（每次构造新 snapshot 对象）', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const l = makeListener()
     c.subscribe(l.fn)
     const snap1 = c.getSnapshot()
@@ -491,7 +491,7 @@ describe('HelloController subscribe 引用语义', () => {
   })
 
   it('vi.fn 监听器能记录所有调用', () => {
-    const c = createHelloController()
+    const c = createSkyAxisController()
     const spy = vi.fn()
     c.subscribe(spy)
     c.openPage()

@@ -24,16 +24,16 @@
  * props：
  *   - t: 注入的 locale 文案函数
  *   - viewKey: 当前激活视图 key
- *   - onSelect: 点一级 entry / 二级子项回调（HelloPage 把 controller.setView 包一层）
- *   - onPersonalToggle: 点「个人」group entry 回调（HelloPage 把 controller.togglePersonalExpanded 包一层）
+ *   - onSelect: 点一级 entry / 二级子项回调（SkyAxisPage 把 controller.setView 包一层）
+ *   - onPersonalToggle: 点「个人」group entry 回调（SkyAxisPage 把 controller.togglePersonalExpanded 包一层）
  *   - personalExpanded: 「个人」二级菜单是否展开
  *   - collapsed / onToggleCollapse: sidebar 折叠状态 + 切换回调
  *   - onNewRequirement / hasWorkspace: 顶部「新建需求」按钮
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { HelloViewKey } from '../../controller/hello-controller.ts'
+import type { SkyAxisViewKey } from '../../controller/sky-axis-controller.ts'
 import type { IconComponent } from '../../icons/icons.tsx'
-import type { HelloKey } from '../../locales.ts'
+import type { SkyAxisKey } from '../../locales.ts'
 import {
   HomeIcon, TeamIcon, PersonalIcon, ReportsIcon, SettingsIcon,
   ChevronLeftIcon, ChevronDownIcon, RequirementIcon,
@@ -44,10 +44,10 @@ import css from './sidebar.module.css'
 /** sidebar 一级 entry —— 5 个（home / team / personal / reports / settings）。
  *  「个人」是 group：有 children + chevron，点击行为是切换展开而非切视图。 */
 interface SidebarEntry {
-  key: HelloViewKey
+  key: SkyAxisViewKey
   Icon: IconComponent
-  /** HelloKey 联合类型而非 string，让 t() 在编译期校验。 */
-  labelKey: HelloKey
+  /** SkyAxisKey 联合类型而非 string，让 t() 在编译期校验。 */
+  labelKey: SkyAxisKey
   /** 子项列表；非空表示这是 group entry（点 entry 切展开而非切视图）。 */
   children?: readonly SidebarSubEntry[]
 }
@@ -55,9 +55,9 @@ interface SidebarEntry {
 /** sidebar 二级子项 —— 当前只在「个人」下挂「需求列表」。
  *  leaf：点击进对应视图。 */
 interface SidebarSubEntry {
-  key: HelloViewKey
+  key: SkyAxisViewKey
   Icon: IconComponent
-  labelKey: HelloKey
+  labelKey: SkyAxisKey
 }
 
 /** sidebar 5 entry —— 视觉顺序与线框图一致：首页 / 团队 / 个人 / 报表 / 设置。 */
@@ -76,14 +76,14 @@ const ENTRIES: readonly SidebarEntry[] = [
   { key: 'settings', Icon: SettingsIcon, labelKey: 'sidebar.settings.label' },
 ] as const
 
-export interface HelloSidebarProps {
-  /** Locale 文案函数（'hello' 命名空间）。 */
-  t: PropsLocale<'hello'>['t']
+export interface SkyAxisSidebarProps {
+  /** Locale 文案函数（'sky-axis' 命名空间）。 */
+  t: PropsLocale<'sky-axis'>['t']
   /** 当前激活视图 key（来自 controller.viewKey）。 */
-  viewKey: HelloViewKey
-  /** 点击一级 / 二级 entry 回调（HelloPage 内 controller.setView 包一层）。 */
-  onSelect: (k: HelloViewKey) => void
-  /** 点击「个人」group entry 回调（HelloPage 内 controller.togglePersonalExpanded 包一层）。
+  viewKey: SkyAxisViewKey
+  /** 点击一级 / 二级 entry 回调（SkyAxisPage 内 controller.setView 包一层）。 */
+  onSelect: (k: SkyAxisViewKey) => void
+  /** 点击「个人」group entry 回调（SkyAxisPage 内 controller.togglePersonalExpanded 包一层）。
    *  只有 children 非空的 entry 才会触发。 */
   onPersonalToggle: () => void
   /** sidebar「个人」分组二级菜单是否展开（来自 controller.personalExpanded）。 */
@@ -91,20 +91,20 @@ export interface HelloSidebarProps {
   /** sidebar 是否折叠（来自 controller.sidebarCollapsed）。
    *  true → icon rail 模式（48px 宽，文字 / QuickActions / 二级菜单 隐藏，chevron 旋转 180°）。 */
   collapsed: boolean
-  /** 点击顶部 toggle 按钮回调（HelloPage 内 controller.toggleSidebar 包一层）。 */
+  /** 点击顶部 toggle 按钮回调（SkyAxisPage 内 controller.toggleSidebar 包一层）。 */
   onToggleCollapse: () => void
-  /** 点击「新建需求」按钮回调（HelloPage 内维护 modal 状态）。 */
+  /** 点击「新建需求」按钮回调（SkyAxisPage 内维护 modal 状态）。 */
   onNewRequirement: () => void
   /** 当前是否有可用 workspace（空列表时「新建需求」按钮 disabled）。 */
   hasWorkspace: boolean
 }
 
-export function HelloSidebar({
+export function SkyAxisSidebar({
   t, viewKey, onSelect, onPersonalToggle, personalExpanded, collapsed, onToggleCollapse, onNewRequirement, hasWorkspace,
-}: HelloSidebarProps): JSX.Element {
+}: SkyAxisSidebarProps): JSX.Element {
   const sidebarClass = collapsed ? `${css.sidebar} ${css.collapsed}` : css.sidebar
-  // 字面量 key 用联合类型让 t() 在编译期校验（HelloKey 联合类型）
-  const toggleKey = collapsed ? 'sidebar.toggle.expand' : 'sidebar.toggle.collapse'
+  // 字面量 key 用联合类型让 t() 在编译期校验（SkyAxisKey 联合类型）
+  const toggleKey: 'sidebar.toggle.expand' | 'sidebar.toggle.collapse' = collapsed ? 'sidebar.toggle.expand' : 'sidebar.toggle.collapse'
 
   return (
     <nav className={sidebarClass} aria-label={t('sidebar.ariaLabel')}>

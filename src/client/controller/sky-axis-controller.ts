@@ -1,7 +1,7 @@
 /**
- * Hello 控制器 —— 纯状态机（无 DOM / 无 React）。
+ * SkyAxis 控制器 —— 纯状态机（无 DOM / 无 React）。
  *
- * 状态面（HelloSnapshot）：
+ * 状态面（SkyAxisSnapshot）：
  *   - pageOpen: 主列整页是否打开
  *   - viewKey:  当前选中的内部视图（仅在 pageOpen=true 时有意义）
  *   - sidebarCollapsed: 内部 sidebar 是否折叠
@@ -21,10 +21,10 @@
  * getSnapshot 返回引用，每次状态变化时构造新 snapshot 对象。
  */
 
-/** hello 内部视图 key。
+/** sky-axis 内部视图 key。
  *  'personal' 保留作为 PersonalView 的入口（通过个人 entry 子项「个人主页」触发，本轮未暴露 sidebar 入口）；
  *  'requirements' 作为 sidebar「个人」下的二级目录入口对应的独立视图。 */
-export type HelloViewKey = 'home' | 'team' | 'personal' | 'requirements' | 'reports' | 'settings'
+export type SkyAxisViewKey = 'home' | 'team' | 'personal' | 'requirements' | 'reports' | 'settings'
 
 /** workspace 摘要（client UI 展示用）。 */
 export interface WorkspaceOption {
@@ -44,14 +44,14 @@ export interface RequirementOption {
 }
 
 /** controller 暴露给订阅者的快照。 */
-export interface HelloSnapshot {
+export interface SkyAxisSnapshot {
   pageOpen: boolean
-  viewKey: HelloViewKey
+  viewKey: SkyAxisViewKey
   /** sidebar 是否折叠（默认 false = 展开）。与 pageOpen 独立持久：
-   *  关掉 Hello 再打开仍保留折叠状态，符合 sidebar 用户偏好习惯。 */
+   *  关掉 sky-axis 再打开仍保留折叠状态，符合 sidebar 用户偏好习惯。 */
   sidebarCollapsed: boolean
   /** sidebar「个人」分组是否展开（默认 true = 展开）。独立于 pageOpen / sidebarCollapsed：
-   *  - 关掉 Hello 再打开仍保留展开偏好（用户偏好持久）
+   *  - 关掉 sky-axis 再打开仍保留展开偏好（用户偏好持久）
    *  - sidebar 折叠态（icon rail）下二级菜单不可见，本字段不影响可见性
    *  - 5 个视图 entry 里只有「个人」带子菜单，其它 entry 无二级目录 */
   personalExpanded: boolean
@@ -99,11 +99,11 @@ export type RequirementStreamEvent =
   | { operation: 'deleted'; id: string }
 
 /** controller 公开 API。 */
-export interface HelloController {
+export interface SkyAxisController {
   /** 订阅状态变化，返回 unsubscribe。 */
   subscribe(listener: () => void): () => void
   /** 读取当前快照（引用稳定，仅在状态变化时切新对象）。 */
-  getSnapshot(): HelloSnapshot
+  getSnapshot(): SkyAxisSnapshot
   /** pageOpen === true（避免 React 端每次解构判断）。 */
   isPageOpen(): boolean
   /** 打开主列页面（幂等）；同时把 viewKey 重置为 'home'。 */
@@ -113,9 +113,9 @@ export interface HelloController {
   /** openPage / closePage 翻转。 */
   togglePage(): void
   /** 切换内部视图（仅在 pageOpen=true 时生效）。 */
-  setView(view: HelloViewKey): void
+  setView(view: SkyAxisViewKey): void
   /** 当前视图（pageOpen=false 时返回上次保留值）。 */
-  getView(): HelloViewKey
+  getView(): SkyAxisViewKey
   /** 切换 sidebar 收起 / 展开（与 pageOpen 独立，可任意时机调用）。 */
   toggleSidebar(): void
   /** sidebar 是否折叠（避免 React 端每次解构判断）。 */
@@ -152,13 +152,13 @@ export interface HelloController {
 }
 
 /**
- * 创建 hello 控制器实例。
+ * 创建 sky-axis 控制器实例。
  *
  * @param loadImpl - 拉取列表的实现（由调用方注入 RequirementClient.list）
  * @param createImpl - 新建需求的实现（注入 RequirementClient.create）
  * @param deleteImpl - 删除需求的实现（注入 RequirementClient.remove）
  */
-export function createHelloController(deps: {
+export function createSkyAxisController(deps: {
   loadImpl?: () => Promise<{ ok: boolean; items?: RequirementEntry[]; error?: RequirementError }>
   createImpl?: (input: {
     workspaceId: string
@@ -168,8 +168,8 @@ export function createHelloController(deps: {
     tags?: string[]
   }) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
   deleteImpl?: (id: string) => Promise<{ ok: boolean; error?: RequirementError }>
-} = {}): HelloController {
-  let snapshot: HelloSnapshot = {
+} = {}): SkyAxisController {
+  let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
     viewKey: 'home',
     sidebarCollapsed: false,

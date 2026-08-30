@@ -52,8 +52,8 @@ const RECENT_MRS: readonly RecentMr[] = [
 ] as const
 
 export interface TeamOverviewProps {
-  /** Locale 文案函数（'hello' 命名空间）。 */
-  t: PropsLocale<'hello'>['t']
+  /** Locale 文案函数（'sky-axis' 命名空间）。 */
+  t: PropsLocale<'sky-axis'>['t']
 }
 
 /** 「团队概览」卡片：成员 + 进度 + MR 列表。 */
@@ -65,8 +65,8 @@ export function TeamOverview({ t }: TeamOverviewProps): JSX.Element {
     .replace('{total}', String(PROGRESS.total))
 
   return (
-    <section className={css.section} aria-labelledby="hello-team-title">
-      <h3 id="hello-team-title" className={css.sectionTitle}>
+    <section className={css.section} aria-labelledby="sky-axis-team-title">
+      <h3 id="sky-axis-team-title" className={css.sectionTitle}>
         {t('dashboard.team.title')}
       </h3>
 

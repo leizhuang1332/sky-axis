@@ -87,9 +87,9 @@ afterEach(() => {
 })
 
 describe('RequirementClient 构造', () => {
-  it('默认 baseUrl 为 /api/hello', () => {
+  it('默认 baseUrl 为 /api/sky-axis', () => {
     const client = new RequirementClient()
-    expect(client['baseUrl' as never]).toBe('/api/hello')
+    expect(client['baseUrl' as never]).toBe('/api/sky-axis')
   })
 
   it('可自定义 baseUrl', () => {
@@ -107,7 +107,7 @@ describe('RequirementClient.list', () => {
     if (r.ok) expect(r.value).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/hello/requirements')
+    expect(url).toBe('/api/sky-axis/requirements')
     expect(init.method).toBe('GET')
     expect(init.credentials).toBe('same-origin')
   })
@@ -174,7 +174,7 @@ describe('RequirementClient.create', () => {
     if (r.ok) expect(r.value.id).toBe(SAMPLE.id)
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/hello/requirements/create')
+    expect(url).toBe('/api/sky-axis/requirements/create')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'content-type': 'application/json' })
     expect(init.credentials).toBe('same-origin')
@@ -230,7 +230,7 @@ describe('RequirementClient.remove', () => {
     if (r.ok) expect(r.value.id).toBe(SAMPLE.id)
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/hello/requirements/delete?id=' + encodeURIComponent(SAMPLE.id))
+    expect(url).toBe('/api/sky-axis/requirements/delete?id=' + encodeURIComponent(SAMPLE.id))
     expect(init.method).toBe('DELETE')
     expect(init.credentials).toBe('same-origin')
   })
@@ -266,7 +266,7 @@ describe('RequirementClient.listWorkspaces', () => {
       expect(r.value[0]?.title).toBe('Workspace 1')
     }
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/hello/workspaces')
+    expect(url).toBe('/api/sky-axis/workspaces')
     expect(init.method).toBe('GET')
   })
 
@@ -328,7 +328,7 @@ describe('subscribeRequirementEvents（SSE）', () => {
   it('构造 EventSource 时带 withCredentials=true', () => {
     subscribeRequirementEvents(() => {})
     expect(FakeEventSource.lastWithCredentials).toBe(true)
-    expect(FakeEventSource.lastInstance?.url).toBe('/api/hello/requirements/events')
+    expect(FakeEventSource.lastInstance?.url).toBe('/api/sky-axis/requirements/events')
   })
 
   it('put 事件：解析后回调 onEvent', () => {

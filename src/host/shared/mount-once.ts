@@ -3,7 +3,7 @@
  * `/Users/Ray/TraeProjects/dsh-plugin/dsh-web-ui/packages/dsh-task-board/src/mount-once.ts`.
  *
  * 同步来源：`dsh-web-ui/shared/host/mount-once.ts`（task-board 原版）。如上游
- * 改动，请重新比对再同步本文件 —— vendored copy 的同步由 hello 自己负责。
+ * 改动，请重新比对再同步本文件 —— vendored copy 的同步由 sky-axis 自己负责。
  *
  * 行为契约：
  *   - 用全局 Symbol 跨同一进程的所有 module 实例共享「已挂载集合」
