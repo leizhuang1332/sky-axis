@@ -89,6 +89,7 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'git-sandbox-violation':   return 403   // 路径穿越 —— 视为权限错误
     case 'git-timeout':             return 504   // 5 分钟硬超时
     case 'source-repo-duplicate':   return 409   // 同 requirement 重复关联同 URL
+    case 'git-clone-incomplete':    return 409   // 目标目录含半成品 git 残留(状态冲突)
   }
 }
 

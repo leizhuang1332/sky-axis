@@ -10,7 +10,10 @@
  * 不测试真 git 调用 —— 真实 clone 需要联网 + git 二进制,改在 e2e / 手动
  * 验证阶段覆盖(见 plan Step 11)。
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createGitService, SKY_AXIS_REPOS_DIR } from '../src/host/git-service.ts'
 import { SkyAxisHostError } from '../src/host/requirement-service.ts'
 
@@ -88,5 +91,74 @@ describe('GitService 沙箱断言', () => {
     // 即使要"删除",destDir 必须在 sandbox 内
     await expect(svc.removeSafe('/tmp/never-delete-me', fakeRoot))
       .rejects.toMatchObject({ code: 'git-sandbox-violation' })
+  })
+})
+
+/**
+ * 完整性判断测试（Phase 2.6 v2.1）：
+ *
+ * destDir 已存在 + 含 .git/ 但不是完整 git repo 时,clone 必须抛
+ * `git-clone-incomplete`,而不是：
+ *   - 默默复用半成品目录(rev-parse HEAD 失败时会抛 git-clone-failed,但
+ *     错误信息完全看不出"上次残留"的本质)
+ *   - 强行 git clone 覆盖(会留下 `.git/` 冲突,git 自己会报错但不友好)
+ *
+ * 用真 fs + 真 git binary —— rev-parse HEAD 是核心探测,只能跑真 git 验证。
+ */
+describe('GitService 完整性判断', () => {
+  let workspaceRoot: string
+
+  beforeEach(async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), 'sky-axis-gitcomplete-'))
+    await mkdir(join(workspaceRoot, '.sky-axis/repos'), { recursive: true })
+  })
+
+  afterEach(async () => {
+    await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined)
+  })
+
+  it('destDir 含 .git/ 但 HEAD 指向不存在的 ref → 抛 git-clone-incomplete', async () => {
+    // 模拟场景 a：上次 clone 异常终止，git 内部建了 .git/ 但 refs/heads/X 不全
+    const destDir = join(workspaceRoot, '.sky-axis/repos/minerbot-incomplete')
+    await mkdir(join(destDir, '.git'), { recursive: true })
+    await writeFile(join(destDir, '.git/HEAD'), 'ref: refs/heads/nonexistent\n')
+
+    const svc = createGitService()
+    await expect(svc.clone({
+      url: 'https://example.com/foo.git',
+      branch: 'feat/test',
+      destDir,
+      workspaceRoot,
+    })).rejects.toMatchObject({ code: 'git-clone-incomplete' })
+  })
+
+  it('destDir 含 .git/ 但 .git/ 是空目录（git init 中途崩溃） → 抛 git-clone-incomplete', async () => {
+    // 模拟场景 b：git clone 启动后立刻被 SIGTERM，.git/ 已创建但空
+    const destDir = join(workspaceRoot, '.sky-axis/repos/empty-gitdir')
+    await mkdir(join(destDir, '.git'), { recursive: true })
+
+    const svc = createGitService()
+    await expect(svc.clone({
+      url: 'https://example.com/foo.git',
+      branch: 'feat/test',
+      destDir,
+      workspaceRoot,
+    })).rejects.toMatchObject({ code: 'git-clone-incomplete' })
+  })
+
+  it('destDir 含 .git/ 且 HEAD 文件是默认 main ref（用户手动 init 没 commit） → 抛 git-clone-incomplete', async () => {
+    // 模拟场景 c：用户 `git init` 一个空目录没 commit，HEAD 文件指向 refs/heads/main
+    // 但 refs/heads/main 不存在
+    const destDir = join(workspaceRoot, '.sky-axis/repos/empty-init')
+    await mkdir(join(destDir, '.git'), { recursive: true })
+    await writeFile(join(destDir, '.git/HEAD'), 'ref: refs/heads/main\n')
+
+    const svc = createGitService()
+    await expect(svc.clone({
+      url: 'https://example.com/foo.git',
+      branch: 'feat/test',
+      destDir,
+      workspaceRoot,
+    })).rejects.toMatchObject({ code: 'git-clone-incomplete' })
   })
 })

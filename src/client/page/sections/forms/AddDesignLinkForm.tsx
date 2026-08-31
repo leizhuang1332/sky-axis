@@ -18,6 +18,7 @@ import type {
   RequirementError,
   SkyAxisController,
 } from '../../../controller/sky-axis-controller.ts'
+import { FormErrorBar } from './FormErrorBar.tsx'
 import css from './forms.module.css'
 
 export interface AddDesignLinkFormProps {
@@ -91,13 +92,7 @@ export function AddDesignLinkForm({ t, requirement, controller, onClose }: AddDe
       }
     >
       <form id="add-design-link-form" className={css.form} onSubmit={(e): void => { void handleSubmit(e) }}>
-        {error !== null && (
-          <div className={css.errorBar} role="alert">
-            <strong>{t('requirement.detail.materials.form.errorRequired')}</strong>
-            <span>{t(`requirement.error.${error.code}` as never)}</span>
-            {error.detail !== undefined && <code className={css.errorDetail}>{error.detail}</code>}
-          </div>
-        )}
+        <FormErrorBar t={t} error={error} />
         <Field label={t('requirement.detail.materials.form.url')} required error={urlError}>
           <input
             className={css.input}

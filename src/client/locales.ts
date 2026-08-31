@@ -273,6 +273,7 @@ export const zh = {
   'requirement.detail.materials.form.submit': '提交',
   'requirement.detail.materials.form.submitting': '提交中…',
   'requirement.detail.materials.form.errorRequired': '此项为必填',
+  'requirement.detail.materials.form.errorTitle': '操作失败',
   'requirement.detail.materials.form.cancelUpload': '取消上传',
   'requirement.detail.materials.form.aborted': '已取消',
   'requirement.detail.materials.form.url': '链接',
@@ -374,6 +375,7 @@ export const zh = {
   'requirement.error.git-sandbox-violation': '目标路径非法，请检查 workspace 配置',
   'requirement.error.git-timeout': '克隆超过 5 分钟超时，请检查网络或仓库大小',
   'requirement.error.source-repo-duplicate': '该仓库已关联（HTTP/HTTPS/SSH 同仓库视为同一）',
+  'requirement.error.git-clone-incomplete': '目标目录包含上次克隆残留的半成品 git 状态，请检查并手动清理后重试',
 
   /* ── Phase 2.6 源码关联 UI 状态 ── */
   'requirement.detail.materials.cloneStatus.not-cloned': '未本地化',
@@ -651,6 +653,7 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.materials.form.submit': 'Submit',
   'requirement.detail.materials.form.submitting': 'Submitting…',
   'requirement.detail.materials.form.errorRequired': 'This field is required',
+  'requirement.detail.materials.form.errorTitle': 'Action failed',
   'requirement.detail.materials.form.cancelUpload': 'Cancel upload',
   'requirement.detail.materials.form.aborted': 'Cancelled',
   'requirement.detail.materials.form.url': 'URL',
@@ -760,4 +763,5 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.error.git-sandbox-violation': 'Invalid target path; check workspace configuration',
   'requirement.error.git-timeout': 'Clone timed out after 5 minutes; check network or repo size',
   'requirement.error.source-repo-duplicate': 'This repository is already linked (HTTP/HTTPS/SSH are treated as the same repo)',
+  'requirement.error.git-clone-incomplete': 'Target directory contains a half-finished git state from a previous clone; please inspect and clean it up before retrying',
 }

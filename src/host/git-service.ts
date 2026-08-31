@@ -261,6 +261,25 @@ export function createGitService(): GitService {
       //     注意：只复用,不复用 branch —— 用户期望的 branch 可能在已 clone
       //     的 repo 上不存在,跳过 checkout 由 caller 决定是否提示。
       if (await dirExistsWithGit(opts.destDir)) {
+        // ⚠️ 半成品检测：destDir 存在 + 含 .git/ 但不是完整 git repo 时,中止
+        //   并抛 git-clone-incomplete —— 不进入 rev-parse HEAD,避免被包装成
+        //   笼统的 git-clone-failed。典型场景：
+        //     a) 上次 clone 异常终止（SIGTERM / 网络断 / 进程崩溃），git 内部
+        //        已创建 .git/ 但 objects / HEAD / refs 不全;
+        //     b) 用户手动 git init 一个空目录（没 commit）;
+        //     c) 上次 clone 成功后被人为删 worktree 但留 .git/。
+        //   探测方法：`git -C <dir> rev-parse HEAD` —— 完整 repo 必然 HEAD 指向
+        //   有效 SHA;空 init / 半成品 / 指向不存在 ref 的 HEAD 都会 exit !== 0。
+        //   短超时 5s 防御半成品 hang。
+        const complete = await isCompleteGitRepo(opts.destDir, opts.signal)
+        if (!complete) {
+          throw new SkyAxisHostError(
+            'git-clone-incomplete',
+            `destination ${opts.destDir} contains an incomplete git repository ` +
+            `(possibly from a previous failed/terminated clone). ` +
+            `Please inspect the directory and clean it up manually before retrying.`,
+          )
+        }
         const sha = await readHeadSha(opts.destDir, timeoutMs, opts.signal)
         const localPath = relativePath(opts.workspaceRoot, opts.destDir)
         return { lastCommitSha: sha, localPath, reused: true }
@@ -428,4 +447,26 @@ async function dirExistsWithGit(destDir: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * 探测 destDir/.git/ 是否为「完整」的 git repo —— 即能否成功 `rev-parse HEAD`。
+ *
+ * 用 5s 短超时,防止某些异常状态(例如 `.git/` 是 broken symlink / partial
+ * objects pack)让 rev-parse 长时间挂起。
+ *
+ * false 不区分「不是 git repo」/「半成品」/「HEAD 指向不存在 ref」——
+ * 这三种对调用方(caller)语义一致:不能让 git clone 默默复用,需要用户介入。
+ */
+async function isCompleteGitRepo(destDir: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    await access(join(destDir, '.git'))
+  } catch {
+    return false
+  }
+  const result = await runGit(['-C', destDir, 'rev-parse', 'HEAD'], {
+    timeoutMs: 5_000,
+    signal,
+  })
+  return result.ok
 }

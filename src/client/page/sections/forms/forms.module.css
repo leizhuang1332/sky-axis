@@ -24,6 +24,22 @@
   font-weight: 600;
 }
 
+/* 「操作失败」标题 —— 比 span 内文略大,前导 ⚠️ 让用户视线立即锁定。
+   区分于字段必填错误(后者走 <Field error={...}>,不进入 errorBar)。 */
+.errorTitle {
+  font-weight: 600;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.errorTitle::before {
+  content: '⚠️';
+  font-size: 14px;
+  line-height: 1;
+}
+
 .errorDetail {
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, monospace;

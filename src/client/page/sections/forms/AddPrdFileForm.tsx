@@ -25,6 +25,7 @@ import type {
   UploadHandle,
   UploadProgress,
 } from '../../../controller/sky-axis-controller.ts'
+import { FormErrorBar } from './FormErrorBar.tsx'
 import css from './forms.module.css'
 
 export interface AddPrdFileFormProps {
@@ -132,13 +133,7 @@ export function AddPrdFileForm({ t, requirement, controller, onClose }: AddPrdFi
       }
     >
       <form id="add-prd-file-form" className={css.form} onSubmit={(e): void => { void handleSubmit(e) }}>
-        {error !== null && (
-          <div className={css.errorBar} role="alert">
-            <strong>{t('requirement.detail.materials.form.errorRequired')}</strong>
-            <span>{t(`requirement.error.${error.code}` as never)}</span>
-            {error.detail !== undefined && <code className={css.errorDetail}>{error.detail}</code>}
-          </div>
-        )}
+        <FormErrorBar t={t} error={error} />
         {progress !== null && (
           <div className={css.progressBar} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
             <div className={css.progressFill} style={{ width: `${pct}%` }} />

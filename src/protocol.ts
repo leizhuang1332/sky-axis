@@ -697,6 +697,11 @@ export const SKY_AXIS_ERROR_CODES = [
   'git-timeout',
   /** 同一 requirement 重复关联相同 canonical URL（HTTPS / SSH 视为同一 repo）。 */
   'source-repo-duplicate',
+  // ── Phase 2.6 v2.1 新增 ──
+  /** destDir 已含 `.git/` 但不是完整 git repo（典型：上次 clone 异常终止残留）。
+   *  与 `git-clone-failed` 的区别：本错误说明 clone 阶段根本没发生,问题在
+   *  上一次的中间状态。UI 应提示用户检查并手动清理 destDir。 */
+  'git-clone-incomplete',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

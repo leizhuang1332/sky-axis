@@ -73,7 +73,7 @@ let workspaceOps: WorkspaceOps | undefined
  * 调用方在 `.then` 里各自负责 item 字段映射（removeMaterial 路径）或
  * 直接透传（addMaterialImpl 路径 → 已含 item 字段）。
  */
-function wrapPromise(p: Promise<unknown>): UploadHandle {
+function wrapPromise(p: Promise<unknown>, abort?: () => void): UploadHandle {
   return {
     promise: p.then((r) => {
       const v = r as {
@@ -96,7 +96,10 @@ function wrapPromise(p: Promise<unknown>): UploadHandle {
         },
       }
     }),
-    abort: () => {},
+    // JSON add / removeMaterial 路径不提供 abort —— 内部 fetch 已自带
+    //   timeoutMs + signal 合并(见 requirement-client.ts addJson),5min
+    //   到点自动 reject;upload 路径必须传真 abort(XHR.abort)。
+    abort: abort ?? (() => {}),
   }
 }
 
@@ -168,26 +171,31 @@ export function apply(ctx: ClientContext): void {
     // 是 noop；upload 类直接透传 XHR 句柄）。controller 通过 UploadHandle
     // 拿到 abort 暴露给 UI。
     addMaterialImpl: (input) => {
-      // Phase 2.6：4 个 JSON section 都已统一返回 UploadHandle（同步可中断），
-      //   透传即可，不再 wrapPromise。controller 仍拿到相同 UploadHandle 形态。
+      // ⚠️ 必须经 wrapPromise 把 `Result<Requirement>`(= {ok, code, detail})
+      //   适配成 controller 的 `{ok, item?, error?}` 形态 —— 失败路径需要
+      //   `error` 字段 form 才能 setError 显示。Phase 2.6 注释「透传即可」
+      //   想错了,直接透传会让 r.error 永远是 undefined。
       switch (input.section) {
         case 'prdLinks':
-          return reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
+          return wrapPromise(reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy).promise)
         case 'sourceRepos':
           // Phase 2.6:source repo clone 是长操作,opts(signal/timeout/onProgress)必须透传,
           //   form 才能在用户关闭弹窗 / 刷新时真正取消 host 端 clone 进程。
-          return reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy, input.opts ?? {})
+          return wrapPromise(reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy, input.opts ?? {}).promise)
         case 'designLinks':
-          return reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
+          return wrapPromise(reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy).promise)
         case 'externalLinks':
-          return reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
+          return wrapPromise(reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy).promise)
       }
     },
     uploadMaterialImpl: (input) => {
-      // discriminated union：2 个 upload section 之一 —— XHR 直接提供 UploadHandle
-      return input.section === 'prdFiles'
+      // 同上,upload 路径同样需要 wrapPromise 适配失败形态 —— 上传失败时
+      // form 也依赖 `r.error` 显示错误条(否则 UI 静默)。abort 透传 XHR
+      // 真实句柄,用户点取消能真正中断浏览器上传。
+      const handle = input.section === 'prdFiles'
         ? reqClient.uploadPrdFile(input.requirementId as never, input.file, input.uploadedBy, input.opts ?? {})
         : reqClient.uploadAttachment(input.requirementId as never, input.file, input.uploadedBy, input.opts ?? {})
+      return wrapPromise(handle.promise, handle.abort)
     },
     removeMaterialImpl: (reqId, section, itemId) => {
       const promise = reqClient.removeMaterial(reqId as never, section, itemId as never)

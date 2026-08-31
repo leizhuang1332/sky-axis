@@ -366,6 +366,8 @@ export interface RequirementError {
     | 'git-timeout'
     /* ── Phase 2.6 v2 新增（同一 requirement 重复关联同 repo）── */
     | 'source-repo-duplicate'
+    /* ── Phase 2.6 v2.1 新增（destDir 含半成品 git 残留）── */
+    | 'git-clone-incomplete'
   detail?: string
 }
 

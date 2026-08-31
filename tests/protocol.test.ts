@@ -92,8 +92,8 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 19 个错误码（Phase 2.5 material-not-found / Step 3 network-error / Phase 2.6 五项 git-* / Phase 2.6 v2 source-repo-duplicate）', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(19)
+  it('正好包含 20 个错误码（Phase 2.5 material-not-found / Step 3 network-error / Phase 2.6 五项 git-* / Phase 2.6 v2 source-repo-duplicate / Phase 2.6 v2.1 git-clone-incomplete）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(20)
   })
 
   it('错误码集合稳定', () => {
@@ -104,6 +104,7 @@ describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
       'artifact-not-found',
       'git-checkout-failed',
       'git-clone-failed',
+      'git-clone-incomplete',
       'git-not-installed',
       'git-sandbox-violation',
       'git-timeout',

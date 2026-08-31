@@ -26,6 +26,7 @@ import type {
   RequirementError,
   SkyAxisController,
 } from '../../../controller/sky-axis-controller.ts'
+import { FormErrorBar } from './FormErrorBar.tsx'
 import css from './forms.module.css'
 
 export interface AddSourceRepoFormProps {
@@ -167,13 +168,7 @@ export function AddSourceRepoForm({ t, requirement, controller, onClose }: AddSo
       }
     >
       <form id="add-source-repo-form" className={css.form} onSubmit={handleSubmit}>
-        {error !== null && (
-          <div className={css.errorBar} role="alert">
-            <strong>{t('requirement.detail.materials.form.errorRequired')}</strong>
-            <span>{t(`requirement.error.${error.code}` as never)}</span>
-            {error.detail !== undefined && <code className={css.errorDetail}>{error.detail}</code>}
-          </div>
-        )}
+        <FormErrorBar t={t} error={error} />
 
         {/* ── URL ── */}
         <Field
