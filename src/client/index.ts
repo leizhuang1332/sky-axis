@@ -168,23 +168,20 @@ export function apply(ctx: ClientContext): void {
     // 是 noop；upload 类直接透传 XHR 句柄）。controller 通过 UploadHandle
     // 拿到 abort 暴露给 UI。
     addMaterialImpl: (input) => {
-      // discriminated union：4 个 JSON section 之一
-      let promise: Promise<unknown>
+      // Phase 2.6：4 个 JSON section 都已统一返回 UploadHandle（同步可中断），
+      //   透传即可，不再 wrapPromise。controller 仍拿到相同 UploadHandle 形态。
       switch (input.section) {
         case 'prdLinks':
-          promise = reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
-          break
+          return reqClient.addPrdLink(input.requirementId as never, input.payload, input.addedBy)
         case 'sourceRepos':
-          promise = reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy)
-          break
+          // Phase 2.6:source repo clone 是长操作,opts(signal/timeout/onProgress)必须透传,
+          //   form 才能在用户关闭弹窗 / 刷新时真正取消 host 端 clone 进程。
+          return reqClient.addSourceRepo(input.requirementId as never, input.payload, input.addedBy, input.opts ?? {})
         case 'designLinks':
-          promise = reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
-          break
+          return reqClient.addDesignLink(input.requirementId as never, input.payload, input.addedBy)
         case 'externalLinks':
-          promise = reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
-          break
+          return reqClient.addExternalLink(input.requirementId as never, input.payload, input.addedBy)
       }
-      return wrapPromise(promise)
     },
     uploadMaterialImpl: (input) => {
       // discriminated union：2 个 upload section 之一 —— XHR 直接提供 UploadHandle

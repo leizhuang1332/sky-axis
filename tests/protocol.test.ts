@@ -16,6 +16,7 @@ import {
   SKY_AXIS_API_PREFIX,
   SkyAxisEndpoints,
   SKY_AXIS_ERROR_CODES,
+  AddSourceRepoRequestSchema,
   HealthResponseSchema,
   MaterialsSchema,
   NewRequirementSchema,
@@ -91,8 +92,8 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 13 个错误码（Phase 2.5 加 material-not-found / Phase 3 加 network-error）', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(13)
+  it('正好包含 19 个错误码（Phase 2.5 material-not-found / Step 3 network-error / Phase 2.6 五项 git-* / Phase 2.6 v2 source-repo-duplicate）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(19)
   })
 
   it('错误码集合稳定', () => {
@@ -101,11 +102,17 @@ describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
       'ai-not-configured',
       'ai-session-missing',
       'artifact-not-found',
+      'git-checkout-failed',
+      'git-clone-failed',
+      'git-not-installed',
+      'git-sandbox-violation',
+      'git-timeout',
       'internal-error',
       'invalid-record',
       'material-not-found',
       'network-error',
       'requirement-not-found',
+      'source-repo-duplicate',
       'stage-invalid',
       'validation-failed',
       'workspace-list-failed',
@@ -425,6 +432,93 @@ describe('MaterialsSchema（需求物料）', () => {
     expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: 'short' })).toThrow()
     expect(() => SourceRepoSchema.parse({ ...base, lastCommitSha: 'not-a-hex-at-all-zzzzzz' })).toThrow()
     expect(() => SourceRepoSchema.parse({ ...base })).not.toThrow()
+  })
+
+  it('SourceRepoSchema cloneStatus 缺省时默认 not-cloned（旧记录兼容）', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'main',
+      description: '', addedAt: now, addedBy: 'user-1',
+    }
+    const r = SourceRepoSchema.parse(base)
+    expect(r.cloneStatus).toBe('not-cloned')
+    expect(r.localPath).toBeUndefined()
+    expect(r.clonedAt).toBeUndefined()
+    expect(r.cloneError).toBeUndefined()
+    expect(r.displayName).toBeUndefined()
+  })
+
+  it('SourceRepoSchema cloneStatus 枚举合法值', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'main',
+      description: '', addedAt: now, addedBy: 'user-1',
+    }
+    for (const s of ['not-cloned', 'cloned', 'clone-failed'] as const) {
+      expect(() => SourceRepoSchema.parse({ ...base, cloneStatus: s })).not.toThrow()
+    }
+    expect(() => SourceRepoSchema.parse({ ...base, cloneStatus: 'unknown' })).toThrow()
+  })
+
+  it('SourceRepoSchema 完整克隆记录通过 parse', () => {
+    const full = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'feat/test',
+      lastCommitSha: 'a1b2c3d',
+      description: 'demo', addedAt: now, addedBy: 'user-1',
+      localPath: '.sky-axis/repos/a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      clonedAt: now,
+      cloneStatus: 'cloned' as const,
+      displayName: 'zhangsan',
+    }
+    expect(() => SourceRepoSchema.parse(full)).not.toThrow()
+  })
+
+  it('SourceRepoSchema displayName 长度上限 64', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'main',
+      description: '', addedAt: now, addedBy: 'user-1',
+    }
+    expect(() => SourceRepoSchema.parse({ ...base, displayName: 'a'.repeat(64) })).not.toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base, displayName: 'a'.repeat(65) })).toThrow()
+  })
+
+  it('SourceRepoSchema cloneError 长度上限 500', () => {
+    const base = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      url: 'https://github.com/foo/bar', branch: 'main',
+      description: '', addedAt: now, addedBy: 'user-1',
+    }
+    expect(() => SourceRepoSchema.parse({ ...base, cloneStatus: 'clone-failed' as const, cloneError: 'x'.repeat(500) })).not.toThrow()
+    expect(() => SourceRepoSchema.parse({ ...base, cloneStatus: 'clone-failed' as const, cloneError: 'x'.repeat(501) })).toThrow()
+  })
+
+  it('AddSourceRepoRequestSchema branch 必填（min 1）', () => {
+    expect(() => AddSourceRepoRequestSchema.parse({
+      url: 'https://github.com/foo/bar',
+      branch: '',                // 空串拒绝 —— Phase 2.6 起同步 clone 要求明确分支
+      description: 'x',
+    })).toThrow()
+    expect(() => AddSourceRepoRequestSchema.parse({
+      url: 'https://github.com/foo/bar',
+      branch: 'main',
+      description: 'x',
+    })).not.toThrow()
+  })
+
+  it('AddSourceRepoRequestSchema displayName 仍 optional（向后兼容旧调用,但 Phase 2.6 v2 起 UI 不再输入）', () => {
+    expect(() => AddSourceRepoRequestSchema.parse({
+      url: 'https://github.com/foo/bar', branch: 'main', description: 'x',
+    })).not.toThrow()
+    expect(() => AddSourceRepoRequestSchema.parse({
+      url: 'https://github.com/foo/bar', branch: 'main', description: 'x',
+      displayName: 'zhangsan',
+    })).not.toThrow()
+    expect(() => AddSourceRepoRequestSchema.parse({
+      url: 'https://github.com/foo/bar', branch: 'main', description: 'x',
+      displayName: 'a'.repeat(65),
+    })).toThrow()
   })
 
   it('UrlSchema 通用 http/https 校验', () => {

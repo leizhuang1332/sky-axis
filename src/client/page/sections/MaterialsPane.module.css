@@ -334,6 +334,82 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Phase 2.6 源码关联:clone 状态徽标 + 本地路径 ── */
+
+/* 基础徽标:紧跟 itemTitle 后,小一号字,内边距紧凑 */
+.cloneBadge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.cloneBadgeSuccess {
+  background: color-mix(in srgb, var(--dsw-alias-status-success, #22c55e) 14%, transparent);
+  color: var(--dsw-alias-status-success, #22c55e);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-status-success, #22c55e) 35%, transparent);
+}
+
+.cloneBadgeDanger {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+.cloneBadgeNeutral {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* 本地 clone 路径 —— 克隆成功后才显示,放在 itemMeta 下单独一行,小字 monospace */
+.itemLocalPath {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  margin-top: 2px;
+}
+
+.itemLocalPathLabel {
+  color: var(--dsw-alias-label-tertiary);
+  flex-shrink: 0;
+}
+
+.itemLocalPath code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+/* clone 失败时的 stderr 摘要 —— title tooltip 显示完整内容,UI 行只截断 80 字符 */
+.itemCloneError {
+  font-size: 11px;
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 /* ── Placeholder ── */
 
 .placeholder {

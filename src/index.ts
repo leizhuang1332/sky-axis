@@ -112,6 +112,21 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
     for (const route of materialRoutes) {
       disposers.push(ctx.webServer.register(route))
     }
+
+    // Phase 2.6 v2：host 启动后等 storage domain ready,扫一遍历史孤儿目录清理
+    //   - 不阻塞 webServer 注册(以上 routes 已挂上,addSourceRepo 可立刻接收)
+    //   - 失败 console.warn,不影响主流程
+    void (async (): Promise<void> => {
+      const result = await reqSvc.cleanupOrphanRepos()
+      if (result.removed.length > 0) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[sky-axis] startup orphan cleanup: scanned=${result.scanned} removed=${result.removed.length}`,
+          result.removed,
+        )
+      }
+    })()
+
     return () => {
       for (const d of disposers) d()
       void reqSvc.close()

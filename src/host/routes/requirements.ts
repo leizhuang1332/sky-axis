@@ -82,6 +82,13 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'invalid-record':          return 500
     case 'internal-error':          return 500
     case 'network-error':           return 502
+    // ── Phase 2.6 源码关联 git 错误码 ──
+    case 'git-not-installed':       return 503   // 二进制缺失,客户端应提示安装 git
+    case 'git-clone-failed':        return 502   // 远端 / 网络 / 协议错误
+    case 'git-checkout-failed':     return 422   // 客户端给的分支名语义错
+    case 'git-sandbox-violation':   return 403   // 路径穿越 —— 视为权限错误
+    case 'git-timeout':             return 504   // 5 分钟硬超时
+    case 'source-repo-duplicate':   return 409   // 同 requirement 重复关联同 URL
   }
 }
 

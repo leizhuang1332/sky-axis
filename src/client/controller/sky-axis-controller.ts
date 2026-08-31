@@ -163,6 +163,17 @@ export interface RequirementSourceRepo extends RequirementMaterialItemBase {
   description: string
   addedAt: string
   addedBy: string
+  // ── Phase 2.6 源码关联 clone 生命周期 ──
+  /** 本地 clone 路径（相对 workspaceRoot）。克隆成功后才有。 */
+  localPath?: string
+  /** 首次成功 clone 时间（ISO）。 */
+  clonedAt?: string
+  /** clone 状态: cloned / clone-failed / not-cloned(默认)。 */
+  cloneStatus?: 'not-cloned' | 'cloned' | 'clone-failed'
+  /** clone 失败时的 stderr 摘要。 */
+  cloneError?: string
+  /** 用户英文/拼音名 —— 用于 UI 生成分支建议。 */
+  displayName?: string
 }
 
 /** 设计稿链接镜像。 */
@@ -230,6 +241,8 @@ export interface AddSourceRepoInput {
   branch: string
   lastCommitSha?: string
   description: string
+  /** Phase 2.6：用户英文/拼音名 —— 用于 UI 生成分支建议。 */
+  displayName?: string
 }
 
 /** AddDesignLink 入参镜像。 */
@@ -345,6 +358,14 @@ export interface RequirementError {
     | 'stage-invalid'
     /* ── Phase 2.5 新增（物料 CRUD）── */
     | 'material-not-found'
+    /* ── Phase 2.6 新增（源码关联 git 操作）── */
+    | 'git-not-installed'
+    | 'git-clone-failed'
+    | 'git-checkout-failed'
+    | 'git-sandbox-violation'
+    | 'git-timeout'
+    /* ── Phase 2.6 v2 新增（同一 requirement 重复关联同 repo）── */
+    | 'source-repo-duplicate'
   detail?: string
 }
 
@@ -460,7 +481,7 @@ export interface SkyAxisController {
   addPrdLink(requirementId: string, payload: AddPrdLinkInput, addedBy?: string): UploadHandle
 
   /** 添加一个源码仓库（JSON）。 */
-  addSourceRepo(requirementId: string, payload: AddSourceRepoInput, addedBy?: string): UploadHandle
+  addSourceRepo(requirementId: string, payload: AddSourceRepoInput, addedBy?: string, opts?: UploadOptions): UploadHandle
 
   /** 添加一个设计稿链接（JSON）。 */
   addDesignLink(requirementId: string, payload: AddDesignLinkInput, addedBy?: string): UploadHandle
@@ -500,7 +521,7 @@ export function createSkyAxisController(deps: {
    */
   addMaterialImpl?: (input:
     | { section: 'prdLinks'; requirementId: string; payload: AddPrdLinkInput; addedBy: string }
-    | { section: 'sourceRepos'; requirementId: string; payload: AddSourceRepoInput; addedBy: string }
+    | { section: 'sourceRepos'; requirementId: string; payload: AddSourceRepoInput; addedBy: string; opts?: UploadOptions }
     | { section: 'designLinks'; requirementId: string; payload: AddDesignLinkInput; addedBy: string }
     | { section: 'externalLinks'; requirementId: string; payload: AddExternalLinkInput; addedBy: string }
   ) => UploadHandle
@@ -973,7 +994,7 @@ export function createSkyAxisController(deps: {
       )
     },
 
-    addSourceRepo(requirementId, payload, addedBy = '') {
+    addSourceRepo(requirementId, payload, addedBy = '', opts) {
       if (deps.addMaterialImpl === undefined) {
         return {
           promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'addMaterialImpl not injected') }),
@@ -982,15 +1003,20 @@ export function createSkyAxisController(deps: {
       }
       const now = new Date().toISOString()
       const tempId = crypto.randomUUID()
+      // Phase 2.6 乐观更新：把 displayName 一起塞进 tempItem，UI 立刻能看到；
+      //   cloneStatus 暂定 'cloned'（host 端真成功会推 SSE 覆盖回真实值）；
+      //   若 host 失败,runMaterialMutation 会自动 rollback。
       const tempItem: RequirementSourceRepo = {
         id: tempId, url: payload.url, branch: payload.branch,
         lastCommitSha: payload.lastCommitSha, description: payload.description,
         addedAt: now, addedBy,
+        displayName: payload.displayName,
+        cloneStatus: 'cloned',
       }
       return runMaterialMutation(
         requirementId,
         tempId,
-        () => deps.addMaterialImpl!({ section: 'sourceRepos', requirementId, payload, addedBy }),
+        () => deps.addMaterialImpl!({ section: 'sourceRepos', requirementId, payload, addedBy, opts }),
         (req: RequirementEntry) => ({ ...req, materials: { ...req.materials, sourceRepos: [...req.materials.sourceRepos, tempItem] } }),
         now,
       )

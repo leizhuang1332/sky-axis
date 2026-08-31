@@ -285,6 +285,15 @@ export const zh = {
   'requirement.detail.materials.form.lastCommitSha': '最近 commit SHA（可选）',
   'requirement.detail.materials.form.description': '描述',
   'requirement.detail.materials.form.descriptionPlaceholder': '可选，500 字内',
+  /* ── Phase 2.6 v2 源码关联:移除 displayName 输入与推荐 chip,branch placeholder 直接提示命名格式 ── */
+  'requirement.detail.materials.form.sourceRepo.branchHint': '若该需求已有关联源码,默认沿用上次分支;否则可手动输入',
+  'requirement.detail.materials.form.sourceRepo.branchPlaceholder': '推荐命名:<你的英文名>/feat-MMDD-<需求名>,可改',
+  'requirement.detail.materials.form.sourceRepo.reuseLabel': '沿用上次',
+  'requirement.detail.materials.form.sourceRepo.useThis': '用这个',
+  'requirement.detail.materials.form.sourceRepo.longWaitTitle': '克隆耗时较长',
+  'requirement.detail.materials.form.sourceRepo.longWaitDetail': '已等待 60 秒,大仓库可能需要 1-5 分钟。继续等待或取消当前操作?',
+  'requirement.detail.materials.form.sourceRepo.longWaitCancel': '取消',
+  'requirement.detail.materials.form.sourceRepo.longWaitKeep': '继续等待',
   'requirement.detail.materials.form.kind': '类型',
   'requirement.detail.materials.form.thumbnailUrl': '缩略图链接（可选）',
   'requirement.detail.materials.form.file': '选择文件',
@@ -358,6 +367,21 @@ export const zh = {
   'requirement.error.invalid-record': '存储数据校验失败',
   'requirement.error.internal-error': '服务器内部错误',
   'requirement.error.network-error': '网络请求失败',
+  /* ── Phase 2.6 源码关联错误码 ── */
+  'requirement.error.git-not-installed': '未检测到 git，请先安装 git 并确保在 PATH 中',
+  'requirement.error.git-clone-failed': '源码克隆失败（网络/权限/协议错误），请检查 URL 或稍后重试',
+  'requirement.error.git-checkout-failed': '创建分支失败，请检查分支名是否合法',
+  'requirement.error.git-sandbox-violation': '目标路径非法，请检查 workspace 配置',
+  'requirement.error.git-timeout': '克隆超过 5 分钟超时，请检查网络或仓库大小',
+  'requirement.error.source-repo-duplicate': '该仓库已关联（HTTP/HTTPS/SSH 同仓库视为同一）',
+
+  /* ── Phase 2.6 源码关联 UI 状态 ── */
+  'requirement.detail.materials.cloneStatus.not-cloned': '未本地化',
+  'requirement.detail.materials.cloneStatus.cloned': '已克隆',
+  'requirement.detail.materials.cloneStatus.clone-failed': '克隆失败',
+  'requirement.detail.materials.localPath': '本地路径',
+  'requirement.detail.materials.cloneError': '克隆错误',
+  'requirement.detail.materials.branchDefault': '默认分支',
 }
 
 /** sky-axis 命名空间的 key 联合类型。 */
@@ -639,6 +663,15 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.materials.form.lastCommitSha': 'Latest commit SHA (optional)',
   'requirement.detail.materials.form.description': 'Description',
   'requirement.detail.materials.form.descriptionPlaceholder': 'Optional, up to 500 chars',
+  /* ── Phase 2.6 v2 source-repo: removed displayName input + recommended chip, branch placeholder shows naming format ── */
+  'requirement.detail.materials.form.sourceRepo.branchHint': 'If this requirement already has source repos, the last branch name is reused by default; otherwise type your own',
+  'requirement.detail.materials.form.sourceRepo.branchPlaceholder': 'Recommended: <your-name>/feat-MMDD-<requirement-name>, editable',
+  'requirement.detail.materials.form.sourceRepo.reuseLabel': 'Reuse last',
+  'requirement.detail.materials.form.sourceRepo.useThis': 'Use this',
+  'requirement.detail.materials.form.sourceRepo.longWaitTitle': 'Clone is taking longer than usual',
+  'requirement.detail.materials.form.sourceRepo.longWaitDetail': '60 seconds elapsed — large repos may need 1-5 minutes. Continue waiting or cancel?',
+  'requirement.detail.materials.form.sourceRepo.longWaitCancel': 'Cancel',
+  'requirement.detail.materials.form.sourceRepo.longWaitKeep': 'Keep waiting',
   'requirement.detail.materials.form.kind': 'Kind',
   'requirement.detail.materials.form.thumbnailUrl': 'Thumbnail URL (optional)',
   'requirement.detail.materials.form.file': 'Choose file',
@@ -669,6 +702,14 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.materials.kind.research': 'Research',
   'requirement.detail.materials.kind.incident': 'Incident review',
   'requirement.detail.materials.kind.other': 'Other',
+
+  /* ── Phase 2.6 source-repo clone status + labels ── */
+  'requirement.detail.materials.cloneStatus.not-cloned': 'Not cloned',
+  'requirement.detail.materials.cloneStatus.cloned': 'Cloned',
+  'requirement.detail.materials.cloneStatus.clone-failed': 'Clone failed',
+  'requirement.detail.materials.localPath': 'Local path',
+  'requirement.detail.materials.cloneError': 'Clone error',
+  'requirement.detail.materials.branchDefault': 'default',
 
   'requirement.new.title': 'New requirement',
   'requirement.new.workspace': 'Workspace',
@@ -712,4 +753,11 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.error.invalid-record': 'Stored data validation failed',
   'requirement.error.internal-error': 'Internal server error',
   'requirement.error.network-error': 'Network request failed',
+  /* ── Phase 2.6 source-repo error codes ── */
+  'requirement.error.git-not-installed': 'git is not installed or not on PATH; please install git first',
+  'requirement.error.git-clone-failed': 'git clone failed (network/auth/protocol); check URL or retry',
+  'requirement.error.git-checkout-failed': 'Failed to create branch; check if branch name is valid',
+  'requirement.error.git-sandbox-violation': 'Invalid target path; check workspace configuration',
+  'requirement.error.git-timeout': 'Clone timed out after 5 minutes; check network or repo size',
+  'requirement.error.source-repo-duplicate': 'This repository is already linked (HTTP/HTTPS/SSH are treated as the same repo)',
 }

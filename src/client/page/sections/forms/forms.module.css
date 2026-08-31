@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 长操作确认层(.longWaitOverlay)用 absolute 浮层,需要 form 作为定位上下文 */
+  position: relative;
 }
 
 .errorBar {
@@ -204,4 +206,104 @@
   .errorDetail {
     color: #f0b4b1;
   }
+}
+
+/* ── Phase 2.6：源码关联表单建议 + 长操作确认 ── */
+
+.sourceRepoSuggestion {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-top: -6px;            /* 紧贴上面的 branch input,不拉开间距 */
+  background: color-mix(in srgb, var(--dsw-alias-accent-primary, #3b6ef5) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-accent-primary, #3b6ef5) 25%, transparent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.sourceRepoSuggestionLabel {
+  color: var(--dsw-alias-label-secondary, #5b6470);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.sourceRepoSuggestionBranch {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceRepoUseBtn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dsw-alias-accent-primary, #3b6ef5);
+  background: var(--dsw-alias-bg-primary, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-accent-primary, #3b6ef5) 35%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.sourceRepoUseBtn:hover {
+  background: color-mix(in srgb, var(--dsw-alias-accent-primary, #3b6ef5) 10%, transparent);
+  border-color: var(--dsw-alias-accent-primary, #3b6ef5);
+}
+
+/* 长操作确认层 —— clone > 60s 弹「继续等 / 取消」。
+   position: absolute 让它在 form 容器内浮层,不撑大 form 高度。 */
+.longWaitOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--dsw-alias-bg-primary, #ffffff) 70%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 10;
+  border-radius: 8px;
+}
+
+.longWaitCard {
+  width: min(360px, 88%);
+  padding: 18px 20px;
+  background: var(--dsw-alias-bg-primary, #ffffff);
+  border: 1px solid var(--dsw-alias-border-secondary, #d0d4dc);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.longWaitTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.longWaitDetail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+}
+
+.longWaitActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
 }

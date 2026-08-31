@@ -38,6 +38,7 @@ import {
   PrdFile,
   Requirement,
   RequirementId,
+  SourceRepo,
   UserId,
   WorkspaceId as SkyAxisWorkspaceId,
   SkyAxisErrorCode,
@@ -45,6 +46,13 @@ import {
 } from '../protocol.ts'
 import { skyAxisRequest } from './rpc-helper.ts'
 import { requirementDomain } from './storage/requirement-domain.ts'
+import {
+  createGitService,
+  SKY_AXIS_REPOS_DIR,
+  type GitService,
+} from './git-service.ts'
+import { cleanupOrphanRepos } from './repo-cleanup.ts'
+import { canonicalizeRepoUrl, extractRepoName } from './url-utils.ts'
 
 /** sky-axis 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
 const SKY_AXIS_ARTIFACT_NAMESPACE = '.sky-axis'
@@ -207,6 +215,9 @@ export class RequirementHostService {
 
   private closed = false
 
+  /** Phase 2.6 源码关联：git 沙箱封装（stateless，可在多 service 间共享）。 */
+  readonly gitService: GitService = createGitService()
+
   constructor(
     private readonly ctx: import('@deepseek-ai/cordis').Context,
     /** apiProxy 公开给 host routes 使用（fetchWorkspaces 路由通过它拉 workspace 列表）。 */
@@ -307,6 +318,53 @@ export class RequirementHostService {
     this.closed = true
     const domain = await this.domainPromise
     await domain.close()
+  }
+
+  /**
+   * Phase 2.6 v2：扫一遍所有 workspace 的 `.sky-axis/repos/` 目录,
+   * 清理未引用的 UUID 形态孤儿(历史 destDir 命名规则残留)。
+   *
+   * 设计：
+   *   - 收集所有 requirement 的 sourceRepos.localPath → liveLocalPaths
+   *   - 按 workspace 分组去重(避免同一个 workspace 重复扫)
+   *   - 单个 workspace 失败 console.warn,不阻断其他 workspace
+   *
+   * 失败兜底：
+   *   - domain 未就绪 / list 失败 → 整体 return 不抛
+   *   - 单 workspace resolveWorkspacePath 失败 → console.warn,跳过
+   *
+   * 调用方：host 启动后 effect 内跑一次。
+   */
+  async cleanupOrphanRepos(): Promise<{ removed: string[]; scanned: number }> {
+    const allRemoved: string[] = []
+    let totalScanned = 0
+    try {
+      const items = await this.list()
+      const live = new Set<string>()
+      for (const r of items) {
+        for (const repo of r.materials.sourceRepos) {
+          if (repo.localPath !== undefined) live.add(repo.localPath)
+        }
+      }
+      const seen = new Set<string>()
+      for (const r of items) {
+        try {
+          const wsPath = await this.resolveWorkspacePath(r.workspaceId)
+          if (seen.has(wsPath)) continue
+          seen.add(wsPath)
+          const result = await cleanupOrphanRepos(wsPath, live)
+          allRemoved.push(...result.removed)
+          totalScanned += result.scanned
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('[sky-axis] orphan cleanup iteration failed:', e)
+        }
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] orphan cleanup aborted:', e)
+    }
+    return { removed: allRemoved, scanned: totalScanned }
   }
 
   /* ── Phase 2.5：物料 CRUD ── */
@@ -444,21 +502,138 @@ export class RequirementHostService {
     }))
   }
 
+  /**
+   * 添加一条源码仓库关联 —— 同步 git clone + 写 KV（Phase 2.6）。
+   *
+   * 顺序（**先落盘成功 → 再写 KV**）：
+   *   1. 解析 workspacePath（缓存 + 校验 workspace 存在）
+   *   2. 从 URL 提取 repo 名 → destDir = `${workspacePath}/.sky-axis/repos/${repoName}`
+   *      （同 repo 不同 protocol 经 canonicalize 后命中同一目录）
+   *   3. **KV dedup**：canonicalize URL 后比对已有 sourceRepos,命中抛 source-repo-duplicate
+   *   4. gitService.clone({ url, branch, destDir, workspaceRoot: workspacePath, signal })
+   *      - 失败抛 git-clone-failed / git-checkout-failed / git-timeout / git-sandbox-violation / git-not-installed
+   *      - 失败时 clone 内部已 best-effort 清理半成品目录,本方法不重复清理
+   *      - **destDir 已存在 + 含 .git/ 时**：跳过 git clone,直接复用（reused=true）
+   *   5. KV update: 写完整 SourceRepo record(含 localPath / clonedAt / cloneStatus='cloned' / displayName)
+   *   6. KV 写失败 → best-effort rm -rf destDir（**仅当 reused=false 时**,
+   *      避免误删已 clone 复用的仓库)
+   *
+   * @throws SkyAxisHostError
+   *   - 'workspace-not-found'：workspaceId 不在 DSH workspace 列表
+   *   - 'requirement-not-found'：reqId 不存在
+   *   - 'validation-failed'：section 超 50 条上限 或 URL 解析失败
+   *   - 'source-repo-duplicate'：该 requirement 已关联相同 canonical URL
+   *   - 'git-*'：clone 阶段失败(见上)
+   *   - 'internal-error'：KV 写失败
+   */
   async addSourceRepo(
     reqId: RequirementId,
     input: AddSourceRepoRequest,
     addedBy: UserId,
+    opts: { signal?: AbortSignal } = {},
   ): Promise<Requirement> {
-    const now = new Date().toISOString()
-    return await this.addJsonSection('sourceRepos', reqId, (id) => ({
-      id,
+    const table = await this.ready()
+    // 1. workspace 校验(同时拿 path)
+    const requirement = await this.get(reqId)
+    if (requirement === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found`)
+    }
+    const workspacePath = await this.resolveWorkspacePath(requirement.workspaceId)
+
+    // 2. 从 URL 提取 repo 名 + canonical dedup key
+    const canonical = canonicalizeRepoUrl(input.url)
+    const repoName = extractRepoName(input.url)
+    if (canonical === '' || repoName === '') {
+      throw new SkyAxisHostError(
+        'validation-failed',
+        `cannot extract repo name from URL: ${input.url}`,
+      )
+    }
+    const itemId = makeMaterialItemId()
+    const destDir = join(workspacePath, SKY_AXIS_REPOS_DIR, repoName)
+
+    // 3. KV dedup（防止同 requirement 重复关联同 repo,跨 protocol 视为相同）
+    const existing = requirement.materials.sourceRepos
+    for (const r of existing) {
+      if (canonicalizeRepoUrl(r.url) === canonical) {
+        throw new SkyAxisHostError(
+          'source-repo-duplicate',
+          `requirement ${reqId} already linked to ${canonical}`,
+        )
+      }
+    }
+
+    // 4. clone —— 失败抛 git-* 错误(不写 KV,不污染)
+    const cloneResult = await this.gitService.clone({
       url: input.url,
       branch: input.branch,
-      lastCommitSha: input.lastCommitSha,
+      destDir,
+      workspaceRoot: workspacePath,
+      signal: opts.signal,
+    })
+
+    // 5. 写 KV
+    const now = new Date().toISOString()
+    const newRepo: SourceRepo = {
+      id: itemId,
+      url: input.url,
+      branch: input.branch,
+      lastCommitSha: cloneResult.lastCommitSha,
       description: input.description,
       addedAt: now,
       addedBy,
-    }))
+      localPath: cloneResult.localPath,
+      clonedAt: now,
+      cloneStatus: 'cloned',
+    }
+
+    let updated: Requirement | undefined
+    try {
+      updated = await table.update(
+        reqId as unknown as SkyAxisWorkspaceId & string,
+        (prev) => {
+          const list = prev.materials.sourceRepos
+          // 防御性二次 dedup（防止并发请求绕过预检查）
+          for (const r of list) {
+            if (canonicalizeRepoUrl(r.url) === canonical) {
+              throw new SkyAxisHostError(
+                'source-repo-duplicate',
+                `requirement ${reqId} already linked to ${canonical}`,
+              )
+            }
+          }
+          const nextList = [...list, newRepo]
+          if (nextList.length > MAX_MATERIALS_PER_SECTION) {
+            throw new SkyAxisHostError(
+              'validation-failed',
+              `sourceRepos exceeds ${MAX_MATERIALS_PER_SECTION} items limit`,
+            )
+          }
+          return {
+            ...prev,
+            materials: { ...prev.materials, sourceRepos: nextList },
+            updatedAt: now,
+          }
+        },
+      )
+    } catch (e) {
+      // 6. KV 写失败 → 仅当 reused=false 时清理(避免误删复用目录)
+      if (!cloneResult.reused) {
+        await this.gitService.removeSafe(destDir, workspacePath).catch(() => undefined)
+      }
+      throw e
+    }
+
+    if (updated === undefined) {
+      if (!cloneResult.reused) {
+        await this.gitService.removeSafe(destDir, workspacePath).catch(() => undefined)
+      }
+      throw new SkyAxisHostError(
+        'requirement-not-found',
+        `requirement ${reqId} not found during addSourceRepo`,
+      )
+    }
+    return updated
   }
 
   async addDesignLink(
@@ -563,7 +738,8 @@ export class RequirementHostService {
         `material ${itemId} not in ${section}`,
       )
     }
-    const target = list[targetIdx] as { id: string; path?: string }
+    // 上传类物料(path 字段)与源码类(localPath 字段)字段名不同,分别处理落盘清理。
+    const target = list[targetIdx] as { id: string; path?: string; localPath?: string }
     const nextList = [...list.slice(0, targetIdx), ...list.slice(targetIdx + 1)]
     const now = new Date().toISOString()
     const updated = await table.update(
@@ -580,7 +756,13 @@ export class RequirementHostService {
         `requirement ${reqId} not found during remove`,
       )
     }
-    if (target.path !== undefined) {
+    // 落盘清理:
+    //   - prdFiles / attachments: unlink 单文件
+    //   - sourceRepos: rm -rf 整个 .sky-axis/repos/{itemId} 目录(用 gitService.removeSafe 保证沙箱断言)
+    if (section === 'sourceRepos' && target.localPath !== undefined) {
+      const destDir = join(workspacePath, target.localPath)
+      await this.gitService.removeSafe(destDir, workspacePath)
+    } else if (target.path !== undefined) {
       await unlinkMaterialFile(workspacePath, target.path)
     }
     return updated

@@ -136,7 +136,16 @@ export const PrdLinkSchema = z.object({
 })
 export type PrdLink = z.infer<typeof PrdLinkSchema>
 
-/** 源码仓库 —— git URL + branch + 可选 last commit SHA。 */
+/** 源码仓库 —— git URL + branch + 本地 clone 元数据。
+ *
+ * Phase 2.6「源码关联增强」增量字段（向后兼容）：
+ *  - cloneStatus / localPath / clonedAt / cloneError：clone 生命周期追踪
+ *  - displayName：用户在 AddSourceRepoForm 填的「英文名/拼音」，用于生成分支命名建议
+ *
+ * 旧记录（缺 cloneStatus）→ zod parse 时默认 'not-cloned'，UI 显「未本地化」徽标。
+ *   这是 .default() —— 与策略 C「不写 silent default 兜底」的例外：clone 是软能力，
+ *   旧 v2/v3 记录缺这字段不代表 schema 不一致，只是「未启用新功能」。
+ */
 export const SourceRepoSchema = z.object({
   id:           MaterialItemIdSchema,
   url:          UrlSchema,
@@ -148,6 +157,19 @@ export const SourceRepoSchema = z.object({
   description:   z.string().max(500),
   addedAt:       z.string().datetime(),
   addedBy:       UserIdSchema,
+
+  /* ── Phase 2.6 增量（clone 生命周期）── */
+  /** 本地 clone 绝对路径（相对 workspacePath；绝对路径由 host 端 `${workspacePath}/${localPath}` 拼接）。
+   *  clone 成功后写入；失败或未克隆时缺失。 */
+  localPath:    z.string().min(1).max(1024).optional(),
+  /** 首次成功 clone 时间（ISO）。 */
+  clonedAt:     z.string().datetime().optional(),
+  /** clone 生命周期状态（默认 'not-cloned' —— 旧记录兼容）。 */
+  cloneStatus:  z.enum(['not-cloned', 'cloned', 'clone-failed']).default('not-cloned'),
+  /** clone 失败时存 stderr 摘要（≤ 500 字符），UI 「重试」按钮旁展示。 */
+  cloneError:   z.string().max(500).optional(),
+  /** 用户英文/拼音名 —— 用于 UI 生成分支命名建议（`<displayName>/feat-<MMDD>-<titleSlug>`）。 */
+  displayName:  z.string().max(64).optional(),
 })
 export type SourceRepo = z.infer<typeof SourceRepoSchema>
 
@@ -273,9 +295,13 @@ export type AddPrdLinkRequest = z.infer<typeof AddPrdLinkRequestSchema>
 
 export const AddSourceRepoRequestSchema = z.object({
   url:           UrlSchema,
-  branch:        z.string().max(255),
+  branch:        z.string().min(1).max(255),    // Phase 2.6: 加 min(1) —— 同步 clone 时必须明确分支
   lastCommitSha: z.string().regex(/^[a-f0-9]{7,40}$/).optional(),
   description:   z.string().max(500),
+  /** 用户英文/拼音名 —— Phase 2.6 早期版本要求 UI 输入用于生成分支建议;
+   *  Phase 2.6 v2 改为「branch 输入框 placeholder 提示命名格式」,不再需要此字段。
+   *  保留 sourceRepo record 上的 displayName 字段(向后兼容旧 KV 数据),但 request schema 不再要求 UI 提交。 */
+  displayName:   z.string().max(64).optional(),
 })
 export type AddSourceRepoRequest = z.infer<typeof AddSourceRepoRequestSchema>
 
@@ -658,6 +684,19 @@ export const SKY_AXIS_ERROR_CODES = [
   'material-not-found',
   // ── Step 3 新增：client 上传 XHR 兜底错误（abort / timeout / 网络异常）。 */
   'network-error',
+  // ── Phase 2.6 新增：源码关联 git clone 错误。 */
+  /** 宿主机无 git 二进制（plugin 启动探测失败 → 该需求降级为「只记录不 clone」）。 */
+  'git-not-installed',
+  /** git clone 命令退出码非 0（网络 / 权限 / 协议错误）。 */
+  'git-clone-failed',
+  /** git checkout -b 创建分支失败（clone 成功但指定分支不存在且无法创建）。 */
+  'git-checkout-failed',
+  /** destDir 逃逸 workspacePath（路径穿越防护触发）。 */
+  'git-sandbox-violation',
+  /** git clone / checkout 超过 5 分钟硬超时。 */
+  'git-timeout',
+  /** 同一 requirement 重复关联相同 canonical URL（HTTPS / SSH 视为同一 repo）。 */
+  'source-repo-duplicate',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

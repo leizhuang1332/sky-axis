@@ -237,69 +237,133 @@ export class RequirementClient {
     return { promise, abort }
   }
 
-  /** 添加一个 PRD 链接（JSON）。 */
-  async addPrdLink(
+  /** 添加一个 PRD 链接（JSON）。返回 UploadHandle —— 与上传类方法对齐。 */
+  addPrdLink(
     requirementId: RequirementId,
     input: AddPrdLinkRequest,
     addedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.addJson('prdLinks', requirementId, input, addedBy, AddPrdLinkRequestSchema)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    return this.addJson('prdLinks', requirementId, input, addedBy, AddPrdLinkRequestSchema, opts)
   }
 
-  /** 添加一个源码仓库（JSON）。 */
-  async addSourceRepo(
+  /**
+   * 添加一个源码仓库（JSON + 同步 git clone）。
+   *
+   * Phase 2.6 行为变化：clone 是长操作（5min 超时）—— 返回 `UploadHandle`，
+   * UI 可通过 `handle.abort()` 在用户关闭弹窗 / 刷新时取消。
+   * 信号合并：caller 传入 `signal` 与内部 `timeoutMs` 任一触发都 abort fetch + host clone 进程。
+   */
+  addSourceRepo(
     requirementId: RequirementId,
     input: AddSourceRepoRequest,
     addedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.addJson('sourceRepos', requirementId, input, addedBy, AddSourceRepoRequestSchema)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    // 客户端预校验 —— host 仍会兜底
+    const check = AddSourceRepoRequestSchema.safeParse(input)
+    if (!check.success) {
+      return this.failedHandle('validation-failed', `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}`)
+    }
+    // schema 传 undefined:addSourceRepo 已在外部 pre-checked;addJson 跳过预校验。
+    return this.addJson('sourceRepos', requirementId, check.data, addedBy, undefined, opts)
   }
 
   /** 添加一个设计稿链接（JSON）。 */
-  async addDesignLink(
+  addDesignLink(
     requirementId: RequirementId,
     input: AddDesignLinkRequest,
     addedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.addJson('designLinks', requirementId, input, addedBy, AddDesignLinkRequestSchema)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    return this.addJson('designLinks', requirementId, input, addedBy, AddDesignLinkRequestSchema, opts)
   }
 
   /** 添加一个外部链接（JSON）。 */
-  async addExternalLink(
+  addExternalLink(
     requirementId: RequirementId,
     input: AddExternalLinkRequest,
     addedBy?: string,
-  ): Promise<Result<Requirement>> {
-    return await this.addJson('externalLinks', requirementId, input, addedBy, AddExternalLinkRequestSchema)
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    return this.addJson('externalLinks', requirementId, input, addedBy, AddExternalLinkRequestSchema, opts)
   }
 
-  private async addJson<S extends Exclude<MaterialSection, 'prdFiles' | 'attachments'>>(
+  private addJson<S extends Exclude<MaterialSection, 'prdFiles' | 'attachments'>>(
     section: S,
     requirementId: RequirementId,
     input: unknown,
     addedBy: string | undefined,
-    schema: z.ZodType,
-  ): Promise<Result<Requirement>> {
-    const check = schema.safeParse(input)
-    if (!check.success) {
-      return { ok: false, code: 'validation-failed', detail: `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}` }
+    schema: z.ZodType | undefined,
+    opts: UploadOptions = {},
+  ): UploadHandle {
+    // 可选预校验:addSourceRepo 已在外面 pre-checked,这里跳过;
+    //   其他 3 个 addPrdLink / addDesignLink / addExternalLink 在此统一校验。
+    if (schema !== undefined) {
+      const check = schema.safeParse(input)
+      if (!check.success) {
+        return this.failedHandle('validation-failed', `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}`)
+      }
+      input = check.data
     }
     const body: Record<string, unknown> = {
-      ...(check.data as Record<string, unknown>),
+      ...(input as Record<string, unknown>),
       addedBy: addedBy ?? '',
     }
-    const res = await fetch(
-      `${this.baseUrl}/materials/${section}/add?requirementId=${encodeURIComponent(requirementId)}`,
-      {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      },
-    )
-    const parsed = await parseJson(res, RequirementResponseSchema)
-    if (!parsed.ok) return parsed
-    return { ok: true, value: parsed.value.item }
+
+    // 合并 caller signal + 内部超时 signal —— 任意一个触发都 abort fetch + 后端 clone 进程
+    const innerController = new AbortController()
+    const mergedSignal = innerController.signal
+    const timer = opts.timeoutMs !== undefined && opts.timeoutMs > 0
+      ? setTimeout(() => innerController.abort(new Error(`addJson timeout after ${opts.timeoutMs}ms`)), opts.timeoutMs)
+      : undefined
+
+    const promise = (async (): Promise<Result<Requirement>> => {
+      try {
+        const res = await fetch(
+          `${this.baseUrl}/materials/${section}/add?requirementId=${encodeURIComponent(requirementId)}`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: mergedSignal,
+          },
+        )
+        const parsed = await parseJson(res, RequirementResponseSchema)
+        return parsed.ok
+          ? { ok: true, value: parsed.value.item }
+          : parsed
+      } catch (e) {
+        // AbortError / TypeError('Failed to fetch') → 统一映射为 network-error,
+        //   UI 显示「请求被取消」或「网络异常」即可,不必区分具体原因。
+        const message = e instanceof Error ? e.message : String(e)
+        return { ok: false, code: 'network-error', detail: message }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    })()
+
+    const abort = (): void => {
+      try { innerController.abort(new Error('caller aborted')) } catch { /* noop */ }
+    }
+    if (opts.signal !== undefined) {
+      if (opts.signal.aborted) {
+        abort()
+      } else {
+        opts.signal.addEventListener('abort', abort, { once: true })
+      }
+    }
+
+    return { promise, abort }
+  }
+
+  /** 立即返回失败的 UploadHandle —— 用于 zod 预校验失败这种「不值得发请求」的场景。 */
+  private failedHandle(code: SkyAxisErrorCode, detail: string): UploadHandle {
+    return {
+      promise: Promise.resolve({ ok: false, code, detail }),
+      abort: () => undefined,
+    }
   }
 
   /** 删除一个物料项（任意 section）。 */

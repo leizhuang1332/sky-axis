@@ -215,24 +215,54 @@ function renderRepoItem(
   onDeleteClick: (id: string) => void,
   t: (k: string) => string,
 ): JSX.Element {
+  // Phase 2.6 源码关联:cloneStatus 缺省视为 'not-cloned'(旧记录兼容)
+  const cloneStatus = item.cloneStatus ?? 'not-cloned'
+  const cloneBadgeKey = `requirement.detail.materials.cloneStatus.${cloneStatus}` as const
+  const branchLabel = item.branch === '' ? t('requirement.detail.materials.branchDefault') : item.branch
   return (
     <li key={item.id} className={css.item}>
       <div className={css.itemMain}>
         <span className={css.itemTitle}>
           {item.description !== '' ? item.description : item.url}
+          <span className={`${css.cloneBadge} ${cloneBadgeClass(cloneStatus)}`}>
+            {t(cloneBadgeKey)}
+          </span>
         </span>
         <span className={css.itemMeta}>
-          <span className={css.itemTag}>{item.branch === '' ? 'default' : item.branch}</span>
+          <span className={css.itemTag}>{branchLabel}</span>
           {item.lastCommitSha !== undefined && (
             <span className={css.itemSha}>{item.lastCommitSha}</span>
           )}
           <span className={css.itemUrl}>{item.url}</span>
         </span>
+        {/* Phase 2.6:本地 clone 路径(克隆成功后才有) —— 不管 status 都展示,失败时只显错文案 */}
+        {item.localPath !== undefined && cloneStatus === 'cloned' && (
+          <span className={css.itemLocalPath}>
+            <span className={css.itemLocalPathLabel}>
+              {t('requirement.detail.materials.localPath')}
+            </span>
+            <code>{item.localPath}</code>
+          </span>
+        )}
+        {cloneStatus === 'clone-failed' && item.cloneError !== undefined && (
+          <span className={css.itemCloneError} title={item.cloneError}>
+            {t('requirement.detail.materials.cloneError')}: {item.cloneError}
+          </span>
+        )}
       </div>
       <span className={css.itemAside}>{dateShort(item.addedAt)}</span>
       <DeleteItemButton itemId={item.id} pendingDeleteId={pendingDeleteId} onClick={onDeleteClick} t={t} />
     </li>
   )
+}
+
+/** Phase 2.6:cloneStatus → 徽标 className 映射 */
+function cloneBadgeClass(status: 'not-cloned' | 'cloned' | 'clone-failed'): string {
+  switch (status) {
+    case 'cloned':       return css.cloneBadgeSuccess ?? ''
+    case 'clone-failed': return css.cloneBadgeDanger ?? ''
+    case 'not-cloned':   return css.cloneBadgeNeutral ?? ''
+  }
 }
 
 function renderDesignItem(
