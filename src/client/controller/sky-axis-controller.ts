@@ -69,6 +69,11 @@ export interface SkyAxisSnapshot {
    *  - sidebar 折叠态（icon rail）下二级菜单不可见，本字段不影响可见性
    *  - 5 个视图 entry 里只有「个人」带子菜单，其它 entry 无二级目录 */
   personalExpanded: boolean
+  /** sidebar「需求列表」子菜单是否展开（默认 true = 展开）。与 personalExpanded
+   *  解耦：「个人」group 收起时，本字段不影响是否可展开；只有「个人」展开且本字段
+   *  true 时，需求列表子菜单才可见。独立持久：关 sky-axis 再开仍保留偏好。
+   *  sidebar 折叠态（icon rail）下整棵子菜单隐藏，本字段不影响可见性。 */
+  requirementsListExpanded: boolean
   /** 全部需求（按 id 倒序，最新在前）。 */
   requirements: readonly RequirementEntry[]
   /** workspace 选项（来自 ctx.workspaces.list 推送；空数组表示当前无 workspace）。 */
@@ -408,6 +413,12 @@ export interface SkyAxisController {
   /** sidebar「个人」分组是否展开。 */
   isPersonalExpanded(): boolean
 
+  /** 切换 sidebar「需求列表」子菜单展开 / 收起（与 personalExpanded 解耦）。
+   *  只有当 personalExpanded=true 且本字段=true 时，子菜单才可见。 */
+  toggleRequirementsListExpanded(): void
+  /** sidebar「需求列表」子菜单是否展开。 */
+  isRequirementsListExpanded(): boolean
+
   /* ── Requirement CRUD ── */
 
   /** 推送 workspace 选项（来自 ctx.workspaces.list 订阅；空数组 = 当前无 workspace）。 */
@@ -460,6 +471,12 @@ export interface SkyAxisController {
    *  UI 用它判断「新建需求」弹窗里某个 workspace 是否已被占用，
    *  避免提交后才被 host 拒绝；这是 UX 加速，不替代 host 权威校验。 */
   getRequirementByWorkspace(workspaceId: string): RequirementEntry | undefined
+
+  /** 派生：未完成需求列表（status ∈ {open, in_progress}），按 updatedAt 倒序（最近活跃在前）。
+   *  用于 sidebar「需求列表」子菜单快速切换入口 —— 排除 done/cancelled，
+   *  排序按最近活动而不是 id，对「快速切换常用需求」更友好。
+   *  返回新数组（避免 React 引用比较失败），调用方无需再 filter / sort。 */
+  getOpenRequirements(): readonly RequirementEntry[]
 
   /* ── Phase 1.13：详情内 tab 切换 ── */
 
@@ -554,6 +571,7 @@ export function createSkyAxisController(deps: {
     viewKey: 'home',
     sidebarCollapsed: false,
     personalExpanded: true, // 默认展开二级菜单：首次进入即可看见「个人 → 需求列表」入口
+    requirementsListExpanded: true, // 默认展开需求列表子菜单：sidebar 一打开就能看到所有未完成需求
     requirements: [],
     workspaces: [],
     requirementsLoading: false,
@@ -727,6 +745,14 @@ export function createSkyAxisController(deps: {
     },
     isPersonalExpanded() {
       return snapshot.personalExpanded
+    },
+
+    toggleRequirementsListExpanded() {
+      snapshot = { ...snapshot, requirementsListExpanded: !snapshot.requirementsListExpanded }
+      notify()
+    },
+    isRequirementsListExpanded() {
+      return snapshot.requirementsListExpanded
     },
 
     /* ── Requirement CRUD ── */
@@ -941,6 +967,20 @@ export function createSkyAxisController(deps: {
       // 直接遍历 snapshot.requirements —— 1 对 1 不变量下每个 workspaceId 最多 1 条；
       // 理论存在 N 条时（历史脏数据）也只返回第一条，UI 的红框警示会另说。
       return snapshot.requirements.find(r => r.workspaceId === workspaceId)
+    },
+
+    getOpenRequirements() {
+      // 过滤 + 排序：返回新数组（每次都是新引用），让 React useMemo / 引用比较
+      //   能稳定识别变化。空数组时 filter 仍返回新 []（不是原引用），不会触发
+      //   React 误判为无变化。
+      // 注意：snapshot.requirements 本身已按 id 倒序排好；这里用 updatedAt
+      //   重排，按「最近活跃在前」对快速切换常用需求更友好（id 倒序与
+      //   updatedAt 倒序在创建后短时间内基本一致，长尾需求上 updatedAt
+      //   更准确反映用户当前焦点）。
+      return snapshot.requirements
+        .filter(r => r.status === 'open' || r.status === 'in_progress')
+        .slice()
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     },
 
     /* ── Phase 2.5：物料 CRUD（乐观更新 + SSE put 兜底）── */

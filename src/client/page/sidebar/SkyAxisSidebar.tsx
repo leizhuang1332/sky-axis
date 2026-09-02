@@ -1,40 +1,55 @@
 /**
- * 内部 sidebar —— 工作台 7 个视图入口（5 一级 + 个人下 2 二级）。
+ * 内部 sidebar —— 工作台 7 个视图入口（5 一级 + 个人下「概览」+ 复合「需求列表」）。
  *
  * 结构（自上而下）：
  *   - 顶部：sidebar 折叠/展开 toggle 按钮
  *   - 5 个一级 entry（首页 / 团队 / 个人 / 报表 / 设置）
  *     - 「个人」是 group entry：点击切换二级菜单展开 / 收起，不进视图
- *     - 「个人」展开时，下方缩进显示 2 个子项「概览」+「需求列表」（同级）
- *     - 「概览」是 leaf entry：点击进 viewKey='personal'（PersonalView）
- *     - 「需求列表」是 leaf entry：点击进 viewKey='requirements'
+ *     - 「个人」展开时，下方缩进显示 2 个同级子项「概览」+「需求列表」
+ *       - 「概览」是 leaf entry：点击进 viewKey='personal'（PersonalView）
+ *       - 「需求列表」是**复合 entry**（macOS Finder 风格）：
+ *         · 左侧主按钮 = 点击进 viewKey='requirements'（RequirementsView，**保留**）
+ *         · 右侧独立 chevron 按钮 = 点击切子菜单展开/收起（不切视图）
+ *         · 复合 entry 展开时，缩进更深一层展示「未完成需求」列表
+ *           （status ∈ {open, in_progress}，按 updatedAt 倒序）
+ *           每条点一下直接 openDetail(id) —— 不进列表页，快速切换
  *   - 分隔线
  *   - 「快捷操作」标题 + QuickActions 区
  *
  * 高亮规则：
  *   - leaf entry（一级非 group：首页 / 团队 / 报表 / 设置）：viewKey 命中时高亮
- *   - group entry（「个人」）：永远不高亮 —— group 只切二级菜单展开/收起，不进视图；
- *                                即便 viewKey 恰好等于 group.key 也不画边框，
- *                                当前选中态由其子项「概览 / 需求列表」承担
- *   - 二级子项：viewKey 命中时高亮（subActive = sub.key === viewKey）
+ *   - group entry（「个人」）：永远不高亮 —— group 只切二级菜单展开/收起，不进视图
+ *   - 二级 leaf 子项（「概览」）：viewKey 命中时高亮
+ *   - 二级复合 entry 主按钮（「需求列表」文字区域）：viewKey='requirements' 时高亮
+ *   - 三级需求子项：selectedRequirementId 命中时高亮（与 viewKey 解耦 —— 详情
+ *     打开时 viewKey 不变，sidebar 仍保持原视图选中态）
  *
  * 折叠态（sidebarCollapsed）行为：
  *   - sidebar 缩成 48px icon rail
- *   - 所有文字、QuickActions、二级菜单、chevron 全部隐藏
+ *   - 所有文字、QuickActions、二级 / 三级菜单、chevron 全部隐藏
  *   - 「个人」点击行为保持（仍然切换二级菜单展开，只是子菜单不可见）
- *   - 用户可随时展开 sidebar 重新看到二级菜单
+ *   - 复合 entry 右侧 chevron 也隐藏
+ *   - 用户可随时展开 sidebar 重新看到多级菜单
  *
  * props：
  *   - t: 注入的 locale 文案函数
  *   - viewKey: 当前激活视图 key
- *   - onSelect: 点一级 entry / 二级子项回调（SkyAxisPage 把 controller.setView 包一层）
- *   - onPersonalToggle: 点「个人」group entry 回调（SkyAxisPage 把 controller.togglePersonalExpanded 包一层）
+ *   - selectedRequirementId: 当前打开详情的需求 id（用于三级子项 active 高亮）
+ *   - onSelect: 点一级 entry / 二级子项 / 复合 entry 主区域回调
+ *               （SkyAxisPage 把 controller.setView 包一层）
+ *   - onPersonalToggle: 点「个人」group entry 回调
  *   - personalExpanded: 「个人」二级菜单是否展开
+ *   - onRequirementsListToggle: 点复合 entry 右侧 chevron 回调
+ *   - requirementsListExpanded: 「需求列表」三级子菜单是否展开
+ *   - openRequirements: 未完成需求列表（来自 controller.getOpenRequirements()）
+ *   - onSelectRequirement: 点三级需求子项回调（SkyAxisPage 包 controller.openDetail）
  *   - collapsed / onToggleCollapse: sidebar 折叠状态 + 切换回调
  *   - onNewRequirement / hasWorkspace: 顶部「新建需求」按钮
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SkyAxisViewKey } from '../../controller/sky-axis-controller.ts'
+import type {
+  RequirementEntry, SkyAxisViewKey,
+} from '../../controller/sky-axis-controller.ts'
 import type { IconComponent } from '../../icons/icons.tsx'
 import type { SkyAxisKey } from '../../locales.ts'
 import {
@@ -55,8 +70,9 @@ interface SidebarEntry {
   children?: readonly SidebarSubEntry[]
 }
 
-/** sidebar 二级子项 —— 当前只在「个人」下挂「概览」+「需求列表」两个同级 leaf。
- *  leaf：点击进对应视图。 */
+/** sidebar 二级子项 —— 当前只在「个人」下挂「概览」一个 leaf。
+ *  「需求列表」是复合 entry，不在 ENTRIES.children 里维护，而是在 render 内
+ *  作为「个人」group 的特殊子项手动追加（子项是动态的，源自 controller.getOpenRequirements）。 */
 interface SidebarSubEntry {
   key: SkyAxisViewKey
   Icon: IconComponent
@@ -72,39 +88,60 @@ const ENTRIES: readonly SidebarEntry[] = [
     Icon: PersonalIcon,
     labelKey: 'sidebar.personal.label',
     children: [
-      { key: 'personal',     Icon: PersonalOverviewIcon, labelKey: 'sidebar.personalOverview.label' },
-      { key: 'requirements', Icon: RequirementIcon,      labelKey: 'sidebar.requirements.label' },
+      { key: 'personal', Icon: PersonalOverviewIcon, labelKey: 'sidebar.personalOverview.label' },
     ],
   },
   { key: 'reports',  Icon: ReportsIcon,  labelKey: 'sidebar.reports.label' },
   { key: 'settings', Icon: SettingsIcon, labelKey: 'sidebar.settings.label' },
 ] as const
 
+/** 「需求列表」复合 entry 配置 —— 单独常量化方便 render 复用。 */
+const REQUIREMENTS_COMPOSITE: SidebarSubEntry = {
+  key: 'requirements',
+  Icon: RequirementIcon,
+  labelKey: 'sidebar.requirements.label',
+}
+
+/** sidebar 是否折叠（来自 controller.sidebarCollapsed）。
+ *  true → icon rail 模式（48px 宽，文字 / QuickActions / 二级菜单 隐藏，chevron 旋转 180°）。 */
 export interface SkyAxisSidebarProps {
   /** Locale 文案函数（'sky-axis' 命名空间）。 */
   t: PropsLocale<'sky-axis'>['t']
   /** 当前激活视图 key（来自 controller.viewKey）。 */
   viewKey: SkyAxisViewKey
-  /** 点击一级 / 二级 entry 回调（SkyAxisPage 内 controller.setView 包一层）。 */
+  /** 当前打开详情的需求 id（无则 null）—— 用于三级子项 active 高亮。 */
+  selectedRequirementId: string | null
+  /** 点击一级 / 二级 entry / 复合 entry 主区域回调。 */
   onSelect: (k: SkyAxisViewKey) => void
-  /** 点击「个人」group entry 回调（SkyAxisPage 内 controller.togglePersonalExpanded 包一层）。
-   *  只有 children 非空的 entry 才会触发。 */
+  /** 点击「个人」group entry 回调（只有 children 非空的 entry 才会触发）。 */
   onPersonalToggle: () => void
-  /** sidebar「个人」分组二级菜单是否展开（来自 controller.personalExpanded）。 */
+  /** sidebar「个人」分组二级菜单是否展开。 */
   personalExpanded: boolean
+  /** 点击「需求列表」复合 entry 右侧 chevron 回调。 */
+  onRequirementsListToggle: () => void
+  /** sidebar「需求列表」子菜单是否展开（独立于 personalExpanded）。 */
+  requirementsListExpanded: boolean
+  /** 未完成需求列表（来自 controller.getOpenRequirements()，
+   *  已过滤 status ∈ {open, in_progress} 并按 updatedAt 倒序）。 */
+  openRequirements: readonly RequirementEntry[]
+  /** 点击三级需求子项回调（SkyAxisPage 包 controller.openDetail）。 */
+  onSelectRequirement: (id: string) => void
   /** sidebar 是否折叠（来自 controller.sidebarCollapsed）。
-   *  true → icon rail 模式（48px 宽，文字 / QuickActions / 二级菜单 隐藏，chevron 旋转 180°）。 */
+   *  true → icon rail 模式。 */
   collapsed: boolean
-  /** 点击顶部 toggle 按钮回调（SkyAxisPage 内 controller.toggleSidebar 包一层）。 */
+  /** 点击顶部 toggle 按钮回调。 */
   onToggleCollapse: () => void
-  /** 点击「新建需求」按钮回调（SkyAxisPage 内维护 modal 状态）。 */
+  /** 点击「新建需求」按钮回调。 */
   onNewRequirement: () => void
   /** 当前是否有可用 workspace（空列表时「新建需求」按钮 disabled）。 */
   hasWorkspace: boolean
 }
 
 export function SkyAxisSidebar({
-  t, viewKey, onSelect, onPersonalToggle, personalExpanded, collapsed, onToggleCollapse, onNewRequirement, hasWorkspace,
+  t, viewKey, selectedRequirementId,
+  onSelect, onPersonalToggle, personalExpanded,
+  onRequirementsListToggle, requirementsListExpanded, openRequirements, onSelectRequirement,
+  collapsed, onToggleCollapse, onNewRequirement, hasWorkspace,
 }: SkyAxisSidebarProps): JSX.Element {
   const sidebarClass = collapsed ? `${css.sidebar} ${css.collapsed}` : css.sidebar
   // 字面量 key 用联合类型让 t() 在编译期校验（SkyAxisKey 联合类型）
@@ -134,6 +171,8 @@ export function SkyAxisSidebar({
           // group.key，例如 viewKey='personal' 让「个人」group 也被框成蓝色是 bug）。
           // 只有 leaf entry 才参与 active 计算；子项高亮由下面 subActive 处理。
           const active = !isGroup && e.key === viewKey
+          // 「需求列表」复合 entry 是「个人」group 的特殊子项 —— 仅当 group 是「个人」时追加
+          const showRequirementsComposite = e.key === 'personal'
           return (
             <li key={e.key} className={css.entryItem}>
               {isGroup ? (
@@ -189,6 +228,74 @@ export function SkyAxisSidebar({
                       </li>
                     )
                   })}
+
+                  {/* 「需求列表」复合 entry（macOS Finder 风格）：
+                       左主按钮 = 进 RequirementsView（保留原入口）；右 chevron = 切子菜单展开。
+                       子菜单（sub-sub 列表）放在下面，缩进更深。 */}
+                  {showRequirementsComposite && (() => {
+                    const ReqIcon = REQUIREMENTS_COMPOSITE.Icon
+                    const reqMainActive = viewKey === 'requirements'
+                    return (
+                      <li className={css.subItem} key={REQUIREMENTS_COMPOSITE.key}>
+                        <div className={css.compositeRow}>
+                          <button
+                            type="button"
+                            className={reqMainActive ? `${css.entry} ${css.entryActive} ${css.compositeMain}` : `${css.entry} ${css.compositeMain}`}
+                            aria-current={reqMainActive ? 'page' : undefined}
+                            onClick={() => { onSelect('requirements') }}
+                            title={t(REQUIREMENTS_COMPOSITE.labelKey)}
+                          >
+                            <ReqIcon size={14} className={css.entryIcon} />
+                            <span className={css.entryLabel}>{t(REQUIREMENTS_COMPOSITE.labelKey)}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={css.compositeChevronButton}
+                            aria-label={t(REQUIREMENTS_COMPOSITE.labelKey)}
+                            aria-expanded={requirementsListExpanded}
+                            onClick={onRequirementsListToggle}
+                          >
+                            <ChevronDownIcon
+                              size={11}
+                              className={`${css.entryChevron} ${requirementsListExpanded ? css.entryChevronExpanded : ''}`}
+                            />
+                          </button>
+                        </div>
+
+                        {/* 三级需求子菜单 —— 独立 ul，最大高度受限支持滚动 */}
+                        <ul
+                          className={`${css.subList} ${css.reqSubList} ${requirementsListExpanded ? css.subListExpanded : ''}`}
+                          role="group"
+                          aria-label={t('sidebar.requirementsList.groupAriaLabel')}
+                        >
+                          {openRequirements.length === 0 ? (
+                            <li className={css.subItem}>
+                              <span className={css.reqSubEmpty}>{t('sidebar.requirementsList.empty')}</span>
+                            </li>
+                          ) : openRequirements.map((req) => {
+                            const subActive = selectedRequirementId === req.id
+                            return (
+                              <li key={req.id} className={css.subItem}>
+                                <button
+                                  type="button"
+                                  className={subActive ? `${css.subEntry} ${css.reqSubEntry} ${css.entryActive}` : `${css.subEntry} ${css.reqSubEntry}`}
+                                  aria-current={subActive ? 'page' : undefined}
+                                  onClick={() => { onSelectRequirement(req.id) }}
+                                  title={req.title}
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className={`${css.reqSubEntryStatus} ${req.status === 'in_progress' ? css.reqSubEntryStatusProgress : css.reqSubEntryStatusOpen}`}
+                                  />
+                                  <span className={css.reqSubEntryTitle}>{req.title}</span>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </li>
+                    )
+                  })()}
                 </ul>
               )}
             </li>

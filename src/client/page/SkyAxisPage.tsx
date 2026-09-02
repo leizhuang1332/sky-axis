@@ -63,7 +63,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   // 订阅 controller —— viewKey / requirements / workspaces 任一变化时整组件重渲染。
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const {
-    viewKey, sidebarCollapsed, personalExpanded,
+    viewKey, sidebarCollapsed, personalExpanded, requirementsListExpanded,
     requirements, workspaces, requirementsLoading, requirementsError,
     selectedRequirementId, detailLoading, detailError, detailTabKey,
   } = snapshot
@@ -123,6 +123,9 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   const onSelect = (k: SkyAxisViewKey): void => { controller.setView(k) }
   const onToggleCollapse = (): void => { controller.toggleSidebar() }
   const onPersonalToggle = (): void => { controller.togglePersonalExpanded() }
+  // sidebar 复合 entry「需求列表」右侧 chevron 回调 —— 与 onPersonalToggle 解耦，
+  //   允许用户保留「个人展开」但收起「需求列表子菜单」（或反之）。
+  const onRequirementsListToggle = (): void => { controller.toggleRequirementsListExpanded() }
 
   // 当前详情 requirement（从列表里找）
   const detailRequirement = selectedRequirementId !== null
@@ -165,9 +168,14 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
         <SkyAxisSidebar
           t={t}
           viewKey={viewKey}
+          selectedRequirementId={selectedRequirementId}
           onSelect={onSelect}
           onPersonalToggle={onPersonalToggle}
           personalExpanded={personalExpanded}
+          onRequirementsListToggle={onRequirementsListToggle}
+          requirementsListExpanded={requirementsListExpanded}
+          openRequirements={controller.getOpenRequirements()}
+          onSelectRequirement={handleOpen}
           collapsed={sidebarCollapsed}
           onToggleCollapse={onToggleCollapse}
           onNewRequirement={openModal}

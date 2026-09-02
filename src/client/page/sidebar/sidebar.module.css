@@ -67,7 +67,8 @@
 
 /* 折叠态：二级菜单 + group entry 右侧 chevron 全部隐藏（icon rail 装不下） */
 .collapsed .subList,
-.collapsed .entryChevron {
+.collapsed .entryChevron,
+.collapsed .compositeChevronButton {
   display: none;
 }
 
@@ -189,11 +190,13 @@
 }
 
 .subListExpanded {
-  /* 一级 entry padding-left: 10px + icon 16px + gap 10px ≈ 36px；
-     子项再缩进 12px 让视觉上明显属于「子级」。
-     2 子项（概览 / 需求列表）~64px + margin 4px + 子项 gap 2px ≈ 70px，
-     max-height 给 130px 留余量 + 不被截断。 */
-  max-height: 130px;
+  /* 子项最多 2 个：① 概览 li (~28.5px) ② 需求列表复合 entry li (~125.5px，
+     内含主按钮 32px + 三级 ul 87.5px)。总高度 ~160px。再加 1 个三级子项
+     (~28.5px) 的滚动缓冲，给到 480px 足够 ~10 条未完成需求时不被截断。
+     max-height 是过渡用的"上限"——内容少时仍按内容实际高度显示
+     （subList 子项用 flex 布局自然堆叠），只是不超出 480px；
+     内容更多时三级 ul 自身 max-height: 280px + overflow-y-auto 接住滚动。 */
+  max-height: 480px;
   opacity: 1;
 }
 
@@ -254,6 +257,146 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── 「需求列表」复合 entry（macOS Finder 风格）──
+   左主按钮 = 进 RequirementsView，右 chevron = 切三级子菜单展开。
+   视觉与二级 subEntry 同级别（缩进一致），但右侧多一个独立 chevron。 */
+
+.compositeRow {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  /* 让主按钮与右侧 chevron 各自成为一个独立的可点击区域，事件不互冒泡 */
+}
+
+/* 复合 entry 主按钮 —— 复用 .entry 的 hover / active / focus 视觉，
+   但用 .compositeMain 缩小 padding 让它与二级 subEntry 缩进对齐 */
+.compositeMain {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px 6px 18px;
+  /* 左缩进 18px：概览是 30px（entry padding 10 + icon 16 + gap 10 + 内部缩进 30）；
+     这里 .entry 的 padding-left 是 10px，所以子项缩进到 18px 后，
+     实际视觉左边距 ≈ 概览 30px - 12px 调整，保留层级但不重叠 */
+  font-size: 12.5px;
+  font-weight: 500;
+  /* 不画 border —— 主按钮不是「群组触发器」，不需要强调边框 */
+  border: 1px solid transparent;
+}
+
+/* 复合 entry 右侧 chevron 按钮 —— 独立按钮，独立 hover/active 视觉 */
+.compositeChevronButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.compositeChevronButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.compositeChevronButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.compositeChevronButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* ── 三级需求子菜单（挂在复合 entry 下）──
+   视觉缩进比二级更进一级；列表本身 max-height 受限支持滚动（≥10 条时不撑爆 sidebar）。 */
+
+.reqSubList {
+  /* 三级子菜单视觉缩进：二级 subList 在 entryItem 内无 margin，三级让
+     margin-left = 18px + 子项 padding-left: 12px ≈ 总缩进 30 + 18 + 12 = 60px，
+     比二级 subEntry 的 30px 多 ~30px，明显属于「下一级」。
+     折叠态下整棵隐藏（继承 .collapsed .subList { display: none }）。 */
+  margin: 2px 0 4px 18px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  /* 抽屉式展开过渡，与二级 subList 节奏对齐 */
+  transition: max-height 240ms ease, opacity 180ms ease, margin 240ms ease;
+}
+
+/* 三级子菜单展开态 —— max-height 给 ~280px（容纳 ~10 条滚动），超出自动滚动 */
+.reqSubList.subListExpanded {
+  max-height: 280px;
+  opacity: 1;
+  overflow-y: auto;
+  /* 滚动条配色与 sidebar 主滚动条统一 */
+  scrollbar-color: var(--dsw-alias-border-l3) transparent;
+  scrollbar-width: thin;
+}
+
+.reqSubList::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reqSubList::-webkit-scrollbar-thumb {
+  background: var(--dsw-alias-border-l3);
+  border-radius: 999px;
+}
+
+/* 三级需求子项 —— 复用 .subEntry 的 hover / active / focus，
+   缩小 padding 让缩进更紧凑，腾出空间给「状态圆点 + 标题 + id 短码」3 元素。 */
+.reqSubEntry {
+  padding: 5px 10px 5px 12px;
+  font-size: 12px;
+  gap: 6px;
+}
+
+/* 状态圆点 —— open 灰 / in_progress 绿，给用户一眼识别活跃状态 */
+.reqSubEntryStatus {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.reqSubEntryStatusOpen {
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.reqSubEntryStatusProgress {
+  background: var(--dsw-alias-state-business-primary);
+}
+
+/* 标题 —— flex: 1 + 截断，长标题显示省略号。
+   之前有 id 短码（UUID 前 6 位，毫无意义）已删除，让 title 拿到全部剩余宽度。 */
+.reqSubEntryTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 空态占位行 —— 0 条未完成需求时显示「暂无未完成需求」 */
+.reqSubEmpty {
+  display: block;
+  padding: 5px 10px 5px 12px;
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-tertiary);
+  font-style: italic;
 }
 
 /* ── 分隔线 + QuickActions 区块标题 ── */
