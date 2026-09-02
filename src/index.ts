@@ -127,6 +127,23 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       }
     })()
 
+    // 1:1 workspace-requirement 不变量自检 —— 检测升级前产生的脏数据
+    //   - 仅 console.error 列出冲突,不抛、不删（数据完整性责任归用户）
+    //   - UI 层 (RequirementsList) 会按 workspace 分组时自动展示红框警示
+    void (async (): Promise<void> => {
+      const violations = await reqSvc.findDuplicateWorkspaceRequirements()
+      if (violations.length > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[sky-axis] workspace-requirement 1:1 invariant violated: ${violations.length} workspaces have >1 requirement`,
+          violations.map(group => ({
+            workspaceId: group[0]?.workspaceId ?? '<unknown>',
+            requirements: group.map(r => ({ id: r.id, title: r.title, status: r.status })),
+          })),
+        )
+      }
+    })()
+
     return () => {
       for (const d of disposers) d()
       void reqSvc.close()

@@ -53,6 +53,10 @@ import {
 } from './git-service.ts'
 import { cleanupOrphanRepos } from './repo-cleanup.ts'
 import { canonicalizeRepoUrl, extractRepoName } from './url-utils.ts'
+import {
+  findRequirementByWorkspace,
+  findDuplicateWorkspaceGroups,
+} from './workspace-uniqueness.ts'
 
 /** sky-axis 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
 const SKY_AXIS_ARTIFACT_NAMESPACE = '.sky-axis'
@@ -69,6 +73,15 @@ export class SkyAxisHostError extends Error {
     super(message)
     this.name = 'SkyAxisHostError'
   }
+}
+
+/**
+ * 把 KvTable<K, V> 投影成 Iterable<V>，让纯函数（findRequirementByWorkspace /
+ * findDuplicateWorkspaceGroups）能直接消费 table 内容。
+ * KvTable.entries() 返回 [key, value] 元组，纯函数只关心 value。
+ */
+function* toRequirementValues<V extends Requirement>(table: KvTable<string, V>): Iterable<V> {
+  for (const [, value] of table.entries()) yield value
 }
 
 /** ID 生成：ISO 字符串 + 6 位 base36 随机后缀。 */
@@ -254,20 +267,55 @@ export class RequirementHostService {
   }
 
   /**
+   * 1:1 不变量自检：扫一遍 table，收集「同一 workspaceId 下 ≥2 条需求」的冲突组。
+   * 返回数组每个元素 = 同一 workspace 下的全部 requirements（≥2 条）。
+   * 空数组 = 无违例。
+   *
+   * 用途：
+   *   - host 启动期自检（console.error 列出冲突，让用户/升级文档手动处理）
+   *   - UI 层检测历史脏数据（红框警示该组）
+   *
+   * 注意：本方法**只读不写**，发现违例也不抛、不删 —— 保持数据完整性责任归用户。
+   */
+  async findDuplicateWorkspaceRequirements(): Promise<Requirement[][]> {
+    const table = await this.ready()
+    return findDuplicateWorkspaceGroups(toRequirementValues(table))
+  }
+
+  /**
    * 新建一条需求。流程：
    *   1. 解析 workspaceId → 真实 path（缓存 + 校验）
-   *   2. 构造 Requirement 实体（含 id / status / 时间戳）
-   *   3. 写 KV（持久化）
-   *   4. best-effort 创建产物目录（失败不阻塞）
+   *   2. **1:1 不变量校验**：扫一遍当前 table，命中同 workspaceId 的现存需求
+   *      → 抛 `workspace-already-has-requirement`（任何 status 都算占位：
+   *      status=open/in_progress/done/cancelled 都阻止新建；要换只能删了重建）
+   *   3. 构造 Requirement 实体（含 id / status / 时间戳）
+   *   4. 写 KV（持久化）
+   *   5. best-effort 创建产物目录（失败不阻塞）
    *
    * @throws SkyAxisHostError
    *   - 'workspace-not-found'：workspaceId 不在 DSH 当前 workspace 列表
    *   - 'workspace-list-failed'：apiProxy.workspace.list 返回 RpcResult 失败
+   *   - 'workspace-already-has-requirement'：该 workspace 已有关联 requirement
    *   - 'internal-error'：其他未捕获异常
+   *
+   * 并发说明（不变量强度 trade-off）：
+   *   - DSH 是单进程 cordis，本 service 是单例，理论并发窗口极小
+   *   - 当前实现是 in-memory 检查 + table.put，**理论 race**下两次并发 create 可能都通过检查
+   *     （最终后者覆盖前者，但 product 形态决定两次写同一 workspaceId 都应被拒绝 —— 见方案）
+   *   - 真正强一致需把主键改成 `${workspaceId}` 或引入 CAS 二级索引，超出当前 phase 范围
    */
   async create(input: NewRequirement): Promise<Requirement> {
     const table = await this.ready()
     const workspacePath = await this.resolveWorkspacePath(input.workspaceId)
+
+    // 1:1 不变量校验 —— 任何 status 都算占位
+    const existing = findRequirementByWorkspace(toRequirementValues(table), input.workspaceId)
+    if (existing !== undefined) {
+      throw new SkyAxisHostError(
+        'workspace-already-has-requirement',
+        `workspace '${input.workspaceId}' already has requirement '${existing.id}' (status=${existing.status}); delete it first to create a new one`,
+      )
+    }
 
     const now = new Date().toISOString()
     const id = makeRequirementId()

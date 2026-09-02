@@ -8,6 +8,11 @@
  *   - 当 requirement.workspaceId 不在当前 workspaces 列表中时，group header 标注「（工作区已删除）」
  *   - workspace title 缺失时显示 id 前 12 字符 + 省略号
  *
+ * 1:1 workspace-requirement 不变量（UI 形态）：
+ *   - **常态**：每个 group 恒为 1 条需求 → count 徽标隐藏（冗余）
+ *   - **历史脏数据**：同一 workspaceId 出现 ≥2 条（升级前产生）→ 整组加红框 +
+ *     「不变量违例，请联系管理员清理」横幅，count 仍可见以便排查
+ *
  * props 全部受控，parent 传 controller 拿到的快照。
  */
 import { useMemo } from 'react'
@@ -48,6 +53,8 @@ interface Group {
   /** workspace 当前是否在 workspaces 列表里。 */
   known: boolean
   items: RequirementEntry[]
+  /** 该 group 是否违例 1:1 不变量（items 数量 ≥2）。脏数据场景下整组红框警示。 */
+  dirty: boolean
 }
 
 /** 按 workspaceId 分组，保持插入顺序（workspaces 顺序优先，其次是 stale 项）。 */
@@ -67,13 +74,25 @@ function groupByWorkspace(
     const items = byId.get(ws.id)
     if (items !== undefined) {
       // 组内按 id 倒序（最新在前）
-      groups.push({ workspaceId: ws.id, title: ws.title, known: true, items: [...items].sort((a, b) => b.id.localeCompare(a.id)) })
+      groups.push({
+        workspaceId: ws.id,
+        title: ws.title,
+        known: true,
+        items: [...items].sort((a, b) => b.id.localeCompare(a.id)),
+        dirty: items.length >= 2,
+      })
       byId.delete(ws.id)
     }
   }
   // 再补 stale（workspaces 列表里没有的）
   for (const [id, items] of byId) {
-    groups.push({ workspaceId: id, title: id.slice(0, 12) + (id.length > 12 ? '…' : ''), known: false, items: [...items].sort((a, b) => b.id.localeCompare(a.id)) })
+    groups.push({
+      workspaceId: id,
+      title: id.slice(0, 12) + (id.length > 12 ? '…' : ''),
+      known: false,
+      items: [...items].sort((a, b) => b.id.localeCompare(a.id)),
+      dirty: items.length >= 2,
+    })
   }
   return groups
 }
@@ -113,14 +132,29 @@ export function RequirementsList(props: RequirementsListProps): JSX.Element {
   return (
     <div className={css.root}>
       {groups.map(group => (
-        <section key={group.workspaceId} className={css.group}>
+        <section
+          key={group.workspaceId}
+          className={`${css.group}${group.dirty ? ` ${css.groupDirty}` : ''}`}
+          data-sky-axis-invariant-violation={group.dirty ? 'true' : undefined}
+        >
           <header className={css.groupHeader}>
             <h3 className={css.groupTitle}>
               {group.title}
               {!group.known && <span className={css.staleTag}>{t('requirement.workspace.removed')}</span>}
             </h3>
-            <span className={css.groupCount}>{group.items.length}</span>
+            {/* count 徽标：常态（items.length === 1）下隐藏 —— 1 对 1 不变量让 count 冗余；
+                脏数据（items.length ≥2）下显示并加红字，便于排查历史违例。 */}
+            {group.items.length >= 2 && (
+              <span className={css.groupCount} title={t('requirement.list.invariantViolatedHint')}>
+                {group.items.length}
+              </span>
+            )}
           </header>
+          {group.dirty && (
+            <div className={css.invariantBanner} role="alert">
+              {t('requirement.list.invariantViolated')}
+            </div>
+          )}
           <ul className={css.items}>
             {group.items.map(item => (
               <li key={item.id} className={css.item}>

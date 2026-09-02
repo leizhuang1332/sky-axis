@@ -23,7 +23,7 @@
  * controller 通过 useSyncExternalStore 订阅，viewKey 变化时整树重渲染。
  * locale 跟随 dsh 整体设置，本组件不持有 locale 切换逻辑。
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkyAxisController, SkyAxisViewKey } from '../controller/sky-axis-controller.ts'
@@ -128,6 +128,18 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   const detailRequirement = selectedRequirementId !== null
     ? requirements.find(r => r.id === selectedRequirementId) ?? null
     : null
+
+  // 1:1 不变量 UX 加速：派生 workspaceId → RequirementEntry 映射，
+  //   NewRequirementModal 用它来灰显已占用 workspace。
+  //   useMemo 仅在 requirements 引用变化时重算；要求 → requirements 不会高频变化。
+  const takenByWorkspaceId = useMemo(() => {
+    const m = new Map<string, typeof requirements[number]>()
+    for (const r of requirements) {
+      // 同一 workspace 理论上最多 1 条；脏数据时后写覆盖前写，UI 红框另说
+      m.set(r.workspaceId, r)
+    }
+    return m
+  }, [requirements])
 
   return (
     <div className={css.page} data-dsh-part="sky-axis-page">
@@ -237,6 +249,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
         <NewRequirementModal
           t={t}
           workspaces={workspaces}
+          takenByWorkspaceId={takenByWorkspaceId}
           submitError={submitError}
           submitting={submitting}
           workspaceOps={workspaceOps}

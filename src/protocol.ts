@@ -702,6 +702,10 @@ export const SKY_AXIS_ERROR_CODES = [
    *  与 `git-clone-failed` 的区别：本错误说明 clone 阶段根本没发生,问题在
    *  上一次的中间状态。UI 应提示用户检查并手动清理 destDir。 */
   'git-clone-incomplete',
+  // ── Workspace 1:1 不变量新增 ──
+  /** 该 workspace 已有关联 requirement（1 个 workspace = 1 个需求空间；任何 status 都算占位）。
+   *  要新建需求必须先删除旧需求（或换 workspace）。 */
+  'workspace-already-has-requirement',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

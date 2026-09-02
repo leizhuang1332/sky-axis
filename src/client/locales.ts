@@ -127,6 +127,9 @@ export const zh = {
   'requirement.list.errorPrefix': '加载失败：',
   'requirement.list.delete': '删除需求',
   'requirement.list.open': '打开详情页',
+  /* 1:1 workspace-requirement 不变量违例：历史脏数据（同一 workspaceId 多条需求）横幅 */
+  'requirement.list.invariantViolated': '不变量违例：同一工作区存在多条需求，请联系管理员清理',
+  'requirement.list.invariantViolatedHint': '此 group 检测到 ≥2 条需求（1 个工作区只能承载 1 个需求空间）',
 
   'requirement.workspace.removed': '（工作区已删除）',
 
@@ -135,6 +138,8 @@ export const zh = {
   'requirement.detail.back': '返回',
   'requirement.detail.notFound': '该需求已被删除或不存在。',
   'requirement.detail.errorPrefix': '详情加载失败：',
+  /* 1:1 不变量：删除二次确认 —— 提示删后 workspace 可重建、产物保留 */
+  'requirement.detail.delete.confirm': '确认删除该需求？\n\n删除后此工作区可创建新需求。产物目录（.sky-axis/${id}/）将保留在原工作区下，可手动清理。',
 
   'requirement.detail.meta.workspace': '工作区',
   'requirement.detail.meta.workspaceRemoved': '（已删除）',
@@ -344,6 +349,8 @@ export const zh = {
   'requirement.new.createWorkspace': '创建工作区',
   'requirement.new.createWorkspaceHint': '在主机文件系统创建一个新的工作区目录',
   'requirement.new.creatingWorkspace': '创建中…',
+  /* 1:1 workspace-requirement 不变量：workspace 在 select 里已被占用时的标签 */
+  'requirement.new.workspaceTaken': '已占用',
   'requirement.new.errorPrefix': '提交失败：',
   'requirement.new.cancel': '取消',
   'requirement.new.submit': '创建',
@@ -376,6 +383,8 @@ export const zh = {
   'requirement.error.git-timeout': '克隆超过 5 分钟超时，请检查网络或仓库大小',
   'requirement.error.source-repo-duplicate': '该仓库已关联（HTTP/HTTPS/SSH 同仓库视为同一）',
   'requirement.error.git-clone-incomplete': '目标目录包含上次克隆残留的半成品 git 状态，请检查并手动清理后重试',
+  /* ── Workspace 1:1 不变量错误 ── */
+  'requirement.error.workspace-already-has-requirement': '该工作区已关联需求（1 个工作区只能承载 1 个需求空间）；请删除旧需求或换其他工作区',
 
   /* ── Phase 2.6 源码关联 UI 状态 ── */
   'requirement.detail.materials.cloneStatus.not-cloned': '未本地化',
@@ -507,6 +516,9 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.list.errorPrefix': 'Failed to load: ',
   'requirement.list.delete': 'Delete requirement',
   'requirement.list.open': 'Open detail page',
+  /* 1:1 workspace-requirement invariant violation (legacy data) */
+  'requirement.list.invariantViolated': 'Invariant violated: this workspace has multiple requirements; please contact an admin to clean up',
+  'requirement.list.invariantViolatedHint': 'This group contains ≥2 requirements (one workspace = one requirement space)',
 
   'requirement.workspace.removed': '(workspace removed)',
 
@@ -515,6 +527,8 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.back': 'Back',
   'requirement.detail.notFound': 'This requirement has been deleted or does not exist.',
   'requirement.detail.errorPrefix': 'Failed to load detail: ',
+  /* 1:1 invariant: delete confirmation — explains workspace can be reused, artifacts preserved */
+  'requirement.detail.delete.confirm': 'Delete this requirement?\n\nAfter deletion this workspace can host a new requirement. The artifact directory (.sky-axis/${id}/) will be left in place and can be cleaned up manually.',
 
   'requirement.detail.meta.workspace': 'Workspace',
   'requirement.detail.meta.workspaceRemoved': '(removed)',
@@ -732,6 +746,8 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.new.createWorkspace': 'Create workspace',
   'requirement.new.createWorkspaceHint': 'Create a new workspace directory in the host filesystem',
   'requirement.new.creatingWorkspace': 'Creating…',
+  /* 1:1 workspace-requirement invariant: workspace already bound label */
+  'requirement.new.workspaceTaken': 'occupied',
   'requirement.new.errorPrefix': 'Submit failed: ',
   'requirement.new.cancel': 'Cancel',
   'requirement.new.submit': 'Create',
@@ -764,4 +780,6 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.error.git-timeout': 'Clone timed out after 5 minutes; check network or repo size',
   'requirement.error.source-repo-duplicate': 'This repository is already linked (HTTP/HTTPS/SSH are treated as the same repo)',
   'requirement.error.git-clone-incomplete': 'Target directory contains a half-finished git state from a previous clone; please inspect and clean it up before retrying',
+  /* ── Workspace 1:1 invariant error ── */
+  'requirement.error.workspace-already-has-requirement': 'This workspace already has a requirement (one workspace = one requirement space); delete the old requirement or pick a different workspace',
 }

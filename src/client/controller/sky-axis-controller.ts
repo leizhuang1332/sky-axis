@@ -368,6 +368,8 @@ export interface RequirementError {
     | 'source-repo-duplicate'
     /* ── Phase 2.6 v2.1 新增（destDir 含半成品 git 残留）── */
     | 'git-clone-incomplete'
+    /* ── Workspace 1:1 不变量新增（同一 workspace 已有关联 requirement）── */
+    | 'workspace-already-has-requirement'
   detail?: string
 }
 
@@ -451,6 +453,13 @@ export interface SkyAxisController {
 
   /** 拉取单条详情（host get 路由）；可选 —— openDetail 已自动触发。 */
   loadDetail(id: string): Promise<void>
+
+  /* ── Workspace 1:1 不变量（client UX 加速层）── */
+
+  /** 取指定 workspace 已关联的 requirement（若有）。无则 undefined。
+   *  UI 用它判断「新建需求」弹窗里某个 workspace 是否已被占用，
+   *  避免提交后才被 host 拒绝；这是 UX 加速，不替代 host 权威校验。 */
+  getRequirementByWorkspace(workspaceId: string): RequirementEntry | undefined
 
   /* ── Phase 1.13：详情内 tab 切换 ── */
 
@@ -924,6 +933,14 @@ export function createSkyAxisController(deps: {
         }
       }
       notify()
+    },
+
+    /* ── Workspace 1:1 不变量（client UX 加速层）── */
+
+    getRequirementByWorkspace(workspaceId) {
+      // 直接遍历 snapshot.requirements —— 1 对 1 不变量下每个 workspaceId 最多 1 条；
+      // 理论存在 N 条时（历史脏数据）也只返回第一条，UI 的红框警示会另说。
+      return snapshot.requirements.find(r => r.workspaceId === workspaceId)
     },
 
     /* ── Phase 2.5：物料 CRUD（乐观更新 + SSE put 兜底）── */

@@ -12,6 +12,11 @@
  *   - workspaces.length === 0 时整个表单 disabled，submit 显示「请先创建工作区」提示
  *   - workspaceId 为空字符串时 submit 按钮 disabled
  *
+ * 1:1 workspace-requirement 不变量（client UX 加速层）：
+ *   - 已有关联需求的 workspace 在 select 里**灰显 + 标「（已占用）」**，无法选中
+ *   - `defaultWorkspaceId` 落空时自动选「第一个未占用」workspace
+ *   - host 仍是权威 —— 即使 UI 被绕过（多 tab / 老 client），host create() 仍会拒绝
+ *
  * 关闭策略：
  *   - 提交成功后自动关闭
  *   - 提交失败不关闭（让用户修改后重试）
@@ -37,6 +42,10 @@ export interface NewRequirementModalProps {
   workspaces: readonly RequirementOption[]
   /** 默认预选的 workspaceId（通常是 ctx.workspaces.list.recentWorkspaceId）。 */
   defaultWorkspaceId?: string
+  /** 已占用 workspaceId 集合（来自 controller.getRequirementByWorkspace 派生）。
+   *  这些 workspace 在 select 中灰显、无法选中。
+   *  undefined 时按"无占用"处理（早期 mount / controller 还未注入）。 */
+  takenByWorkspaceId?: ReadonlyMap<string, RequirementEntry>
   /** 最近一次失败错误（表单顶部展示错误条；成功时传 null）。 */
   submitError?: RequirementError | null
   /** 是否正在提交（submit 按钮显示 loading）。 */
@@ -58,15 +67,39 @@ export interface NewRequirementModalProps {
 
 const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent']
 
+/** 模块级空 Map —— 早期 mount / controller 还没注入 takenByWorkspaceId 时的兜底。
+ *  用模块级单例避免每次 render 重新构造（同一引用，React 不会触发额外更新）。 */
+const EMPTY_TAKEN: ReadonlyMap<string, RequirementEntry> = new Map()
+
 /** 把 priority key 翻译为本地化标签。 */
 function priorityLabel(t: PropsLocale<'sky-axis'>['t'], p: Priority): string {
   return t(`requirement.priority.${p}`)
 }
 
-export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
-  const { t, workspaces, defaultWorkspaceId, submitError, submitting, workspaceOps, onSubmit, onClose } = props
+/** 找第一个「未占用」的 workspaceId。无可用时返回 undefined。 */
+function firstAvailable(
+  workspaces: readonly RequirementOption[],
+  taken: ReadonlyMap<string, RequirementEntry>,
+): string | undefined {
+  for (const ws of workspaces) {
+    if (!taken.has(ws.id)) return ws.id
+  }
+  return undefined
+}
 
-  const [workspaceId, setWorkspaceId] = useState<string>(defaultWorkspaceId ?? '')
+export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
+  const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, workspaceOps, onSubmit, onClose } = props
+  // 默认空 map —— 早期 mount / controller 还没注入 takenByWorkspaceId 时按"无占用"处理
+  const taken: ReadonlyMap<string, RequirementEntry> = takenByWorkspaceId ?? EMPTY_TAKEN
+
+  // 默认预选逻辑：
+  //   1. 调用方显式传的 defaultWorkspaceId 必须未占用
+  //   2. 否则挑第一个未占用
+  //   3. 全占用 / 空列表 → ''（触发 noWorkspaces 分支）
+  const [workspaceId, setWorkspaceId] = useState<string>(() => {
+    if (defaultWorkspaceId !== undefined && !taken.has(defaultWorkspaceId)) return defaultWorkspaceId
+    return firstAvailable(workspaces, taken) ?? ''
+  })
   const [title, setTitle] = useState<string>('')
   const [description, setDescription] = useState<string>('')
   const [priority, setPriority] = useState<Priority>('normal')
@@ -85,7 +118,9 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
 
   const noWorkspaces = workspaces.length === 0
   const titleInvalid = title.trim().length === 0 || title.length > 120
-  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace
+  // 当前选中 workspace 是否被占用 —— 防御性兜底（select 已 disabled，正常不会发生）
+  const workspaceTaken = workspaceId !== '' && taken.has(workspaceId)
+  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace && !workspaceTaken
 
   const handleTagsChange = (raw: string): void => {
     setTagsInput(raw)
@@ -186,9 +221,17 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             required
           >
             <option value="" disabled>— {t('requirement.new.workspacePlaceholder')} —</option>
-            {workspaces.map(ws => (
-              <option key={ws.id} value={ws.id}>{ws.title}</option>
-            ))}
+            {workspaces.map(ws => {
+              // 1:1 不变量：已有关联 requirement 的 workspace 灰显 + 标「已占用」，
+              //   让用户在 select 里就明白这个 workspace 不能选，避免提交后被 host 拒绝。
+              const taken = takenByWorkspaceId?.get(ws.id)
+              const suffix = taken !== undefined ? `（${t('requirement.new.workspaceTaken')}）` : ''
+              return (
+                <option key={ws.id} value={ws.id} disabled={taken !== undefined}>
+                  {ws.title}{suffix}
+                </option>
+              )
+            })}
           </select>
           {/* DSH 平台 workspace 创建入口 —— 复用 ctx.workspaces.pickDirectory + create。
               apply(ctx) 还没跑完时 workspaceOps 为 undefined，链接隐藏。 */}
