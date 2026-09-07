@@ -20,7 +20,7 @@
  *     端 ctx.workspaces.list 实时 join
  */
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import type { WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy'
@@ -58,8 +58,24 @@ import {
   findDuplicateWorkspaceGroups,
 } from './workspace-uniqueness.ts'
 
-/** sky-axis 产物在 workspace 内的命名空间目录（隐藏目录，不污染用户根）。 */
-const SKY_AXIS_ARTIFACT_NAMESPACE = '.sky-axis'
+/**
+ * sky-axis 物料文件落盘的顶层目录（与 git-service 的 SKY_AXIS_REPOS_DIR 同源）：
+ *   - `inputs/prd/` —— PRD 文档上传落盘点
+ *   - `inputs/attachment/` —— 附件上传落盘点
+ *   - 4 个 link 类 section（prdLinks / designLinks / externalLinks / sourceRepos）
+ *     不落盘（只有 URL 或 git clone 元数据，不写文件）。
+ *
+ * Sprint 3 演进（工作区目录结构改造）：
+ *   - 原路径 `${workspacePath}/.sky-axis/${requirementId}/${section}/${itemId}-${filename}`
+ *     改为顶层 `${workspacePath}/inputs/${sectionInputsDir}/${reqShortId}-${itemIdShort}-${filename}`
+ *   - `reqShortId`：requirementId 替换 `:` 为 `-` 后取前 19 字符（ISO 到秒）
+ *   - `itemIdShort`：itemId UUID 前 8 字符
+ *   - `sectionInputsDir`：`prdFiles` → `prd`、`attachments` → `attachment`
+ *   - 双前缀 + 文件名三重防冲突；用户可读性高（一眼看出「哪个 req 的什么文件」）
+ *
+ * 复用语义（决策 3）：`inputs/` 已存在就直接用，不查内部。
+ */
+const SKY_AXIS_INPUTS_DIR = 'inputs'
 
 /** 物料每 section 数量上限（业务约束，zod 不管 —— 服务层校验）。 */
 const MAX_MATERIALS_PER_SECTION = 50
@@ -106,18 +122,83 @@ function safeRequirementIdDir(id: RequirementId): string {
   return id.replace(/:/g, '-')
 }
 
-/** sky-axis 半区产物根目录（不实际创建，返回路径供 lazy 创建）。 */
-function artifactRoot(workspacePath: string, requirementId: RequirementId): string {
-  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(requirementId))
+/**
+ * Section → inputs/ 子目录名映射。
+ *   - `prdFiles` → `prd`
+ *   - `attachments` → `attachment`
+ *   - 4 个 link 类 section 不会被 writeMaterialFile 调用(它们走 JSON add 路径)，
+ *     此处 throw 兜底 —— 防御未来误用。
+ */
+export function sectionInputsDirName(section: MaterialSection): 'prd' | 'attachment' {
+  switch (section) {
+    case 'prdFiles':    return 'prd'
+    case 'attachments': return 'attachment'
+    case 'prdLinks':
+    case 'designLinks':
+    case 'externalLinks':
+    case 'sourceRepos':
+      throw new Error(`section ${section} is link-only and must not write a file to inputs/`)
+  }
 }
 
-/** 某 section 的产物子目录路径（不实际创建）。 */
-function sectionArtifactDir(
-  workspacePath: string,
-  requirementId: RequirementId,
-  section: MaterialSection,
-): string {
-  return join(workspacePath, SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(requirementId), section)
+/**
+ * 物料文件落盘的 inputs/ 子目录绝对路径（不实际创建，返回路径供 mkdir recursive）。
+ *
+ * 形态：`<workspacePath>/inputs/<sectionInputsDir>/`
+ */
+export function materialInputsDir(workspacePath: string, section: MaterialSection): string {
+  return join(workspacePath, SKY_AXIS_INPUTS_DIR, sectionInputsDirName(section))
+}
+
+/**
+ * 确保 inputs/ 顶层布局存在 —— 一次性创建所有 file-upload section 的子目录。
+ *
+ * 启动期在每个 workspace 调用一次（与 ensureMeta 同步走），幂等（mkdir recursive 已存在 no-op）。
+ *
+ * 复用语义（决策 3）：`inputs/` 目录已存在就直接用，不查内部 —— 但本函数还会
+ * 确保两个子目录存在。如果 `inputs/` 已是用户手动建的空目录，子目录会按需创建。
+ *
+ * 失败抛错：mkdir 失败（如权限不足）会让 ensureMeta 整体失败 → console.warn + 跳过
+ * 该 workspace；不阻塞 webServer 启动。
+ */
+export async function ensureInputsLayout(workspacePath: string): Promise<void> {
+  for (const section of ['prdFiles', 'attachments'] as const) {
+    await mkdir(materialInputsDir(workspacePath, section), { recursive: true, mode: 0o700 })
+  }
+}
+
+/**
+ * 把 requirementId 压缩为文件名前缀短码（19 字符 = ISO 到秒，已替换 `:` 为 `-`）。
+ *
+ * 形态例：`2026-09-07T13:44:18.939Z-6hcwlt` → `2026-09-07T13-44-18`（去冒号后前 19 字符）
+ *
+ * 唯一性：同秒多 requirement 撞名概率低；即使撞，后接 `itemIdShort`（UUID 前 8 字符）
+ * 即可万无一失。短码让用户一眼看出「哪个 req」+ 可在 ls 时大致按时间排序。
+ */
+export function reqShortId(reqId: RequirementId): string {
+  return safeRequirementIdDir(reqId).slice(0, 19)
+}
+
+/** itemId UUID 前 8 字符（无连字符，文件名前缀用）。 */
+export function itemIdShort(itemId: MaterialItemId): string {
+  return itemId.slice(0, 8)
+}
+
+/**
+ * 沙箱断言：absolutePath 必须位于 `${workspacePath}/inputs/` 内。
+ *
+ * 与 git-service.assertSandboxed 同源的防御性断言 —— 防止 caller 误传或未来
+ * refactor 时把恶意 section 名 / 文件名拼到路径外。
+ */
+function assertInputsDirSandbox(workspacePath: string, absolutePath: string): void {
+  const root = resolve(workspacePath)
+  const target = resolve(absolutePath)
+  const expectedPrefix = root + sep + SKY_AXIS_INPUTS_DIR + sep
+  if (target !== root && !target.startsWith(expectedPrefix)) {
+    throw new Error(
+      `material path escapes inputs sandbox: ${target} not under ${expectedPrefix}`,
+    )
+  }
 }
 
 /**
@@ -156,13 +237,18 @@ function sanitizeFilename(name: string): string {
 
 /** 写 PrdFile / Attachment 文件到磁盘，返回相对 workspace 的 path 与绝对路径。
  *
+ * 落盘路径（Sprint 3）：`${workspacePath}/inputs/${sectionInputsDir}/${reqShortId}-${itemIdShort}-${sanitized}`
+ *
  * 写入策略：先写 `.tmp` 临时文件，fsync 完成后 rename 到正式文件名。
  * 目的：
  *   1) 上传中途断流 / KV write 失败 → 磁盘上不会留下半成品文件
  *   2) rename 是 POSIX 原子操作，client 端 list / ls 永远不会看到半写文件
- *   3) 与文件持久名同步由 itemId 前缀提供（即便 sanitize 后同名也不冲突）
+ *   3) 与文件持久名同步由 reqShortId + itemIdShort 前缀提供（即便 sanitize 后同名也不冲突）
+ *
+ * 沙箱：写完后调 assertInputsDirSandbox 兜底防御 —— 正常路径必然命中 `${ws}/inputs/`,
+ * 但若未来 refactor 把恶意 section 名串进去会立即抛错。
  */
-async function writeMaterialFile(args: {
+export async function writeMaterialFile(args: {
   workspacePath: string
   requirementId: RequirementId
   section: MaterialSection
@@ -170,25 +256,28 @@ async function writeMaterialFile(args: {
   filename: string
   content: Buffer
 }): Promise<{ relativePath: string; absolutePath: string }> {
-  const dir = sectionArtifactDir(args.workspacePath, args.requirementId, args.section)
+  const dir = materialInputsDir(args.workspacePath, args.section)
   await mkdir(dir, { recursive: true, mode: 0o700 })
   const sanitized = sanitizeFilename(args.filename)
-  const filename = `${args.itemId}-${sanitized}`
-  const absolutePath = join(dir, filename)
-  const tmpPath = join(dir, `.${args.itemId}.tmp`)
+  const shortReq = reqShortId(args.requirementId)
+  const shortItem = itemIdShort(args.itemId)
+  const baseFilename = `${shortReq}-${shortItem}-${sanitized}`
+  const absolutePath = join(dir, baseFilename)
+  const tmpPath = join(dir, `.${shortItem}.tmp`)
   try {
     await writeFile(tmpPath, args.content, { mode: 0o600 })
     await rename(tmpPath, absolutePath)
   } catch (e) {
-    // 清理可能残留的 tmp
-    await unlinkMaterialFile(args.workspacePath, join(SKY_AXIS_ARTIFACT_NAMESPACE, safeRequirementIdDir(args.requirementId), args.section, `.${args.itemId}.tmp`))
+    // 清理可能残留的 tmp —— 注意相对路径是新形态（inputs/{section}/{...}.tmp）
+    await unlinkMaterialFile(args.workspacePath, join(SKY_AXIS_INPUTS_DIR, sectionInputsDirName(args.section), `.${shortItem}.tmp`))
     throw e
   }
+  // 沙箱断言兜底
+  assertInputsDirSandbox(args.workspacePath, absolutePath)
   const relativePath = join(
-    SKY_AXIS_ARTIFACT_NAMESPACE,
-    safeRequirementIdDir(args.requirementId),
-    args.section,
-    filename,
+    SKY_AXIS_INPUTS_DIR,
+    sectionInputsDirName(args.section),
+    baseFilename,
   )
   return { relativePath, absolutePath }
 }
@@ -337,11 +426,8 @@ export class RequirementHostService {
 
     await table.put(id as unknown as SkyAxisWorkspaceId & string, requirement)
 
-    // best-effort 产物目录预创建 —— 不阻塞，失败 console.warn 即可
-    void this.ensureArtifactRoot(workspacePath, id).catch((error: unknown) => {
-      // eslint-disable-next-line no-console
-      console.warn(`[sky-axis] artifact root pre-create failed for ${id}: ${String(error)}`)
-    })
+    // Sprint 3：取消 `.sky-axis/{id}/` 产物目录预创建。inputs/{section}/ 由
+    //   writeMaterialFile lazy mkdir（已存在则 no-op）+ host apply 启动期一次性建空目录兜底。
 
     return requirement
   }
@@ -884,14 +970,7 @@ export class RequirementHostService {
     return path
   }
 
-  /**
-   * best-effort 创建某需求的产物根目录。
-   * 失败不抛出（caller 不需要 await 此函数的 reject）。
-   */
-  private async ensureArtifactRoot(workspacePath: string, requirementId: RequirementId): Promise<void> {
-    const root = artifactRoot(workspacePath, requirementId)
-    await mkdir(root, { recursive: true, mode: 0o700 })
-  }
+  // Sprint 3：ensureArtifactRoot 已删除 —— `.sky-axis/${requirementId}/` 目录形态废弃。
 }
 
 /**

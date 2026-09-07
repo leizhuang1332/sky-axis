@@ -38,6 +38,7 @@ import {
   ensureMeta,
   WorkspaceMetaError,
 } from './host/workspace-meta.ts'
+import { ensureInputsLayout } from './host/requirement-service.ts'
 import { skyAxisRequest } from './host/rpc-helper.ts'
 import {
   SkyAxisEndpoints,
@@ -163,6 +164,8 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
     })()
 
     // Sprint 2：启动期异步遍历 workspace 列表 → ensureMeta() 写 `.sky-axis/mate.yaml`
+    // Sprint 3 增量：同一遍历中 mkdir inputs/{prd,attachment} 空目录占位，
+    //   保证 UI 上传物料时 lazy mkdir 不需要处理「目录不存在」分支。
     //   - 不阻塞 webServer 注册(ensureMeta 失败 console.warn 不抛)
     //   - 失败分两类：
     //       a) `missing` 之外（invalid / cross-check-failed / io-failed）→ 提示用户手动修
@@ -189,6 +192,8 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
             skyAxisVersion: SKY_AXIS_PLUGIN_VERSION,
             now,
           })
+          // Sprint 3：mkdir inputs/{prd,attachment} —— 复用用户已有目录(决策 3)
+          await ensureInputsLayout(item.path)
           succeeded += 1
         } catch (e) {
           failed += 1
@@ -203,7 +208,8 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       if (succeeded > 0 || failed > 0) {
         // eslint-disable-next-line no-console
         console.info(
-          `[sky-axis] mate.yaml bootstrap: succeeded=${succeeded} failed=${failed}`,
+          `[sky-axis] workspace bootstrap: succeeded=${succeeded} failed=${failed} ` +
+          `(mate.yaml + inputs/)`,
         )
       }
     })()

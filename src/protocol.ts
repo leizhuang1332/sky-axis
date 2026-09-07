@@ -109,8 +109,12 @@ export type UserId = z.infer<typeof UserIdSchema>
 /* ── 6 个物料 section 子项 schema ── */
 
 /** PRD 文档 —— 上传的产品 PRD 文件。
- *  Phase 2.5 新增 `path` required —— host 落盘相对路径（基 = workspace.path），
- *  形态：`.sky-axis/${requirementId}/${section}/${id}-${sanitized-filename}`。
+ *  Phase 2.5 新增 `path` required —— host 落盘相对路径（基 = workspace.path）。
+ *  Sprint 3 演进（工作区目录结构改造）：落盘形态从
+ *    `.sky-axis/${requirementId}/${section}/${id}-${sanitized-filename}`
+ *  改为顶层
+ *    `inputs/${sectionInputsDir}/${reqShortId}-${itemIdShort}-${sanitized-filename}`
+ *    其中 `prdFiles` → `prd`，`attachments` → `attachment`。
  *  required 是 fail loud 决策 —— 旧 v2 record 无 path，DSH backend 升 v3 直接 reject。 */
 export const PrdFileSchema = z.object({
   id:         MaterialItemIdSchema,
@@ -189,7 +193,8 @@ export type DesignLink = z.infer<typeof DesignLinkSchema>
 /** 附件 —— 任意文件（图片 / PDF / 文档 / 压缩包等）。
  *  schema 与 PrdFile 一致 —— 但业务语义不同（PRD 是产品需求文档，附件是补充材料），
  *  保持分开便于未来各自扩展字段。
- *  Phase 2.5 新增 `path` required —— 同 PrdFileSchema。 */
+ *  Phase 2.5 新增 `path` required —— 同 PrdFileSchema。
+ *  Sprint 3 演进：落盘形态改为 `inputs/attachment/${reqShortId}-${itemIdShort}-${filename}`，见 PrdFileSchema 注释。 */
 export const AttachmentSchema = z.object({
   id:         MaterialItemIdSchema,
   filename:   z.string().min(1).max(255),
