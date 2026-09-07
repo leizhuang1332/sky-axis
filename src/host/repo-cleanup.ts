@@ -1,11 +1,18 @@
 /**
- * sky-axis host 半区 —— 清理 `.sky-axis/repos/` 下的历史孤儿目录。
+ * sky-axis host 半区 —— 清理 `repos/` 下的历史孤儿目录。
  *
  * 背景：
  *   Phase 2.6 第一次落盘 destDir 时用了 `randomUUID()` 作为目录名,导致
- *   `.sky-axis/repos/<uuid>/` 这种目录形态。Phase 2.6 后续修正改为
+ *   `repos/<uuid>/` 这种目录形态。Phase 2.6 后续修正改为
  *   `extractRepoName(url)` —— 旧 UUID 目录变成孤儿。本模块负责识别
  *   并安全清理这些孤儿。
+ *
+ * Sprint 1 演进（工作区目录结构改造）：
+ *   - 扫描路径从 `.sky-axis/repos/` 改为顶层 `repos/`。
+ *   - 返回的 relativeDir 形态同步更新（`repos/<name>`）。
+ *   - `liveLocalPaths` 入参的语义不变（相对 workspaceRoot 的 POSIX 路径），
+ *     但调用方传值需要相应改成 `repos/...` 形态（与 git-service.clone 返回的
+ *     `cloneResult.localPath` 字段保持一致）。
  *
  * 识别规则（必须**全部满足**才算孤儿）：
  *   1. 目录名前缀匹配 `/^[a-f0-9-]{36}$/` —— 仅历史 UUID 形态
@@ -54,7 +61,7 @@ async function pathExists(path: string): Promise<boolean> {
  *
  * @param workspaceRoot - workspace 绝对路径
  * @param liveLocalPaths - 当前所有 requirement 引用的 localPath 集合
- *                         （相对 workspaceRoot 的 POSIX 路径,如 `.sky-axis/repos/mini_harness`）
+ *                         （相对 workspaceRoot 的 POSIX 路径,如 `repos/mini_harness`）
  * @returns 被清理的目录相对路径列表（用于日志 / 调试）
  */
 export async function cleanupOrphanRepos(
@@ -91,7 +98,9 @@ export async function cleanupOrphanRepos(
     if (!await pathExists(gitDir)) continue
 
     // 规则 3：相对路径不在 liveLocalPaths 集合中
-    const relativeDir = `.sky-axis/repos/${entry.name}`
+    // Sprint 1：relativeDir 形态从 `.sky-axis/repos/${name}` → `${SKY_AXIS_REPOS_DIR}/${name}`
+    //          用常量拼接便于后续路径再演进时只需改 SKY_AXIS_REPOS_DIR 一处
+    const relativeDir = `${SKY_AXIS_REPOS_DIR}/${entry.name}`
     if (liveLocalPaths.has(relativeDir)) continue
 
     // 防御性 stat 检查：避免误删符号链接 / 管道 / 普通文件

@@ -468,7 +468,8 @@ describe('MaterialsSchema（需求物料）', () => {
       url: 'https://github.com/foo/bar', branch: 'feat/test',
       lastCommitSha: 'a1b2c3d',
       description: 'demo', addedAt: now, addedBy: 'user-1',
-      localPath: '.sky-axis/repos/a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      // Sprint 1：路径从 `.sky-axis/repos/<id>` 顶层化为 `repos/<id>`
+      localPath: 'repos/a1b2c3d4-e5f6-7890-abcd-ef0123456789',
       clonedAt: now,
       cloneStatus: 'cloned' as const,
       displayName: 'zhangsan',

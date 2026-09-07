@@ -13,9 +13,15 @@
  *       b) `isomorphic-git` 不支持 LFS / submodule / SSH；
  *       c) sky-axis 已经在 src/host/ 下有 `process` 入口 (installSafetyNet)，
  *          加一个 spawn 调用边界不破坏「0 child_process 引用」的现状。
- *   - **沙箱**：所有 destDir 必须以 `${workspaceRoot}/.sky-axis/repos/` 开头，
+ *   - **沙箱**：所有 destDir 必须以 `${workspaceRoot}/repos/` 开头，
  *     否则抛 `git-sandbox-violation`。这是 path 穿越防护 —— 防止恶意 url 把
  *     工作树写到 workspace 外。
+ *
+ * 演进（Sprint 1：工作区目录结构改造）：
+ *   - 原路径 `${workspaceRoot}/.sky-axis/repos/` 改为顶层 `${workspaceRoot}/repos/` —
+ *     让用户在 Finder / VSCode 里可直接打开 clone 产物。
+ *   - 沙箱语义不变（仍限定在 workspace 子目录），仅锚点从 `.sky-axis/` 隐藏目录
+ *     迁到顶层 `repos/`。
  *   - **硬超时 5 分钟**：用 setTimeout + child.kill('SIGTERM') 实现。
  *     git 进程被 SIGTERM 后内部子进程可能残留，但 Node 进程级不会卡死；
  *     失败路径抛 `git-timeout`。
@@ -42,8 +48,18 @@ export const GIT_CLONE_TIMEOUT_MS = 5 * 60 * 1000
 /** stderr 累积上限（截断前）。 */
 const STDERR_COLLECT_LIMIT = 4096
 
-/** 沙箱前缀（与 requirement-service.ts SKY_AXIS_ARTIFACT_NAMESPACE 同源）。 */
-export const SKY_AXIS_REPOS_DIR = '.sky-axis/repos'
+/**
+ * 沙箱前缀 —— 工作区顶层 `repos/` 目录的相对路径。
+ *
+ * Sprint 1 演进：原值 `.sky-axis/repos` → `repos`（顶层化），复用用户已存在的
+ * 同名目录（决策 3：复用语义 = 目录已存在就用，不查内部）。
+ *
+ * 注意：本常量不再以 `.sky-axis/` 开头，与 requirement-service.ts 的
+ * `SKY_AXIS_ARTIFACT_NAMESPACE`（仅用于 `mate.yaml` 文件）脱钩 —— 两者职责不同：
+ *   - SKY_AXIS_REPOS_DIR：git clone 沙箱的锚点目录
+ *   - SKY_AXIS_ARTIFACT_NAMESPACE：sky-axis 元信息存放目录（只有 mate.yaml 一个文件）
+ */
+export const SKY_AXIS_REPOS_DIR = 'repos'
 
 /** 单次 spawn 调用的 raw 结果（成功路径内部用）。 */
 interface SpawnOk {
@@ -120,7 +136,7 @@ export async function probeGit(): Promise<boolean> {
 /* ── 沙箱断言 ── */
 
 /**
- * 断言 destDir 位于 `${workspaceRoot}/.sky-axis/repos/` 内。
+ * 断言 destDir 位于 `${workspaceRoot}/repos/` 内。
  * 防止 caller 误传或恶意 url 携带 `..` 写穿 workspace。
  *
  * 实现细节：
@@ -225,7 +241,7 @@ function runGit(
 /** GitService —— 单例，所有方法 stateless。 */
 export interface GitService {
   /**
-   * Clone 源码仓库到 `${workspaceRoot}/.sky-axis/repos/{destDir-basename}`。
+   * Clone 源码仓库到 `${workspaceRoot}/repos/{destDir-basename}`。
    * 失败时抛 SkyAxisHostError（git-clone-failed / git-checkout-failed / git-timeout）。
    * 不负责清理 destDir —— caller（service 层）在失败时显式 rm。
    */
@@ -352,7 +368,7 @@ export function createGitService(): GitService {
     },
 
     async removeSafe(destDir, workspaceRoot) {
-      // 沙箱断言：保证只删 .sky-axis/repos/ 下的目录
+      // 沙箱断言：保证只删 repos/ 下的目录
       assertSandboxed(workspaceRoot, destDir)
       await safeRmdir(destDir)
     },

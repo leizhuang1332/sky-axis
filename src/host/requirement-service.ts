@@ -369,8 +369,10 @@ export class RequirementHostService {
   }
 
   /**
-   * Phase 2.6 v2：扫一遍所有 workspace 的 `.sky-axis/repos/` 目录,
+   * Phase 2.6 v2：扫一遍所有 workspace 的 `repos/` 目录,
    * 清理未引用的 UUID 形态孤儿(历史 destDir 命名规则残留)。
+   *
+   * Sprint 1 演进：扫描路径从 `.sky-axis/repos/` 顶层化为 `repos/`。
    *
    * 设计：
    *   - 收集所有 requirement 的 sourceRepos.localPath → liveLocalPaths
@@ -555,7 +557,9 @@ export class RequirementHostService {
    *
    * 顺序（**先落盘成功 → 再写 KV**）：
    *   1. 解析 workspacePath（缓存 + 校验 workspace 存在）
-   *   2. 从 URL 提取 repo 名 → destDir = `${workspacePath}/.sky-axis/repos/${repoName}`
+   *   2. 从 URL 提取 repo 名 → destDir = `${workspacePath}/repos/${repoName}`
+ *      （Sprint 1：路径从 `.sky-axis/repos/` 顶层化为 `repos/`，便于用户在
+ *      Finder / VSCode 直接打开）
    *      （同 repo 不同 protocol 经 canonicalize 后命中同一目录）
    *   3. **KV dedup**：canonicalize URL 后比对已有 sourceRepos,命中抛 source-repo-duplicate
    *   4. gitService.clone({ url, branch, destDir, workspaceRoot: workspacePath, signal })
@@ -806,7 +810,7 @@ export class RequirementHostService {
     }
     // 落盘清理:
     //   - prdFiles / attachments: unlink 单文件
-    //   - sourceRepos: rm -rf 整个 .sky-axis/repos/{itemId} 目录(用 gitService.removeSafe 保证沙箱断言)
+    //   - sourceRepos: rm -rf 整个 repos/{itemId} 目录(用 gitService.removeSafe 保证沙箱断言)
     if (section === 'sourceRepos' && target.localPath !== undefined) {
       const destDir = join(workspacePath, target.localPath)
       await this.gitService.removeSafe(destDir, workspacePath)
