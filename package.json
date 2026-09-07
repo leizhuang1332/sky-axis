@@ -79,6 +79,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "busboy": "^1.6.0"
+    "busboy": "^1.6.0",
+    "yaml": "^2.9.0"
   }
 }

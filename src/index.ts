@@ -11,6 +11,10 @@
  *   3. 注册 ping / health 调试端点（保留 Phase 0）
  *   4. effect disposer 清理 routes + 关闭 service
  *
+ * Sprint 2 增量（工作区目录结构改造）：
+ *   - 启动期异步遍历 workspace 列表 → ensureMeta() 写 `.sky-axis/mate.yaml`
+ *     - 失败 console.warn，不阻塞 webServer
+ *
  * 现有 client 半区（src/client/index.ts）保持不变 —— 它仍负责 sidebar 挂载
  * 与中心列整页渲染，与本文件并行工作。Phase 1 引入持久化与 workspace 集成。
  *
@@ -31,13 +35,27 @@ import { RequirementHostService } from './host/requirement-service.ts'
 import { makeRequirementRoutes } from './host/routes/requirements.ts'
 import { makeMaterialRoutes } from './host/routes/materials.ts'
 import {
+  ensureMeta,
+  WorkspaceMetaError,
+} from './host/workspace-meta.ts'
+import { skyAxisRequest } from './host/rpc-helper.ts'
+import {
   SkyAxisEndpoints,
   type PingResponse,
   type HealthResponse,
+  type WorkspaceId as SkyAxisWorkspaceId,
 } from './protocol.ts'
 
 /** 显式依赖 webServer / apiProxy / storageDomain 服务（cordis 会等这些服务先初始化）。 */
 export const inject = ['webServer', 'apiProxy', 'storageDomain']
+
+/**
+ * sky-axis 插件自身版本（写入 `.sky-axis/mate.yaml` 的 skyAxis.version 字段）。
+ *
+ * Sprint 2 决策：hardcode 同步 package.json 的 `version` 字段。后续若要做
+ * 自动化注入（vite define / tsdown banner），改这一处常量即可。
+ */
+const SKY_AXIS_PLUGIN_VERSION = '0.1.0'
 
 /** 写 JSON 响应的 helper（host routes 复用）。 */
 function jsonResponse(res: ServerResponse, code: number, body: unknown): void {
@@ -140,6 +158,52 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
             workspaceId: group[0]?.workspaceId ?? '<unknown>',
             requirements: group.map(r => ({ id: r.id, title: r.title, status: r.status })),
           })),
+        )
+      }
+    })()
+
+    // Sprint 2：启动期异步遍历 workspace 列表 → ensureMeta() 写 `.sky-axis/mate.yaml`
+    //   - 不阻塞 webServer 注册(ensureMeta 失败 console.warn 不抛)
+    //   - 失败分两类：
+    //       a) `missing` 之外（invalid / cross-check-failed / io-failed）→ 提示用户手动修
+    //       b) workspace-list 自身失败 → 跳过本轮,下次启动再试
+    void (async (): Promise<void> => {
+      const response = await ctx.apiProxy.workspace.list(skyAxisRequest({}))
+      if (!response.result.ok) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[sky-axis] workspace list failed; skipping mate.yaml bootstrap: ` +
+          `${response.result.error.code}: ${response.result.error.message}`,
+        )
+        return
+      }
+      const now = new Date().toISOString()
+      let succeeded = 0
+      let failed = 0
+      for (const item of response.result.value.items) {
+        const workspaceId = item.workspaceId as unknown as SkyAxisWorkspaceId
+        try {
+          await ensureMeta(item.path, {
+            workspaceId,
+            workspaceTitle: item.title !== '' ? item.title : '',
+            skyAxisVersion: SKY_AXIS_PLUGIN_VERSION,
+            now,
+          })
+          succeeded += 1
+        } catch (e) {
+          failed += 1
+          const code = e instanceof WorkspaceMetaError ? e.code : 'unknown'
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[sky-axis] ensureMeta failed for workspace ${workspaceId} (${item.path}): ` +
+            `${code}: ${(e as Error).message}`,
+          )
+        }
+      }
+      if (succeeded > 0 || failed > 0) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[sky-axis] mate.yaml bootstrap: succeeded=${succeeded} failed=${failed}`,
         )
       }
     })()
