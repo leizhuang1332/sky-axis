@@ -31,6 +31,7 @@ import {
   AddExternalLinkRequest,
   AddPrdLinkRequest,
   AddSourceRepoRequest,
+  Artifact,
   Attachment,
   MaterialItemId,
   MaterialSection,
@@ -44,6 +45,7 @@ import {
   SkyAxisErrorCode,
   defaultRequirementFields,
 } from '../protocol.ts'
+import * as artifactWriter from './artifact-writer.ts'
 import { skyAxisRequest } from './rpc-helper.ts'
 import { requirementDomain } from './storage/requirement-domain.ts'
 import {
@@ -904,6 +906,79 @@ export class RequirementHostService {
       await unlinkMaterialFile(workspacePath, target.path)
     }
     return updated
+  }
+
+  /**
+   * Sprint 4：把 AI artifact 落盘到 `outputs/${kind}/...` 并把相对路径回写到 KV。
+   *
+   * 默认行为（Sprint 4 决策 2：**打通路径但默认不写**）：
+   *   - 本方法本身是 opt-in API;`host apply` 不主动调用。
+   *   - `routes/artifacts.ts` 暴露 POST `/api/sky-axis/artifacts/{kind}/write` 路由,
+   *     client 显式调用才落盘。当前 client / controller 未接入此路由,
+   *     所以**当前默认行为等价于「不写」**,与 Sprint 4 之前完全一致。
+   *   - 未来产品决定开启时,在合适的 AI 事件时机调一次即可;**不需要改 host 代码**。
+   *
+   * 顺序(**落盘成功 → 再写 KV**):
+   *   1. 解析 workspacePath(校验 workspace 存在)
+   *   2. 校验 requirement 存在
+   *   3. 调 `writeArtifact()` 落盘到 `outputs/${kind}/${fileName}`(沙箱断言 + 原子写)
+   *   4. table.update:把 artifact.path 写到对应 artifactId 的记录;
+   *      KV 写失败 → best-effort rm 落盘文件
+   *
+   * @throws SkyAxisHostError
+   *   - 'workspace-not-found' / 'requirement-not-found'
+   *   - 'workspace-list-failed'
+   *   - 'internal-error'
+   *   - 透传 SkyAxisArtifactError 的 code(artifact-sandbox-violation / validation-failed / internal-error)
+   */
+  async writeArtifact(reqId: RequirementId, artifact: Artifact): Promise<Requirement> {
+    const table = await this.ready()
+    const current = await this.get(reqId)
+    if (current === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${reqId} not found`)
+    }
+    const workspacePath = await this.resolveWorkspacePath(current.workspaceId)
+
+    // 1. 落盘(Sprint 4 内部模块,沙箱断言 + 原子写)
+    const { relativePath, absolutePath } = await artifactWriter.writeArtifact({
+      workspacePath,
+      requirementId: reqId,
+      artifact,
+    })
+
+    // 2. 回写 KV(把 relativePath 写到对应 artifactId 的 path 字段)
+    const now = new Date().toISOString()
+    let updated: Requirement | undefined
+    try {
+      updated = await table.update(
+        reqId as unknown as SkyAxisWorkspaceId & string,
+        (prev) => {
+          const nextArtifacts = { ...prev.artifacts }
+          const existing = nextArtifacts[artifact.id]
+          nextArtifacts[artifact.id] = {
+            ...(existing ?? artifact),
+            ...artifact,
+            path: relativePath,
+          }
+          return {
+            ...prev,
+            artifacts: nextArtifacts,
+            updatedAt: now,
+          }
+        },
+      )
+      if (updated === undefined) {
+        throw new SkyAxisHostError(
+          'requirement-not-found',
+          `requirement ${reqId} not found during update`,
+        )
+      }
+      return updated
+    } catch (e) {
+      // KV 写失败 → best-effort 清理落盘文件
+      await artifactWriter.cleanupArtifact(workspacePath, absolutePath).catch(() => undefined)
+      throw e
+    }
   }
 
   /**

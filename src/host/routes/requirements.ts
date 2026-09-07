@@ -92,19 +92,27 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'git-clone-incomplete':    return 409   // 目标目录含半成品 git 残留(状态冲突)
     // ── Workspace 1:1 不变量新增 ──
     case 'workspace-already-has-requirement': return 409  // workspace 已占位
+    // ── Sprint 4：artifact 沙箱 ──
+    case 'artifact-sandbox-violation':       return 403   // 与 git-sandbox-violation 同语义
   }
 }
 
 /** 安全读 body（限制 64KB，避免恶意大 body OOM host 进程）。 */
 export const BODY_LIMIT_BYTES = 64 * 1024
-export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/**
+ * 读 JSON body。
+ *   - 默认 BODY_LIMIT_BYTES（64KB）—— requirements / materials route 走这条路径。
+ *   - artifact route body 上限 200KB 字符（protocol.ArtifactSchema body 字段），
+ *     所以 routes/artifacts.ts 显式传 limitBytes = 256KB 留 buffer。
+ */
+export async function readJsonBody(req: IncomingMessage, limitBytes: number = BODY_LIMIT_BYTES): Promise<unknown> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let total = 0
     req.on('data', (chunk: Buffer) => {
       total += chunk.length
-      if (total > BODY_LIMIT_BYTES) {
-        reject(new SkyAxisHostError('validation-failed', `request body exceeds ${BODY_LIMIT_BYTES} bytes`))
+      if (total > limitBytes) {
+        reject(new SkyAxisHostError('validation-failed', `request body exceeds ${limitBytes} bytes`))
         req.destroy()
         return
       }

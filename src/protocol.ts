@@ -47,6 +47,10 @@ export const SkyAxisEndpoints = {
   materialAdd:    `${SKY_AXIS_API_PREFIX}/materials/{section}/add`,
   materialUpload: `${SKY_AXIS_API_PREFIX}/materials/{section}/upload`,
   materialRemove: `${SKY_AXIS_API_PREFIX}/materials/{section}/remove`,
+
+  /* ── 产物落盘（Phase 3.x：工作区目录结构改造 Sprint 4）── */
+  /** 显式触发 artifact 落盘到 outputs/（默认不写 —— opt-in by client）。 */
+  artifactWrite: `${SKY_AXIS_API_PREFIX}/artifacts/{kind}/write`,
 } as const
 
 /* ── 共享子 schema ── */
@@ -420,6 +424,10 @@ export type InterventionItem = z.infer<typeof InterventionItemSchema>
  * - createdAt：产生时间
  * - body：产物正文（markdown / patch / 日志文本）
  * - meta：可选附加元数据（如 patch 的 path / commit sha / report 的 metric）
+ *
+ * Sprint 4 演进（工作区目录结构改造）：加 `path?` 字段 —— 落盘到 outputs/ 的相对路径
+ * （基 = workspace.path），形态 `outputs/${kind}/${reqShortId}-${artifactId8}-${slug}.md`。
+ * optional —— 旧 v3 record 无 path，DSH backend 仍合法；新增落盘行为时由 host 写入。
  */
 export const ArtifactSchema = z.object({
   id: z.string().min(1),
@@ -428,8 +436,33 @@ export const ArtifactSchema = z.object({
   createdAt: z.string().datetime(),
   body: z.string().max(200_000),
   meta: z.record(z.string(), z.unknown()).optional(),
+  path: z.string().min(1).max(1024).optional(),
 })
 export type Artifact = z.infer<typeof ArtifactSchema>
+
+/** Artifact kind 字面量联合（5 选 1，单独 export 便于 route/UI 复用）。 */
+export const ArtifactKindSchema = z.enum(['plan', 'patch', 'note', 'log', 'report'])
+export type ArtifactKind = z.infer<typeof ArtifactKindSchema>
+
+/**
+ * WriteArtifact 请求（Sprint 4）：client 显式触发 host 落盘。
+ *
+ * 设计：默认 **不写** —— 当前 AI 事件流不会调这个 endpoint，行为与 Sprint 3 之前一致。
+ * 未来产品决定开启时，client 在合适的时机调一次即可（同一份 artifact 可以多次写，
+ * host 每次都覆盖；不会污染 KV —— artifact 主体在 KV 是 source of truth）。
+ */
+export const WriteArtifactRequestSchema = z.object({
+  requirementId: RequirementIdSchema,
+  artifact: ArtifactSchema,
+})
+export type WriteArtifactRequest = z.infer<typeof WriteArtifactRequestSchema>
+
+/** WriteArtifact 响应：返回落盘后的 artifact（含新写入的 path 字段）。 */
+export const WriteArtifactResponseSchema = z.object({
+  ok: z.literal(true),
+  artifact: ArtifactSchema,
+})
+export type WriteArtifactResponse = z.infer<typeof WriteArtifactResponseSchema>
 
 /**
  * AI 操作请求（POST /ai/action 入参）—— discriminated union by action。
@@ -711,6 +744,10 @@ export const SKY_AXIS_ERROR_CODES = [
   /** 该 workspace 已有关联 requirement（1 个 workspace = 1 个需求空间；任何 status 都算占位）。
    *  要新建需求必须先删除旧需求（或换 workspace）。 */
   'workspace-already-has-requirement',
+  // ── Sprint 4 新增：artifact 落盘沙箱 ──
+  /** artifact 落盘路径逃逸 `${workspacePath}/outputs/`（路径穿越防护触发）。
+   *  与 `git-sandbox-violation` 同语义不同来源 —— 各自独立的路径沙箱。 */
+  'artifact-sandbox-violation',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

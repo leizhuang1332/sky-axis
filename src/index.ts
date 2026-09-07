@@ -34,6 +34,7 @@ import { SkyAxisPingService } from './host/ping-service.ts'
 import { RequirementHostService } from './host/requirement-service.ts'
 import { makeRequirementRoutes } from './host/routes/requirements.ts'
 import { makeMaterialRoutes } from './host/routes/materials.ts'
+import { makeArtifactRoutes } from './host/routes/artifacts.ts'
 import {
   ensureMeta,
   WorkspaceMetaError,
@@ -99,6 +100,9 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   const requirementRoutes = makeRequirementRoutes(reqSvc)
   // Phase 2.5：物料 CRUD 路由（18 个 exact route，6 section × 3 op）
   const materialRoutes = makeMaterialRoutes(reqSvc)
+  // Sprint 4：artifact 落盘路由（5 个 exact route，1 op × 5 kind）
+  //   - 默认不写：当前 client / controller 未接入,等价于不可达
+  const artifactRoutes = makeArtifactRoutes(reqSvc)
 
   ctx.effect(() => {
     const disposers: (() => void)[] = [
@@ -129,6 +133,9 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       disposers.push(ctx.webServer.register(route))
     }
     for (const route of materialRoutes) {
+      disposers.push(ctx.webServer.register(route))
+    }
+    for (const route of artifactRoutes) {
       disposers.push(ctx.webServer.register(route))
     }
 

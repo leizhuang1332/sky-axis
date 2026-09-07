@@ -375,6 +375,8 @@ export interface RequirementError {
     | 'git-clone-incomplete'
     /* ── Workspace 1:1 不变量新增（同一 workspace 已有关联 requirement）── */
     | 'workspace-already-has-requirement'
+    /* ── Sprint 4 新增（artifact 落盘沙箱）── */
+    | 'artifact-sandbox-violation'
   detail?: string
 }
 

@@ -107,6 +107,38 @@ DSH 通过声明式 **slot 系统**暴露 sidebar 扩展点。sky-axis 以 id `s
 注册自己，由共享 `sidebar-entry-core` 把 entry 注入 sidebar 主树，再以
 与 task-board / ssh 相同的 `dsh-panel-activate` 协议把页面挂入主列。
 
+## 工作区目录结构
+
+sky-axis 在 DSH workspace 根目录下维护四个顶层目录。所有路径都走沙箱，
+插件无法逃逸 workspace。
+
+```
+<workspace>/
+├── repos/                          # 克隆的源码仓库（Phase 2.6）
+│   └── <itemId>/                   # 每个关联仓库一个子目录
+├── inputs/                         # 需求物料（Phase 2.5）
+│   ├── prd/                        # 上传的 PRD 文件
+│   └── attachment/                 # 上传的附件
+├── outputs/                        # AI 生成的产物（Sprint 4）
+│   ├── plan/                       # 实现方案
+│   ├── patch/                      # 代码 patch（unified diff）
+│   ├── note/                       # 笔记
+│   ├── log/                        # AI 执行日志
+│   └── report/                     # 报告
+└── .sky-axis/
+    └── mate.yaml                   # 工作区元信息（id, title, schema version）
+```
+
+要点：
+- `repos/` 在 Sprint 1 从 `.sky-axis/repos/` 升到 workspace 根；
+  `inputs/` 和 `outputs/` 是 Sprint 3 / Sprint 4 新增。
+- `mate.yaml` 在 host 启动期幂等创建；如已存在，host 交叉校验
+  `workspace.id` 与实时 workspace 列表，检测到路径 / ID 不一致时抛
+  `WorkspaceMetaError`。
+- artifact 路由（`/api/sky-axis/artifacts/{kind}/write`）**已注册但默认
+  不被使用** —— 当前 AI 事件流仍走 KV-only 路径。未来产品决定开启落盘时，
+  在合适的 AI 事件时机调用即可；host 代码无需改动。
+
 ## 安全模型
 
 本插件 host 侧只通过官方 DSH `apiProxy` + `webServer` + `storageDomain`

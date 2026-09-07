@@ -111,6 +111,40 @@ registers itself with id `sky-axis` and lets the shared
 the page into the main column via the same `dsh-panel-activate` protocol used
 by `task-board` / `ssh`.
 
+## Workspace directory layout
+
+sky-axis stores everything under the DSH workspace root in four
+top-level directories. All paths are sandboxed so the plugin cannot
+escape the workspace.
+
+```
+<workspace>/
+├── repos/                          # Cloned source repositories (Phase 2.6)
+│   └── <itemId>/                   # One subdirectory per linked repo
+├── inputs/                         # Requirement materials (Phase 2.5)
+│   ├── prd/                        # Uploaded PRD files
+│   └── attachment/                 # Uploaded attachments
+├── outputs/                        # AI-generated artifacts (Sprint 4)
+│   ├── plan/                       # Implementation plans
+│   ├── patch/                      # Code patches (unified diff)
+│   ├── note/                       # Notes
+│   ├── log/                        # AI execution logs
+│   └── report/                     # Reports
+└── .sky-axis/
+    └── mate.yaml                   # Workspace meta info (id, title, schema version)
+```
+
+Notes:
+- `repos/` was promoted from `.sky-axis/repos/` to the workspace root in
+  Sprint 1; `inputs/` and `outputs/` are new since Sprint 3 / Sprint 4.
+- `mate.yaml` is created idempotently on host startup; if it already exists
+  the host cross-checks `workspace.id` against the live workspace list to
+  detect path/ID mismatches and surfaces them as `WorkspaceMetaError`.
+- The artifact routes (`/api/sky-axis/artifacts/{kind}/write`) are
+  **registered but unused** by default — current AI event flow is KV-only.
+  When the product enables disk persistence, opt-in by calling these routes
+  from the right AI event hook; no host code changes needed.
+
 ## Security model
 
 This plugin performs host-side operations through the official DSH
