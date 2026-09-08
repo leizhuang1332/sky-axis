@@ -99,6 +99,23 @@ export async function readRequirement(
   return section[reqId]
 }
 
+/**
+ * 查 path 上是否已有 requirement(Plan I 1:1 不变量用)。
+ *
+ * 强约束下:每个 mate.yaml 文件最多 1 个 req。本函数返回该 req(若有),
+ * 多于 1 个时只返回第一个 —— caller 负责报错或人工清理。
+ *
+ * @returns 已有 req,或 undefined
+ */
+export async function findExistingRequirementAtPath(
+  workspacePath: string,
+): Promise<Requirement | undefined> {
+  const section = await readAllRequirements(workspacePath)
+  const items = Object.values(section)
+  if (items.length === 0) return undefined
+  return items[0]
+}
+
 /* ── write(mutator 模式)── */
 
 /**

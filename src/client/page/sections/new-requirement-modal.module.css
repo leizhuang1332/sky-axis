@@ -42,6 +42,14 @@
   font-size: 13px;
 }
 
+/* Plan I:导入模式 banner 下的帮助文案 —— 字号更小,弱化视觉权重,
+   让主提示(检测到 path 占用)更醒目。 */
+.importHelp {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+}
+
 .input,
 .select,
 .textarea {

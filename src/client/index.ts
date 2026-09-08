@@ -13,7 +13,7 @@
  *
  * Phase 1 增量：
  *   - 创建 RequirementClient（fetch host 半区 Requirement CRUD）
- *   - 注入 client/createSkyAxisController 的 loadImpl / createImpl / deleteImpl
+ *   - 注入 client/createSkyAxisController 的 loadImpl / createImpl / importImpl / deleteImpl
  *   - subscribeRequirementEvents → controller.handleStreamEvent
  *   - controller.loadRequirements() 拉初始列表
  *
@@ -230,6 +230,15 @@ export function apply(ctx: ClientContext): void {
         priority: input.priority ?? 'normal',
         tags: input.tags ?? [],
       })
+      if (r.ok) {
+        return { ok: true, item: { ...r.value } }
+      }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
+    importImpl: async (input) => {
+      // Plan I：把 path 上已有的 requirement 重新归属到当前 DSH workspace。
+      // 仅传 workspaceId —— path 由 host 端 resolveWorkspacePath 推导。
+      const r = await reqClient.import({ workspaceId: input.workspaceId as never })
       if (r.ok) {
         return { ok: true, item: { ...r.value } }
       }

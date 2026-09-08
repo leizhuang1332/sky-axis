@@ -81,7 +81,6 @@ import {
 import { cleanupOrphanRepos } from './repo-cleanup.ts'
 import { canonicalizeRepoUrl, extractRepoName } from './url-utils.ts'
 import {
-  findRequirementByWorkspace,
   findDuplicateWorkspaceGroups,
 } from './workspace-uniqueness.ts'
 import type { RequirementsSection } from './workspace-meta.ts'
@@ -90,6 +89,7 @@ import {
   readAllRequirements,
   readRequirement as readRequirementFromStore,
   updateRequirements,
+  findExistingRequirementAtPath,
 } from './requirements-store.ts'
 
 /**
@@ -759,6 +759,16 @@ export class RequirementHostService {
   async create(input: NewRequirement): Promise<Requirement> {
     const workspacePath = await this.resolveWorkspacePath(input.workspaceId)
 
+    // 1:1 不变量(Plan I):同一 path 最多 1 个 req(跨 DSH workspace 共享)
+    const existing = await findExistingRequirementAtPath(workspacePath)
+    if (existing !== undefined) {
+      throw new SkyAxisHostError(
+        'requirement-already-exists-at-path',
+        `path '${workspacePath}' already has requirement '${existing.id}' (status=${existing.status}); ` +
+        `call importRequirement to re-attach it to workspace '${input.workspaceId}'`,
+      )
+    }
+
     const now = new Date().toISOString()
     const id = makeRequirementId()
     const requirement: Requirement = {
@@ -776,17 +786,72 @@ export class RequirementHostService {
     const { result } = await updateRequirements(
       workspacePath,
       ({ current }) => {
-        // 1:1 不变量校验 —— 锁内原子检查(防止并发 create 同一 workspace)
-        const dup = findRequirementByWorkspace(Object.values(current), input.workspaceId)
-        if (dup !== undefined) {
+        // file lock 内再 check 一次(防 TOCTOU —— create 与 import 并发)
+        const items = Object.values(current)
+        if (items.length > 0) {
           throw new SkyAxisHostError(
-            'workspace-already-has-requirement',
-            `workspace '${input.workspaceId}' already has requirement '${dup.id}' (status=${dup.status}); delete it first to create a new one`,
+            'requirement-already-exists-at-path',
+            `path '${workspacePath}' already has requirement '${items[0].id}' (raced); call importRequirement`,
           )
         }
         return {
           next: { ...current, [id]: requirement },
           result: requirement,
+        }
+      },
+      { now },
+    )
+    this.requirementWorkspaceIndex.set(result.id, workspacePath)
+    this.emitChange({ operation: 'put', item: result })
+    return result
+  }
+
+  /**
+   * 把 path 上已有的 requirement 重新归属到当前 DSH workspace。
+   *
+   * Plan I:用于"DSH 工作区删 + 重建同路径"场景 —— sky-axis 数据全保留,
+   * 仅切换 owner uuid。改写 req.workspaceId + updatedAt,其他字段(prd/附件
+   * /源码仓库/AI 状态/阶段历史)完全保留。
+   *
+   * 失败语义:
+   *   - path 上无 req → 'requirement-not-found'
+   *   - path 上多个 req → 'invalid-record'(1:1 强约束被破坏;通常不应发生,
+   *     若发生说明历史数据有遗留,需要人工清理)
+   *   - file lock / yaml IO → 'yaml-lock-timeout' / 'yaml-write-failed' / 'yaml-parse-failed'
+   *
+   * @returns 更新后的 req
+   */
+  async importRequirement(
+    workspacePath: string,
+    currentWorkspaceId: SkyAxisWorkspaceId,
+  ): Promise<Requirement> {
+    const now = new Date().toISOString()
+    const { result } = await updateRequirements(
+      workspacePath,
+      ({ current }) => {
+        const items = Object.values(current)
+        if (items.length === 0) {
+          throw new SkyAxisHostError(
+            'requirement-not-found',
+            `no requirement at path '${workspacePath}' to import`,
+          )
+        }
+        if (items.length > 1) {
+          throw new SkyAxisHostError(
+            'invalid-record',
+            `path '${workspacePath}' has ${items.length} requirements; ` +
+            `1:1 invariant violated — manual cleanup required`,
+          )
+        }
+        const existing = items[0]
+        const updated: Requirement = {
+          ...existing,
+          workspaceId: currentWorkspaceId,  // Plan I 起可变(owner 切换)
+          updatedAt: now,
+        }
+        return {
+          next: { ...current, [existing.id]: updated },
+          result: updated,
         }
       },
       { now },

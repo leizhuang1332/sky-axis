@@ -358,6 +358,15 @@ export const zh = {
   'requirement.new.submit': '创建',
   'requirement.new.submitting': '创建中…',
 
+  /* ── Plan I:导入已有需求(智能切换 modal)── */
+  'requirement.import.title': '导入已存在的需求',
+  'requirement.import.detected': '此工作区路径上已存在需求。是否导入已存在的需求？',
+  'requirement.import.detectedWithTitle': '此工作区已有需求「{title}」（创建于 {createdAt}）。是否导入？',
+  'requirement.import.help': '导入会修改需求的 owner workspaceId,其他字段（标题、描述、PRD、附件、源码仓库、产物）全部保留不变。',
+  'requirement.import.action': '导入',
+  'requirement.import.actionHint': '把 path 上已存在的需求重新归属到当前 DSH 工作区',
+  'requirement.import.submitting': '导入中…',
+
   'requirement.status.open': '待处理',
   'requirement.status.in_progress': '进行中',
   'requirement.status.done': '已完成',
@@ -387,6 +396,8 @@ export const zh = {
   'requirement.error.git-clone-incomplete': '目标目录包含上次克隆残留的半成品 git 状态，请检查并手动清理后重试',
   /* ── Workspace 1:1 不变量错误 ── */
   'requirement.error.workspace-already-has-requirement': '该工作区已关联需求（1 个工作区只能承载 1 个需求空间）；请删除旧需求或换其他工作区',
+  /* ── Plan I:path-1:1 不变量错误（DSH 工作区删 + 重建同路径场景）── */
+  'requirement.error.requirement-already-exists-at-path': '此工作区路径已存在需求（来自已删除的 DSH 工作区）。点击「导入」可继续使用该需求。',
 
   /* ── Phase 2.6 源码关联 UI 状态 ── */
   'requirement.detail.materials.cloneStatus.not-cloned': '未本地化',
@@ -757,6 +768,15 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.new.submit': 'Create',
   'requirement.new.submitting': 'Creating…',
 
+  /* ── Plan I:import existing requirement (smart-switch modal) ── */
+  'requirement.import.title': 'Import existing requirement',
+  'requirement.import.detected': 'A requirement already exists at this workspace path. Import it?',
+  'requirement.import.detectedWithTitle': 'This workspace already has a requirement "{title}" (created at {createdAt}). Import it?',
+  'requirement.import.help': 'Import rewrites the owner workspaceId only; other fields (title, description, PRD, attachments, source repos, artifacts) are preserved.',
+  'requirement.import.action': 'Import',
+  'requirement.import.actionHint': 'Re-attach the requirement at this path to the current DSH workspace',
+  'requirement.import.submitting': 'Importing…',
+
   'requirement.status.open': 'Open',
   'requirement.status.in_progress': 'In progress',
   'requirement.status.done': 'Done',
@@ -786,4 +806,6 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.error.git-clone-incomplete': 'Target directory contains a half-finished git state from a previous clone; please inspect and clean it up before retrying',
   /* ── Workspace 1:1 invariant error ── */
   'requirement.error.workspace-already-has-requirement': 'This workspace already has a requirement (one workspace = one requirement space); delete the old requirement or pick a different workspace',
+  /* ── Plan I:path-1:1 invariant error (DSH workspace deleted + recreated at same path) ── */
+  'requirement.error.requirement-already-exists-at-path': 'A requirement already exists at this workspace path (from a deleted DSH workspace). Click "Import" to keep using that requirement.',
 }

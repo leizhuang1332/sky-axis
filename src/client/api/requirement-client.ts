@@ -19,6 +19,7 @@ import {
   AddSourceRepoRequestSchema,
   SKY_AXIS_API_PREFIX,
   NewRequirementSchema,
+  ImportRequirementSchema,
   RequirementSchema,
   RequirementsListResponseSchema,
   RequirementResponseSchema,
@@ -28,6 +29,7 @@ import {
   type AddExternalLinkRequest,
   type AddPrdLinkRequest,
   type AddSourceRepoRequest,
+  type ImportRequirement,
   type MaterialSection,
   type SkyAxisErrorCode,
   type NewRequirement,
@@ -124,6 +126,37 @@ export class RequirementClient {
     const parsed = await parseJson(res, RequirementResponseSchema)
     if (!parsed.ok) return parsed
     // RequirementResponseSchema 已内嵌校验 item 是合法 Requirement；这里直接取。
+    return { ok: true, value: parsed.value.item }
+  }
+
+  /**
+   * Plan I：把 path 上已有的 requirement 重新归属到当前 DSH workspace。
+   *
+   * 场景：DSH 工作区删除 + 重建同路径 —— sky-axis 数据保留,
+   * 仅切换 owner uuid。改写 req.workspaceId + updatedAt,其他字段不动。
+   *
+   * 失败语义：
+   *   - path 上无 requirement → host 抛 'requirement-not-found'
+   *   - path 上已有 req 但试图再次 create → 'requirement-already-exists-at-path'
+   *   - DSH workspace 不可解析 → 'workspace-not-found'
+   *
+   * UI 侧应在弹窗阶段就检测 `takenByWorkspaceId` 并引导 import,而不是
+   * 直接调 create 后接错误兜底 —— 这里只是兜底通道。
+   */
+  async import(input: ImportRequirement): Promise<Result<Requirement>> {
+    // 客户端预校验：防止提交明显错误（host 仍会兜底校验）
+    const check = ImportRequirementSchema.safeParse(input)
+    if (!check.success) {
+      return { ok: false, code: 'validation-failed', detail: `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}` }
+    }
+    const res = await fetch(`${this.baseUrl}/requirements/import`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(check.data),
+    })
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
     return { ok: true, value: parsed.value.item }
   }
 

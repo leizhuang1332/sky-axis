@@ -354,6 +354,119 @@ requested workspaceId (58766308-...) — workspace identity changed
 - **UI 层 archived-orphaned 角标** —— 老需求(uuid-A)在新工作区下显示为"工作区已删除"占位符。后续可加 archived-orphaned badge 提示用户
 - **DSH 提供 path-stable id(Plan K)** —— 如果 DSH 后续给 `workspace.id = hash(path)`,可以回填 `requirement.workspaceId` 让 uuid 重新稳定
 
+## §7 导入需求 + path-1:1 强绑定(Plan I)
+
+### 背景
+
+Plan H 把 DSH uuid 解耦后,留下一个真实场景没法覆盖:**DSH 工作区删除 → 同路径重建(新 uuid) → 用户想再打开之前的需求**。
+
+旧实现下,旧需求留在 mate.yaml 里(数据保留 OK),但 `requirement.workspaceId` 仍指向已删除的 DSH uuid,新的 DSH 工作区又没法"认领"它 —— 用户实际只能再开一份空需求,旧的就成了 archive 孤儿。
+
+Plan I 解决这个闭环:**1:1 不变量从 `workspaceId → req` 收紧到 `workspacePath → req`,并引入"导入"主动动作把旧 req 重新归属到新 DSH workspace**。
+
+### 核心改动
+
+**Schema 变更** ([`src/protocol.ts`](src/protocol.ts)):
+
+- 新增 `requirement-already-exists-at-path` 错误码(HTTP 409)—— host 端 path-based 1:1 冲突时抛
+- 新增 `ImportRequirementSchema = { workspaceId: WorkspaceIdSchema }` —— 仅传 workspaceId(plan 由 host 端 `resolveWorkspacePath` 推导)
+- 新增 `SkyAxisEndpoints.requirementImport = /api/sky-axis/requirements/import`
+- `RequirementSchema.workspaceId` 注释从「immutable」改为「Plan I 起 import 时可变(owner 切换)」
+
+**Host 服务端** ([`src/host/requirement-service.ts`](src/host/requirement-service.ts)):
+
+- `create()` 的 1:1 校验从 `findRequirementByWorkspace(workspaceId)` 改为 `findExistingRequirementAtPath(workspacePath)` —— 同一 path 已有 req 时拒绝并提示走 import
+- file lock 内做 TOCTOU 二次 check(防并发 race)
+- 新增 `importRequirement(workspacePath, currentWorkspaceId)`:
+  - path 上无 req → 抛 `requirement-not-found`
+  - path 上 ≥ 2 req(强约束被破坏) → 抛 `invalid-record`,提示人工清理
+  - path 上 1 req → 改写 `workspaceId = currentWorkspaceId` + 刷新 `updatedAt`,其他字段(标题/描述/PRD/附件/源码仓库/产物/AI 状态)**全保留**
+  - 同步更新 `requirementWorkspaceIndex` + 发 `DomainChanged { op: 'put' }` 事件 → SSE 推到 client
+
+**Host 路由** ([`src/host/routes/requirements.ts`](src/host/routes/requirements.ts)):
+
+- 新增 `POST /api/sky-axis/requirements/import` 路由
+- `mapStatus` 加 `requirement-already-exists-at-path → 409` case
+
+**Client 传输层** ([`src/client/api/requirement-client.ts`](src/client/api/requirement-client.ts)):
+
+- 新增 `import(input: ImportRequirement): Promise<Result<Requirement>>` —— 对称 `create()`,客户端 zod 预校验 + POST fetch
+
+**Controller** ([`src/client/controller/sky-axis-controller.ts`](src/client/controller/sky-axis-controller.ts)):
+
+- 接口加 `importRequirement({ workspaceId })`
+- deps 加 `importImpl`,`createSkyAxisController` factory 由 caller 注入
+- 错误码联合加 `requirement-already-exists-at-path`
+- `importRequirement` 实现:乐观更新 `snapshot.requirements`(按 id 替换,避免误删同时存在的 placeholder / 跨 workspace 历史 view)→ 返回 `{ ok, id }`
+
+**UI 智能切换** ([`src/client/page/sections/NewRequirementModal.tsx`](src/client/page/sections/NewRequirementModal.tsx)):
+
+- 双触发检测切到「导入模式」:
+  1. **主动**:`takenByWorkspaceId.get(selectedWorkspaceId)` 命中(同 uuid 已占)
+  2. **兜底**:submit 后 host 返 `requirement-already-exists-at-path`(DSH uuid 变了,takenByWorkspaceId 按 uuid 索引抓不到,但 host 端 path-based 1:1 检查会拦下)
+- 「导入模式」UI 变化:
+  - 标题改 `requirement.import.title`(导入已存在的需求)
+  - 顶部 warning banner(若 `taken` 命中,展示需求标题 + 创建时间;否则展示通用提示)
+  - 表单字段全 disabled(workspace / title / description / priority / tags)
+  - 「创建」按钮改「导入」按钮(type=button + onClick,不走 form submit)
+- 「导入模式」点击 → parent(SkyAxisPage)调 `controller.importRequirement` → 成功后关闭 modal + 跳详情页
+
+**i18n** ([`src/client/locales.ts`](src/client/locales.ts)):
+
+- 新增 zh + en 文案:导入模式标题、检测 banner、帮助说明、按钮文案、错误码翻译
+
+### 行为变化
+
+**老用户视角(0.1.1)**:
+- DSH 工作区 A 创建需求 R1 → 一切正常
+- DSH 删 A → sky-axis 数据保留(Plan H 行为)
+- DSH 在同路径创建工作区 B(uuid-B ≠ uuid-A)
+- 用户进 sky-axis 点「+ 新建需求」→ 看到一个干净的弹窗,能填表,提交 → **创建第二条需求 R2**(workspaceId=B),R1 留在 mate.yaml 里成孤儿
+
+**新用户视角(0.1.2 + Plan I)**:
+- 同上前 4 步
+- 用户进 sky-axis 点「+ 新建需求」→ **弹窗顶部黄色 banner**:
+  > 此工作区已有需求「R1」(创建于 2026-09-08T03:21:00Z)。是否导入?
+  - 表单字段全 disabled
+  - 按钮文案「创建」→「导入」
+- 用户点「导入」→ 改写 R1.workspaceId=B + updatedAt 刷新,R1 的 PRD/附件/源码仓库/产物/AI 状态/branch 全部保留
+- 弹窗关闭,自动跳 R1 详情页 → 用户继续正常工作
+
+### 数据迁移
+
+**无需迁移**。Plan I 不动旧数据:
+- 老 1:1 不变量下产生的「同 uuid 占位」需求自然兼容(Plan H 已经把 uuid 解耦了)
+- 老「DSH 删 + 重建」产生的孤儿需求(path 已占位)→ 用户主动走 import 流程认领
+- 极端情况:同一 path 已存在 ≥ 2 个需求(强约束被破坏,Plan H 之前的脏数据) → `importRequirement` 抛 `invalid-record`,UI 提示「数据异常,请联系管理员清理」(后续可加 UI 引导人工 del 一条)
+
+### caller 影响
+
+**外部 caller**: 无 —— error code 是新增,旧有 code 没改名;`RequirementSchema.workspaceId` 注释放宽(从「immutable」→「可变」),但 zod schema 没改,旧客户端可以正常读写。
+
+**内部 caller**:
+- `workspace-uniqueness.ts` 的 `findRequirementByWorkspace` 仍保留(给 `findDuplicateWorkspaceGroups` 诊断用),只是 `create()` 不再调它
+- `sky-axis-controller.ts#createRequirement` 失败时,新错误码 `requirement-already-exists-at-path` 自动透传到 `submitError`,无需 controller 层特殊处理
+
+### 单元测试变更
+
+- 新增 4 个 `RequirementClient.import` 测试用例:
+  1. 成功:返回 item + 路径是 `/import`
+  3. 客户端预校验失败:workspaceId 空串 → `validation-failed` 不发 fetch
+  4. 服务端抛 `requirement-not-found` → 透传 code(DSH 工作区路径上无 req)
+  5. 服务端抛 `invalid-record` → 透传 code(数据脏)
+- 新增 3 个 `findExistingRequirementAtPath` 测试用例:
+  1. path 上无 req(mate.yaml 不存在)→ 返回 undefined
+  2. path 上有 1 条 req → 返回该 req
+  3. path 上有 ≥ 2 条 req(强约束被破坏)→ 返回第一条(由 caller 报错 / 人工清理)
+- `protocol.test.ts`: `SKY_AXIS_ERROR_CODES` 计数 26 → 27,稳定集合新增 `requirement-already-exists-at-path`
+
+### 已知 follow-up(不在 §7 范围)
+
+- **批量化导入** —— 一次导入一个 path 的 req。后续如需支持「一个 DSH 工作区包含多个老 workspace 的需求」再加
+- **跨 path 迁移** —— 改 path 需要物理移动 `.sky-axis/` 目录,放后续
+- **DSH shell 级别的「自动 re-attach workspace」** —— DSH 重建时自动调 sky-axis import;目前 DSH 不知 sky-axis 存在,留接口扩展点
+- **UI 上的「老需求在新工作区下显示」角标(archived-orphaned)** —— Plan H follow-up #2 简化掉:Plan I 把"导入"做成主动动作,角标可后续简化
+
 ## 参考
 
 - 审计报告:[`tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md`](tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md)

@@ -20,6 +20,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   SkyAxisEndpoints,
   NewRequirementSchema,
+  ImportRequirementSchema,
   RequirementIdSchema,
   type ApiError,
   type SkyAxisErrorCode,
@@ -99,6 +100,8 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'yaml-lock-timeout':                return 503   // 锁占用,客户端可重试
     case 'yaml-write-failed':                return 500   // 写盘失败,系统级
     case 'migration-failed':                 return 500   // 启动期错误,不通过 API 返回,但保留 code 完整性
+    // ── Plan I:path-1:1 强绑定 ──
+    case 'requirement-already-exists-at-path': return 409 // path 上已有 req,客户端走 import 流程
   }
 }
 
@@ -192,6 +195,27 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
           const raw = await readJsonBody(req)
           const input = zodParseOrThrow(NewRequirementSchema, raw)
           const item = await service.create(input)
+          jsonResponse(res, 200, { ok: true, item })
+        } catch (error) {
+          translateError(res, error)
+        }
+      },
+    },
+
+    /* ── POST /requirements/import (Plan I) ── */
+    {
+      kind: 'exact',
+      path: SkyAxisEndpoints.requirementImport,
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
+          return
+        }
+        try {
+          const raw = await readJsonBody(req)
+          const input = zodParseOrThrow(ImportRequirementSchema, raw)
+          const workspacePath = await service.resolveWorkspacePath(input.workspaceId as Requirement['workspaceId'])
+          const item = await service.importRequirement(workspacePath, input.workspaceId as Requirement['workspaceId'])
           jsonResponse(res, 200, { ok: true, item })
         } catch (error) {
           translateError(res, error)

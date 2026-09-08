@@ -37,6 +37,8 @@ export const SkyAxisEndpoints = {
   requirementCreate: `${SKY_AXIS_API_PREFIX}/requirements/create`,
   /** 删除需求（DELETE ?id=xxx）。 */
   requirementDelete: `${SKY_AXIS_API_PREFIX}/requirements/delete`,
+  /** 导入已存在的需求（Plan I）：改写 owner workspaceId,数据全保留。 */
+  requirementImport: `${SKY_AXIS_API_PREFIX}/requirements/import`,
   /** SSE：DomainChanged 事件流（持久连接，client 用 EventSource）。 */
   requirementEvents: `${SKY_AXIS_API_PREFIX}/requirements/events`,
   /** 客户端拉取 workspace 元数据快照（sky-axis 专用 API,直接读 host 端缓存的 WorkspaceView,不直接代理 DSH workspaceController —— 避免 host 二次转发;客户端应优先用 useWorkspaces() hook）。 */
@@ -514,11 +516,26 @@ export const NewRequirementSchema = z.object({
 })
 export type NewRequirement = z.infer<typeof NewRequirementSchema>
 
+/* ── 入参：导入已存在的需求（Plan I）── */
+
+/**
+ * 导入已存在的需求请求体。**workspaceId 必填** —— caller 的当前 DSH workspace
+ * uuid;host 解析到 path 后,把该 path 上唯一 req 的 workspaceId 改成这个值。
+ *
+ * 用法：DSH 删 + 重建同路径工作区后,用户进入 sky-axis 选这个 workspace →
+ * 检测到 path 上已有 req → 弹"导入?"提示 → 调本接口。
+ */
+export const ImportRequirementSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+})
+export type ImportRequirement = z.infer<typeof ImportRequirementSchema>
+
 /* ── 存储实体 ── */
 
 /**
  * KV 存储的 requirement 记录。id/status/时间戳由 host 在 create 时填入；
- * workspaceId 创建后不可变（要换工作区 = 删了重建，避免产物目录归属混乱）。
+ * workspaceId 是当前 owning DSH uuid —— Plan I 起在 import 时可变（owner 切换,
+ * 场景：DSH 工作区删 + 重建同路径）。其他字段不变,材质/产物/prd 完整保留。
  *
  * 完美主义原则（Phase 2.1 Strategy C）：
  *   - **所有字段 required**（不 optional、不依赖 zod `.default()` 兜底业务逻辑）
@@ -757,6 +774,10 @@ export const SKY_AXIS_ERROR_CODES = [
   /** one-shot 数据迁移失败(storage domain → mate.yaml 过程中失败)。
    *  host 启动 console.error 列出 workspace path,允许 webServer 继续启动,用户手动处理。 */
   'migration-failed',
+  // ── Plan I 新增：path-1:1 强绑定 ──
+  /** 同一 workspace path 已有关联 requirement(Plan I 起 1:1 不变量改在 path 层)。
+   *  跨 DSH workspace 共享同一 path 上限 1 个 req;新建会被拒,提示走 import 流程。 */
+  'requirement-already-exists-at-path',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 

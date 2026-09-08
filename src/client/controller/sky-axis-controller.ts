@@ -382,6 +382,8 @@ export interface RequirementError {
     | 'yaml-lock-timeout'
     | 'yaml-write-failed'
     | 'migration-failed'
+    /* ── Plan I 新增（path-1:1 强绑定：path 上已有 req）── */
+    | 'requirement-already-exists-at-path'
   detail?: string
 }
 
@@ -443,6 +445,18 @@ export interface SkyAxisController {
     description?: string
     priority?: RequirementEntry['priority']
     tags?: string[]
+  }): Promise<{ ok: boolean; id?: string; error?: RequirementError }>
+
+  /** Plan I：把 path 上已有的 requirement 重新归属到当前 DSH workspace。
+   *
+   * 场景：DSH 工作区删除 + 重建同路径 —— sky-axis 数据保留,
+   * 仅切换 owner uuid。改写 req.workspaceId + updatedAt,其他字段不动。
+   *
+   * UI 应在弹窗阶段就检测 path 占用并引导 import,而不是直接调
+   * create 后接错误兜底 —— 这里只是兜底通道。
+   */
+  importRequirement(input: {
+    workspaceId: string
   }): Promise<{ ok: boolean; id?: string; error?: RequirementError }>
 
   /** 删除一条需求（host delete 路由）。成功后 SSE 推 deleted 事件。 */
@@ -544,6 +558,11 @@ export function createSkyAxisController(deps: {
     description?: string
     priority?: RequirementEntry['priority']
     tags?: string[]
+  }) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
+  /** Plan I：导入已有 requirement 的实现（注入 RequirementClient.import）。
+   *  仅传 workspaceId —— path 由 host 端 resolveWorkspacePath 推导。 */
+  importImpl?: (input: {
+    workspaceId: string
   }) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
   deleteImpl?: (id: string) => Promise<{ ok: boolean; error?: RequirementError }>
   /** Phase 1.2 增量：单条详情 GET（host /requirements/get?id=...）。 */
@@ -809,6 +828,38 @@ export function createSkyAxisController(deps: {
           return { ok: true, id: item.id }
         }
         // createImpl 返回失败：把错误写回 snapshot 让 UI 能展示（toast / inline）
+        const err = result.error ?? projectError('internal-error')
+        snapshot = { ...snapshot, requirementsError: err }
+        notify()
+        return { ok: false, error: err }
+      } catch (e) {
+        const err = projectError('network-error', e instanceof Error ? e.message : String(e))
+        snapshot = { ...snapshot, requirementsError: err }
+        notify()
+        return { ok: false, error: err }
+      }
+    },
+
+    async importRequirement(input) {
+      if (deps.importImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'importImpl not injected') }
+      }
+      try {
+        const result = await deps.importImpl(input)
+        if (result.ok && result.item !== undefined) {
+          // 乐观更新：把新归属的项放进列表（可能先前已存在 workspaceId=A 的副本,
+          // 现在 workspaceId=B 更新 —— 用 id 替换而不是过滤 workspaceId,
+          // 避免误删同时存在的 placeholder / 跨 workspace 历史 view）
+          const item = projectItem(result.item)
+          snapshot = {
+            ...snapshot,
+            requirements: [item, ...snapshot.requirements.filter(r => r.id !== item.id)],
+            requirementsError: null,
+          }
+          notify()
+          return { ok: true, id: item.id }
+        }
+        // importImpl 返回失败：把错误写回 snapshot 让 UI 能展示（toast / inline）
         const err = result.error ?? projectError('internal-error')
         snapshot = { ...snapshot, requirementsError: err }
         notify()

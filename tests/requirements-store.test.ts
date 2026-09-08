@@ -42,6 +42,7 @@ import {
 import {
   readAllRequirements,
   readRequirement,
+  findExistingRequirementAtPath,
   updateRequirements,
 } from '../src/host/requirements-store.ts'
 import { SkyAxisHostError } from '../src/host/requirement-service.ts'
@@ -174,6 +175,50 @@ describe('readRequirement', () => {
 
     const fetched = await readRequirement(workspaceRoot, req.id)
     expect(fetched?.title).toBe('hello')
+  })
+})
+
+/* ── findExistingRequirementAtPath (Plan I: 1:1 path-based 不变量用) ── */
+
+describe('findExistingRequirementAtPath', () => {
+  it('path 上无 req(mate.yaml 不存在)→ 返回 undefined', async () => {
+    const found = await findExistingRequirementAtPath(workspaceRoot)
+    expect(found).toBeUndefined()
+  })
+
+  it('path 上有 1 条 req → 返回该 req', async () => {
+    await initMeta()
+    const req = makeReq('2026-09-08T00:00:00.000Z-aaaa01' as RequirementId, {
+      title: 'only-one',
+    })
+    await updateRequirements(workspaceRoot, ({ current }) => ({
+      next: { ...current, [req.id]: req },
+      result: null,
+    }), { now: NOW })
+
+    const found = await findExistingRequirementAtPath(workspaceRoot)
+    expect(found?.id).toBe(req.id)
+    expect(found?.title).toBe('only-one')
+  })
+
+  it('path 上有 ≥2 条 req(强约束被破坏)→ 返回第一条(由 caller 报错 / 人工清理)', async () => {
+    // 模拟:Plan H 之前用户可能因 DSH uuid 轮换残留多 req;Plan I 改 path-based 后
+    //   后续 create() 拒绝。store 这一层只负责"返回任意一条",错误由 service 层抛。
+    await initMeta()
+    const req1 = makeReq('2026-09-08T00:00:00.000Z-aaaa01' as RequirementId, {
+      title: 'orphan-1',
+    })
+    const req2 = makeReq('2026-09-08T00:00:00.000Z-aaaa02' as RequirementId, {
+      title: 'orphan-2',
+    })
+    await updateRequirements(workspaceRoot, ({ current }) => ({
+      next: { ...current, [req1.id]: req1, [req2.id]: req2 },
+      result: null,
+    }), { now: NOW })
+
+    const found = await findExistingRequirementAtPath(workspaceRoot)
+    expect(found).toBeDefined()
+    expect(['orphan-1', 'orphan-2']).toContain(found?.title)
   })
 })
 

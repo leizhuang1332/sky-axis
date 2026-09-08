@@ -1,5 +1,16 @@
 /**
- * 「新建需求」弹窗 —— sidebar QuickActions「新建需求」按钮触发。
+ * 「新建需求 / 导入需求」弹窗 —— sidebar QuickActions「新建需求」按钮触发。
+ *
+ * 模式（Plan I）：
+ *   - **create（默认）**:新建需求,表单字段可编辑,提交按钮调 onSubmit
+ *   - **import（智能切换）**:检测到当前 workspace 的 path 已被占 → 顶部 banner
+ *     + 表单字段全 disabled,提交按钮文案改「导入」,调 onImport
+ *
+ * 触发 import 模式的两个条件：
+ *   1. **主动**:`takenByWorkspaceId.get(workspaceId)` 命中(同 uuid 已占)
+ *   2. **兜底**:submit 后 host 返 `requirement-already-exists-at-path` 错误码
+ *     (典型路径:DSH 工作区删 + 重建同路径,uuid 变了,takenByWorkspaceId
+ *      按 uuid 索引抓不到,但 host 端 path-based 1:1 检查会拦下)
  *
  * 表单字段（与 protocol.ts NewRequirementSchema 对齐）：
  *   - workspaceId: 必选（来自 ctx.workspaces 推送的 workspaces 列表）
@@ -44,19 +55,26 @@ export interface NewRequirementModalProps {
   defaultWorkspaceId?: string
   /** 已占用 workspaceId 集合（来自 controller.getRequirementByWorkspace 派生）。
    *  这些 workspace 在 select 中灰显、无法选中。
-   *  undefined 时按"无占用"处理（早期 mount / controller 还未注入）。 */
+   *  undefined 时按"无占用"处理（早期 mount / controller 还未注入）。
+   *  Plan I:也用于 import 模式主动检测 —— 命中即切模式。 */
   takenByWorkspaceId?: ReadonlyMap<string, RequirementEntry>
-  /** 最近一次失败错误（表单顶部展示错误条；成功时传 null）。 */
+  /** 最近一次失败错误（表单顶部展示错误条；成功时传 null）。
+   *  Plan I:错误码 `requirement-already-exists-at-path` 触发兜底 import 模式。 */
   submitError?: RequirementError | null
   /** 是否正在提交（submit 按钮显示 loading）。 */
   submitting: boolean
-  /** 用户点击提交。parent 调 controller.createRequirement。 */
+  /** 用户点击提交(创建模式)。parent 调 controller.createRequirement。 */
   onSubmit: (input: {
     workspaceId: string
     title: string
     description: string
     priority: Priority
     tags: string[]
+  }) => void
+  /** 用户点击「导入」按钮(导入模式)。parent 调 controller.importRequirement。
+   *  Plan I:仅传 workspaceId;host 端按 path 查找已有 req。 */
+  onImport?: (input: {
+    workspaceId: string
   }) => void
   /** 用户点击取消 / 关闭。 */
   onClose: () => void
@@ -85,7 +103,7 @@ function firstAvailable(
 }
 
 export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
-  const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, onSubmit, onClose } = props
+  const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, onSubmit, onImport, onClose } = props
   /* 0.1.2:从 Context 拿 WorkspaceOps —— Provider 没 mount 时 useWorkspaceOps() 会
    *   throw,直接连根组件都渲染不出来,所以这里不需要 `=== undefined` 守卫。 */
   const workspaceOps = useWorkspaceOps()
@@ -107,6 +125,9 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   const [creatingWorkspace, setCreatingWorkspace] = useState<boolean>(false)
   /** modal 本地的 workspace 创建错误 —— 不污染 props.submitError（后者仅承载创建需求的错误）。 */
   const [workspaceError, setWorkspaceError] = useState<RequirementError | null>(null)
+  /** Plan I:导入模式开关。一旦打开就保持 —— 用户在 import 模式下改不了 workspaceId,
+   *  表单全 disabled,只能点「导入」或「取消」。 */
+  const [importMode, setImportMode] = useState<boolean>(false)
 
   const titleRef = useRef<HTMLInputElement | null>(null)
   // 打开时聚焦第一个表单字段（workspace select）。Modal 抽象用 [role="dialog"] 标识。
@@ -116,11 +137,28 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
     firstFocusable?.focus()
   }, [])
 
+  // Plan I:主动检测 —— 选中 workspaceId 在 takenByWorkspaceId 中命中 → 切 import 模式
+  useEffect(() => {
+    if (workspaceId !== '' && taken.has(workspaceId)) {
+      setImportMode(true)
+    }
+  }, [workspaceId, taken])
+
+  // Plan I:兜底检测 —— host 返 `requirement-already-exists-at-path`(DSH uuid 变了,
+  //   path-1:1 拦下但 takenByWorkspaceId 按 uuid 索引抓不到) → 切 import 模式
+  useEffect(() => {
+    if (submitError?.code === 'requirement-already-exists-at-path') {
+      setImportMode(true)
+    }
+  }, [submitError])
+
   const noWorkspaces = workspaces.length === 0
   const titleInvalid = title.trim().length === 0 || title.length > 120
   // 当前选中 workspace 是否被占用 —— 防御性兜底（select 已 disabled，正常不会发生）
   const workspaceTaken = workspaceId !== '' && taken.has(workspaceId)
-  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace && !workspaceTaken
+  /** Plan I:import 模式下表单全 disabled（即便用户能切也改不动）。 */
+  const formDisabled = importMode
+  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace && !workspaceTaken && !formDisabled
 
   const handleTagsChange = (raw: string): void => {
     setTagsInput(raw)
@@ -136,6 +174,21 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
     if (!canSubmit) return
     onSubmit({ workspaceId, title: title.trim(), description: description.trim(), priority, tags: parsedTags })
   }
+
+  /**
+   * Plan I:导入模式下的 submit —— 调 onImport 让 parent 调 controller.importRequirement。
+   * form 不再走 form submit 事件,而是 button onClick 直接触发(避免和 create 模式
+   * 撞同一个 handleSubmit)。 */
+  const handleImport = (): void => {
+    if (!importMode) return
+    if (workspaceId === '') return
+    if (onImport === undefined) return
+    onImport({ workspaceId })
+  }
+
+  /** Plan I:import 模式下展示给用户的「已有需求」摘要(从 taken map 取,可能 undefined
+   *  —— 例如兜底模式下 submitError 触发,但 takenByWorkspaceId 没数据)。 */
+  const existingEntry = workspaceId !== '' ? taken.get(workspaceId) : undefined
 
   /**
    * 「+ 创建工作区」链接回调 —— 调 DSH 平台能力：
@@ -167,7 +220,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
 
   return (
     <Modal
-      title={t('requirement.new.title')}
+      title={importMode ? t('requirement.import.title') : t('requirement.new.title')}
       onClose={onClose}
       footer={
         <>
@@ -179,14 +232,28 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
           >
             {t('requirement.new.cancel')}
           </button>
-          <button
-            type="submit"
-            form="new-requirement-form"
-            className={css.submitButton}
-            disabled={!canSubmit}
-          >
-            {submitting ? t('requirement.new.submitting') : t('requirement.new.submit')}
-          </button>
+          {importMode
+            ? (
+              <button
+                type="button"
+                className={css.submitButton}
+                onClick={handleImport}
+                disabled={submitting || workspaceId === '' || onImport === undefined}
+                title={t('requirement.import.actionHint')}
+              >
+                {submitting ? t('requirement.import.submitting') : t('requirement.import.action')}
+              </button>
+            )
+            : (
+              <button
+                type="submit"
+                form="new-requirement-form"
+                className={css.submitButton}
+                disabled={!canSubmit}
+              >
+                {submitting ? t('requirement.new.submitting') : t('requirement.new.submit')}
+              </button>
+            )}
         </>
       }
     >
@@ -213,12 +280,28 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
           </div>
         )}
 
+        {/* Plan I:导入模式 banner —— 顶部蓝色条幅提示检测到 path 已占
+            (existingEntry 可能 undefined,例如兜底场景下 takenByWorkspaceId 没数据,
+            此时只显示「此 workspace 路径已有需求」的通用提示 + 导入按钮)。 */}
+        {importMode && (
+          <div className={css.warningBar} role="status">
+            {existingEntry !== undefined
+              ? t('requirement.import.detectedWithTitle', {
+                  title: existingEntry.title,
+                  createdAt: existingEntry.createdAt,
+                } as never)
+              : t('requirement.import.detected')}
+            <div className={css.importHelp}>{t('requirement.import.help')}</div>
+          </div>
+        )}
+
         <Field label={t('requirement.new.workspace')} hint={t('requirement.new.workspaceHint')}>
           <select
             className={css.select}
             value={workspaceId}
             onChange={(e) => { setWorkspaceId(e.target.value) }}
             required
+            disabled={formDisabled}
           >
             <option value="" disabled>— {t('requirement.new.workspacePlaceholder')} —</option>
             {workspaces.map(ws => {
@@ -239,7 +322,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             type="button"
             className={css.linkButton}
             onClick={() => { void handleCreateWorkspace() }}
-            disabled={creatingWorkspace}
+            disabled={creatingWorkspace || formDisabled}
             title={t('requirement.new.createWorkspaceHint')}
           >
             {creatingWorkspace
@@ -258,6 +341,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             onChange={(e) => { setTitle(e.target.value) }}
             placeholder={t('requirement.new.titlePlaceholder')}
             required
+            disabled={formDisabled}
           />
         </Field>
 
@@ -269,6 +353,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             rows={4}
             onChange={(e) => { setDescription(e.target.value) }}
             placeholder={t('requirement.new.descriptionPlaceholder')}
+            disabled={formDisabled}
           />
         </Field>
 
@@ -277,6 +362,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             className={css.select}
             value={priority}
             onChange={(e) => { setPriority(e.target.value as Priority) }}
+            disabled={formDisabled}
           >
             {PRIORITIES.map(p => (
               <option key={p} value={p}>{priorityLabel(t, p)}</option>
@@ -291,6 +377,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
             value={tagsInput}
             onChange={(e) => { handleTagsChange(e.target.value) }}
             placeholder={t('requirement.new.tagsPlaceholder')}
+            disabled={formDisabled}
           />
         </Field>
       </form>

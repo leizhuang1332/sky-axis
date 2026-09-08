@@ -239,6 +239,63 @@ describe('RequirementClient.create', () => {
   })
 })
 
+describe('RequirementClient.import (Plan I)', () => {
+  // import 入参只有 workspaceId —— ImportRequirementSchema 与 NewRequirementSchema 同形
+  // (都要求 workspaceId 非空),但路径不同,语义不同:create 是新建,import 是改 owner。
+  const IMPORT_INPUT = { workspaceId: WorkspaceIdSchema.parse('ws-1') }
+
+  it('成功：返回 item', async () => {
+    // 模拟 import 后 owner 已切换到新 uuid —— 服务端会回传新值。
+    const imported: Requirement = { ...SAMPLE, workspaceId: WorkspaceIdSchema.parse('ws-1') }
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: imported }))
+    const c = new RequirementClient()
+    const r = await c.import(IMPORT_INPUT)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.id).toBe(imported.id)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    // 关键:走的是 /import 路由,不是 /create
+    expect(url).toBe('/api/sky-axis/requirements/import')
+    expect(init.method).toBe('POST')
+    expect(init.headers).toEqual({ 'content-type': 'application/json' })
+    expect(init.credentials).toBe('same-origin')
+    expect(JSON.parse(init.body as string)).toEqual({ workspaceId: 'ws-1' })
+  })
+
+  it('客户端预校验失败：workspaceId 空串 → validation-failed 不发 fetch', async () => {
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: SAMPLE }))
+    const c = new RequirementClient()
+    // workspaceId 空串 → ImportRequirementSchema 拒绝(WorkspaceIdSchema 是 min(1))
+    const r = await c.import({ workspaceId: '' as never })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('validation-failed')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('服务端抛 requirement-not-found → 透传 code(DSH 工作区路径上无 req)', async () => {
+    // 极端场景:用户连点两次 import / 或并发竞争;host 端 importRequirement 检测到
+    //   path 上已无 req(被别的客户端刚删了)→ 抛 requirement-not-found。
+    mockFetchOnce(errJson('requirement-not-found', 'no requirement at path /foo'))
+    const c = new RequirementClient()
+    const r = await c.import(IMPORT_INPUT)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.code).toBe('requirement-not-found')
+      expect(r.detail).toContain('/foo')
+    }
+  })
+
+  it('服务端抛 invalid-record → 透传 code(数据脏:path 上 > 1 req)', async () => {
+    // 1:1 不变量被破坏时的兜底:host 抛 invalid-record,客户端照常透传给 UI
+    //   (UI 应展示「数据异常,请联系管理员清理」类错误)。
+    mockFetchOnce(errJson('invalid-record', 'path has 2 requirements; 1:1 invariant violated'))
+    const c = new RequirementClient()
+    const r = await c.import(IMPORT_INPUT)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('invalid-record')
+  })
+})
+
 describe('RequirementClient.remove', () => {
   it('成功：返回 { id }', async () => {
     const fetchMock = mockFetchOnce(okJson({ ok: true, id: SAMPLE.id }))

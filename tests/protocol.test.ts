@@ -92,8 +92,8 @@ describe('SkyAxisEndpoints 路径字面量', () => {
 })
 
 describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
-  it('正好包含 26 个错误码（Phase 2.5 material-not-found / Step 3 network-error / Phase 2.6 五项 git-* / Phase 2.6 v2 source-repo-duplicate / Phase 2.6 v2.1 git-clone-incomplete / 1:1 不变量 workspace-already-has-requirement / Sprint 4 artifact-sandbox-violation / Sprint 5 yaml-* & migration-failed）', () => {
-    expect(SKY_AXIS_ERROR_CODES).toHaveLength(26)
+  it('正好包含 27 个错误码（Phase 2.5 material-not-found / Step 3 network-error / Phase 2.6 五项 git-* / Phase 2.6 v2 source-repo-duplicate / Phase 2.6 v2.1 git-clone-incomplete / 1:1 不变量 workspace-already-has-requirement / Sprint 4 artifact-sandbox-violation / Sprint 5 yaml-* & migration-failed / Plan I path-1:1 requirement-already-exists-at-path）', () => {
+    expect(SKY_AXIS_ERROR_CODES).toHaveLength(27)
   })
 
   it('错误码集合稳定', () => {
@@ -114,6 +114,7 @@ describe('SKY_AXIS_ERROR_CODES 错误码联合', () => {
       'material-not-found',
       'migration-failed',
       'network-error',
+      'requirement-already-exists-at-path',
       'requirement-not-found',
       'source-repo-duplicate',
       'stage-invalid',

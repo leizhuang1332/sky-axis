@@ -101,6 +101,25 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
     })
   }, [controller])
 
+  /** Plan I:导入模式 submit —— modal 在 import 模式下调用,触发 controller.importRequirement。
+   *  成功后跳详情页(与 create 成功后行为对齐);失败把错误暴露给 modal 顶部。 */
+  const handleImport = useCallback((input: {
+    workspaceId: string
+  }): void => {
+    setSubmitting(true)
+    setSubmitError(null)
+    void controller.importRequirement(input).then((result) => {
+      setSubmitting(false)
+      if (result.ok && result.id !== undefined) {
+        // 导入成功 → 关闭 modal + 打开详情页(让用户看到刚导入的需求)
+        setModalOpen(false)
+        controller.openDetail(result.id)
+      } else {
+        setSubmitError(result.error ?? null)
+      }
+    })
+  }, [controller])
+
   const handleDelete = useCallback((id: string): void => {
     void controller.deleteRequirement(id)
   }, [controller])
@@ -260,6 +279,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
           submitError={submitError}
           submitting={submitting}
           onSubmit={handleSubmit}
+          onImport={handleImport}
           onClose={closeModal}
         />
       )}
