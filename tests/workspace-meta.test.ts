@@ -137,13 +137,14 @@ describe('ensureMeta', () => {
   it('首次调用：写默认值，firstInstalledAt == lastTouchedAt == now', async () => {
     const meta = await ensureMeta(workspaceRoot, makeOpts())
     expect(meta).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       workspace: { id: WORKSPACE_ID, title: 'Test Workspace', path: workspaceRoot },
       skyAxis: {
         version: SKY_AXIS_VERSION,
         firstInstalledAt: NOW,
         lastTouchedAt: NOW,
       },
+      requirements: {},
     })
     // 文件确实写到磁盘了
     await expect(access(_metaPath(workspaceRoot))).resolves.toBeUndefined()
@@ -159,6 +160,23 @@ describe('ensureMeta', () => {
     expect(second.skyAxis.firstInstalledAt).toBe(NOW)
     expect(second.skyAxis.lastTouchedAt).toBe(LATER)
     expect(second.workspace.id).toBe(WORKSPACE_ID)
+  })
+
+  it('v1 现有 mate.yaml → ensureMeta 升级到 v2，requirements 段初始化空 record', async () => {
+    // 先写一个 v1 mate.yaml
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 1,
+      workspace: { id: WORKSPACE_ID, title: 'Old Title', path: workspaceRoot },
+      skyAxis: { version: '0.0.1', firstInstalledAt: NOW, lastTouchedAt: NOW },
+    }), 'utf8')
+
+    const meta = await ensureMeta(workspaceRoot, makeOpts())
+    expect(meta.schemaVersion).toBe(2)
+    expect(meta.workspace.title).toBe('Test Workspace')  // 跟随最新 caller
+    expect(meta.skyAxis.firstInstalledAt).toBe(NOW)       // 保留 v1 字段
+    expect(meta.requirements).toEqual({})
   })
 
   it('cross-check fail：现有 mate.yaml 的 workspacePath 与 caller 不一致 → throws cross-check-failed', async () => {
@@ -239,13 +257,15 @@ describe('defaultWorkspaceMeta 工厂', () => {
       skyAxisVersion: '0.2.0',
       now: NOW,
     })
-    expect(meta.schemaVersion).toBe(1)
+    expect(meta.schemaVersion).toBe(2)
     expect(meta.workspace).toEqual({ id: WORKSPACE_ID, title: 'X', path: '/tmp/x' })
     expect(meta.skyAxis).toEqual({
       version: '0.2.0',
       firstInstalledAt: NOW,
       lastTouchedAt: NOW,
     })
+    // v2 新增:空 requirements record
+    expect(meta.requirements).toEqual({})
   })
 
   it('写出的 firstInstalledAt == lastTouchedAt == now', () => {
@@ -264,5 +284,84 @@ describe('defaultWorkspaceMeta 工厂', () => {
 describe('常量边界', () => {
   it('SKY_AXIS_META_FILENAME == "mate.yaml"', () => {
     expect(SKY_AXIS_META_FILENAME).toBe('mate.yaml')
+  })
+})
+
+/* ==== Sprint 5: v2 schema + requirements 段 ==== */
+
+describe('readMeta v2 schema', () => {
+  it('v2 文件 + 含 requirements 段 → 解析成功并保留内容', async () => {
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 2,
+      workspace: { id: 'ws-x', title: 't', path: workspaceRoot },
+      skyAxis: { version: '0.1.0', firstInstalledAt: NOW, lastTouchedAt: NOW },
+      requirements: {
+        '2026-09-08T00:00:00.000Z-aaaa01': {
+          id: '2026-09-08T00:00:00.000Z-aaaa01',
+          workspaceId: 'ws-x',
+          title: 'demo',
+          description: '',
+          priority: 'normal',
+          status: 'open',
+          tags: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          stage: 'understand',
+          stageHistory: [],
+          aiState: 'idle',
+          aiSessionId: null,
+          aiLastActivityAt: null,
+          interventionQueue: [],
+          artifacts: {},
+          branch: null,
+          materials: {
+            prdFiles: [], prdLinks: [], sourceRepos: [],
+            designLinks: [], attachments: [], externalLinks: [],
+          },
+        },
+      },
+    }), 'utf8')
+
+    const meta = await readMeta(workspaceRoot)
+    expect(meta.schemaVersion).toBe(2)
+    if (meta.schemaVersion === 2) {
+      expect(Object.keys(meta.requirements)).toHaveLength(1)
+      expect(meta.requirements['2026-09-08T00:00:00.000Z-aaaa01'].title).toBe('demo')
+    } else {
+      throw new Error('expected schemaVersion=2')
+    }
+  })
+
+  it('v1 文件 + 无 requirements 段 → 解析成功（union v1 分支）', async () => {
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 1,
+      workspace: { id: 'ws-x', title: 't', path: workspaceRoot },
+      skyAxis: { version: '0.0.1', firstInstalledAt: NOW, lastTouchedAt: NOW },
+    }), 'utf8')
+
+    const meta = await readMeta(workspaceRoot)
+    expect(meta.schemaVersion).toBe(1)
+  })
+
+  it('v2 文件 + requirements 段缺字段 → throws invalid', async () => {
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    // requirements 段里塞非法 record（缺 workspaceId）
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 2,
+      workspace: { id: 'ws-x', title: 't', path: workspaceRoot },
+      skyAxis: { version: '0.1.0', firstInstalledAt: NOW, lastTouchedAt: NOW },
+      requirements: {
+        'bad-id': { id: 'bad-id', title: 'x' /* 缺其他 required 字段 */ },
+      },
+    }), 'utf8')
+
+    await expect(readMeta(workspaceRoot)).rejects.toMatchObject({
+      code: 'invalid',
+    })
   })
 })

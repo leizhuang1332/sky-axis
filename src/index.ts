@@ -41,6 +41,8 @@ import {
 } from './host/workspace-meta.ts'
 import { ensureInputsLayout } from './host/requirement-service.ts'
 import { skyAxisRequest } from './host/rpc-helper.ts'
+import { createFsWatcherManager, type FsWatcherManager } from './host/fs-watcher-manager.ts'
+import { migrateLegacyRequirements } from './host/migration/requirement-migration.ts'
 import {
   SkyAxisEndpoints,
   type PingResponse,
@@ -95,14 +97,19 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   // eslint-disable-next-line no-console
   console.info('[sky-axis] host apply: pid=' + process.pid + ' ready (Phase 2.5 + safety-net)')
 
-  // 业务服务：构造时启动 storage domain 异步初始化，effect 退出时关闭
-  const reqSvc = new RequirementHostService(ctx, ctx.apiProxy, ctx.storageDomain)
+  // 业务服务：Sprint 5 起不再依赖 storage domain,数据走 `<workspace>/.sky-axis/mate.yaml`
+  const reqSvc = new RequirementHostService(ctx, ctx.apiProxy)
   const requirementRoutes = makeRequirementRoutes(reqSvc)
   // Phase 2.5：物料 CRUD 路由（18 个 exact route，6 section × 3 op）
   const materialRoutes = makeMaterialRoutes(reqSvc)
   // Sprint 4：artifact 落盘路由（5 个 exact route，1 op × 5 kind）
   //   - 默认不写：当前 client / controller 未接入,等价于不可达
   const artifactRoutes = makeArtifactRoutes(reqSvc)
+
+  // Sprint 5：fs-watch 监听所有 workspace 的 `.sky-axis/mate.yaml` 变更。
+  // - 单 manager 跨多个 workspace(去重)
+  // - effect disposer 时 stopAll
+  const watcherMgr: FsWatcherManager = createFsWatcherManager()
 
   ctx.effect(() => {
     const disposers: (() => void)[] = [
@@ -177,6 +184,11 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
     //   - 失败分两类：
     //       a) `missing` 之外（invalid / cross-check-failed / io-failed）→ 提示用户手动修
     //       b) workspace-list 自身失败 → 跳过本轮,下次启动再试
+    //
+    // Sprint 5 接线:ensureMeta 成功后:
+    //   1. fs-watcher-manager.watch 该 workspace,onChange 桥接到 reqSvc.onWorkspaceMateYamlChanged
+    //   2. migration:把 storage domain 残留记录搬到 mate.yaml(只跑一次)
+    //   3. refresh snapshots:让 fs.watch diff 有 baseline
     void (async (): Promise<void> => {
       const response = await ctx.apiProxy.workspace.list(skyAxisRequest({}))
       if (!response.result.ok) {
@@ -188,6 +200,7 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
         return
       }
       const now = new Date().toISOString()
+      const bootstrappedPaths: string[] = []
       let succeeded = 0
       let failed = 0
       for (const item of response.result.value.items) {
@@ -201,6 +214,7 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
           })
           // Sprint 3：mkdir inputs/{prd,attachment} —— 复用用户已有目录(决策 3)
           await ensureInputsLayout(item.path)
+          bootstrappedPaths.push(item.path)
           succeeded += 1
         } catch (e) {
           failed += 1
@@ -218,6 +232,63 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
           `[sky-axis] workspace bootstrap: succeeded=${succeeded} failed=${failed} ` +
           `(mate.yaml + inputs/)`,
         )
+      }
+
+      // 2. fs-watcher-manager:对每个 bootstrapped workspace 监听 mate.yaml
+      //    onChange 桥接到 reqSvc 触发 diff emit;created/modified/deleted/reconnected 都处理
+      const watchDisposers: (() => void)[] = []
+      for (const wsPath of bootstrappedPaths) {
+        const unsub = watcherMgr.watch(wsPath, {
+          onChange: (event) => {
+            if (event.kind === 'modified') {
+              // 外部(非 sky-axis)修改了 mate.yaml → diff 同步 emit
+              void reqSvc.onWorkspaceMateYamlChanged(wsPath).catch(e => {
+                // eslint-disable-next-line no-console
+                console.warn(`[sky-axis] fs.watch diff(${wsPath}) failed:`, e)
+              })
+            } else if (event.kind === 'deleted') {
+              // .sky-axis/ 目录被 rm -rf → 视为该 workspace 全部 requirement 消失
+              reqSvc.onWorkspaceMetaDeleted(wsPath)
+            }
+            // created / reconnected 不需要 emit(空 section / 已经同步)
+          },
+          onError: (err) => {
+            // eslint-disable-next-line no-console
+            console.warn(`[sky-axis] fs-watcher error for ${wsPath}:`, err)
+          },
+        })
+        watchDisposers.push(unsub)
+      }
+      // 把 watch disposers 收进 disposers(让 effect disposer 清理)
+      disposers.push(() => {
+        for (const d of watchDisposers) d()
+        watcherMgr.stopAll()
+      })
+
+      // 3. migration:storage domain → mate.yaml 一次性搬迁
+      try {
+        const mig = await migrateLegacyRequirements(ctx, reqSvc)
+        if (mig.migrated > 0 || mig.failed > 0 || mig.duplicates > 0 || mig.skipped !== '') {
+          // eslint-disable-next-line no-console
+          console.info(
+            `[sky-axis] legacy migration: migrated=${mig.migrated} ` +
+            `failed=${mig.failed} duplicates=${mig.duplicates} ` +
+            `remainingInStorage=${mig.remainingInStorage}` +
+            (mig.skipped !== '' ? ` skipped=${mig.skipped}` : ''),
+          )
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[sky-axis] legacy migration aborted:', e)
+      }
+
+      // 4. refresh per-workspace snapshot —— 让 fs.watch 首次 diff 有 baseline
+      //    (本进程自写入的 req 不被误判为外部修改)
+      try {
+        await reqSvc.refreshRequirementSnapshots()
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[sky-axis] refreshRequirementSnapshots failed:', e)
       }
     })()
 

@@ -6,6 +6,8 @@
  *     - schemaVersion：未来 schema 演进时 +1
  *     - workspace.{id, title, path}：冗余存储，便于离线校验
  *     - skyAxis.{version, firstInstalledAt, lastTouchedAt}：sky-axis 元信息
+ *     - requirements：Sprint 5 引入，记录当前 workspace 的全部需求数据
+ *       （YAML-as-SoT；从此 sky-axis 不再依赖 storage domain 持久化需求）
  *   - 启动期 ensureMeta()：不存在 → 写默认值；存在 → 刷新 lastTouchedAt；
  *     损坏 → 抛 WorkspaceMetaError（让 UI / 启动日志提示用户，不静默修复）
  *
@@ -19,6 +21,13 @@
  *     workspacePath；不一致 → 抛 `cross-check-failed`（workspace 被外部移动
  *     后元数据会误导，必须人工介入）
  *
+ * Sprint 5 演进（YAML-as-SoT）：
+ *   - schemaVersion 1 → 2；保留 v1 兼容（`z.discriminatedUnion`）
+ *   - v2 新增 `requirements: Record<RequirementId, Requirement>` 段
+ *   - ensureMeta 命中 v1 → 升级到 v2（requirements: {} 空 record）
+ *     （Sprint 6 migrate-once 负责把 storage domain 旧数据搬进来）
+ *   - readMeta 返回 v1 | v2 union type（caller 用 schemaVersion 判定）
+ *
  * 与 git-service / requirement-service 的关系：
  *   - 与 `SKY_AXIS_REPOS_DIR` (`'repos'`)：本模块管 `.sky-axis/mate.yaml`，独立
  *   - 与 `SKY_AXIS_ARTIFACT_NAMESPACE` (`.sky-axis`)：本模块存放位置在同一个
@@ -29,13 +38,18 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import YAML from 'yaml'
-import type { WorkspaceId } from '../protocol.ts'
+import { RequirementIdSchema, RequirementSchema, type WorkspaceId } from '../protocol.ts'
 
 /** mate.yaml 文件名。 */
 export const SKY_AXIS_META_FILENAME = 'mate.yaml'
 
-/** 当前 schema 版本。Sprint 2 起始 = 1；后续 schema 演进时 +1 + 写迁移指南。 */
-export const SKY_AXIS_META_SCHEMA_VERSION = 1 as const
+/**
+ * 当前 schema 版本。
+ *   - Sprint 2 起始 = 1（仅 workspace + skyAxis 段，无 requirements）
+ *   - Sprint 5 = 2（新增 requirements 段,YAML-as-SoT）
+ *   - 后续 schema 演进时 +1 + 写迁移指南。
+ */
+export const SKY_AXIS_META_SCHEMA_VERSION = 2 as const
 
 /** mate.yaml 所在目录的相对路径（仅本模块使用，与 SKY_AXIS_REPOS_DIR 独立）。 */
 const SKY_AXIS_META_DIR = '.sky-axis'
@@ -56,24 +70,50 @@ const SkyAxisSectionSchema = z.object({
   lastTouchedAt:   z.string().datetime(),
 })
 
-/** 完整 mate.yaml schema。schemaVersion 用 literal 锁住，避免外部瞎改。 */
-export const WorkspaceMetaSchema = z.object({
-  schemaVersion: z.literal(SKY_AXIS_META_SCHEMA_VERSION),
+/** v2 新增：requirements 段 —— key = RequirementId, value = Requirement 实体。 */
+const RequirementsSectionSchema = z.record(RequirementIdSchema, RequirementSchema)
+export type RequirementsSection = z.infer<typeof RequirementsSectionSchema>
+
+/** v1 legacy schema —— 只 workspace + skyAxis,无 requirements 段。 */
+const WorkspaceMetaV1Schema = z.object({
+  schemaVersion: z.literal(1),
   workspace:     WorkspaceSectionSchema,
   skyAxis:       SkyAxisSectionSchema,
 })
 
-/** mate.yaml 反序列化后的完整对象。 */
+/** v2 current schema —— workspace + skyAxis + requirements 段。 */
+const WorkspaceMetaV2Schema = z.object({
+  schemaVersion: z.literal(SKY_AXIS_META_SCHEMA_VERSION),
+  workspace:     WorkspaceSectionSchema,
+  skyAxis:       SkyAxisSectionSchema,
+  requirements:  RequirementsSectionSchema,
+})
+
+/**
+ * 完整 mate.yaml schema —— 用 discriminatedUnion 接受 v1 + v2。
+ *   - v1 是历史遗留,readMeta 仍可读;ensureMeta 命中 v1 会升级到 v2
+ *   - 任何未注册 schemaVersion → throw 'invalid'(fail loud)
+ *   - requirements 段缺字段(zod parse fail) → throw 'invalid'
+ */
+export const WorkspaceMetaSchema = z.discriminatedUnion('schemaVersion', [
+  WorkspaceMetaV1Schema,
+  WorkspaceMetaV2Schema,
+])
+
+/** mate.yaml 反序列化后的完整对象（v1 | v2 union）。 */
 export type WorkspaceMeta = z.infer<typeof WorkspaceMetaSchema>
 
-/** 构造默认 mate.yaml 对象（host ensureMeta 工厂用）。 */
+/** v2 形态：caller 拿到 meta 后用 schemaVersion 收窄。 */
+export type WorkspaceMetaV2 = z.infer<typeof WorkspaceMetaV2Schema>
+
+/** 构造默认 mate.yaml 对象（host ensureMeta 工厂用,输出 v2 形态）。 */
 export function defaultWorkspaceMeta(opts: {
   workspaceId:    WorkspaceId
   workspaceTitle: string
   workspacePath:  string
   skyAxisVersion: string
   now:            string
-}): WorkspaceMeta {
+}): WorkspaceMetaV2 {
   return {
     schemaVersion: SKY_AXIS_META_SCHEMA_VERSION,
     workspace: {
@@ -86,6 +126,7 @@ export function defaultWorkspaceMeta(opts: {
       firstInstalledAt: opts.now,
       lastTouchedAt:   opts.now,
     },
+    requirements: {},
   }
 }
 
@@ -109,7 +150,12 @@ function metaPath(workspacePath: string): string {
   return join(workspacePath, SKY_AXIS_META_DIR, SKY_AXIS_META_FILENAME)
 }
 
-/** 原子写 mate.yaml：`.tmp + rename`（与 writeMaterialFile 同源）。 */
+/**
+ * 原子写 mate.yaml：`.tmp + rename`（与 writeMaterialFile 同源）。
+ *   - mode 0o600,父目录 0o700
+ *   - 接受任意 WorkspaceMeta 形态(v1 / v2);本模块只写入 v2,但 v1→v2
+ *     升级期间 caller 可以从 readMeta 拿到 v1 后再传回来(防御性兼容)
+ */
 async function writeMetaAtomic(workspacePath: string, meta: WorkspaceMeta): Promise<void> {
   const target = metaPath(workspacePath)
   const tmp = `${target}.tmp`
@@ -117,6 +163,24 @@ async function writeMetaAtomic(workspacePath: string, meta: WorkspaceMeta): Prom
   await mkdir(dirname(target), { recursive: true, mode: 0o700 })
   await writeFile(tmp, yaml, { mode: 0o600 })
   await rename(tmp, target)
+}
+
+/**
+ * 把任意 v1/v2 WorkspaceMeta 升级到 v2。
+ *   - v1 → 升级:requirements: {}
+ *   - v2 → 直接返回
+ * 不会写入磁盘;caller 自己决定何时 writeMetaAtomic。
+ */
+export function upgradeMetaToV2(meta: WorkspaceMeta): WorkspaceMetaV2 {
+  if (meta.schemaVersion === SKY_AXIS_META_SCHEMA_VERSION) {
+    return meta
+  }
+  return {
+    schemaVersion: SKY_AXIS_META_SCHEMA_VERSION,
+    workspace: meta.workspace,
+    skyAxis: meta.skyAxis,
+    requirements: {},
+  }
 }
 
 /* ── public API ── */
@@ -162,6 +226,86 @@ export async function readMeta(workspacePath: string): Promise<WorkspaceMeta> {
 }
 
 /**
+ * 读取 mate.yaml 的 `requirements` 段。v1 / v2 都支持 —— v1 自动视为空 record。
+ *
+ * 错误：
+ *   - 文件损坏(YAML parse / schema mismatch)→ 抛 `WorkspaceMetaError('invalid')`
+ *     —— caller（一般是 requirements-store）应包成 `SkyAxisHostError('yaml-parse-failed')`
+ *   - 文件不存在 → 视为空 record(Sprint 6 migration 在写入 requirements 段前应
+ *     走 ensureMeta 初始化 mate.yaml;但 requirements-store 单独调用本函数时若
+ *     meta 缺失也应返回空而不是抛错,便于只读场景降级)
+ *
+ * @throws WorkspaceMetaError
+ */
+export async function readRequirementsSection(
+  workspacePath: string,
+): Promise<RequirementsSection> {
+  let meta: WorkspaceMeta
+  try {
+    meta = await readMeta(workspacePath)
+  } catch (e) {
+    if (e instanceof WorkspaceMetaError && e.code === 'missing') {
+      return {}
+    }
+    throw e
+  }
+  return upgradeMetaToV2(meta).requirements
+}
+
+/**
+ * 替换 mate.yaml 的 `requirements` 段 + 刷新 lastTouchedAt。
+ *
+ * **不**取文件锁 — 由 caller（requirements-store）通过 fs-lock.withFileLock
+ * 包住 read-modify-write 整段;本函数只做「在已有 meta 上下文里改 requirements
+ * 段并原子写」。
+ *
+ * 错误：
+ *   - 文件不存在 → 抛 `WorkspaceMetaError('io-failed', ...)`（caller 应先用
+ *     ensureMeta 初始化 mate.yaml）
+ *   - 文件损坏 / 读 IO 错 → 透传 WorkspaceMetaError,caller 包成 yaml-* 错
+ *   - atomic write 失败 → 抛 `WorkspaceMetaError('io-failed', ...)`
+ *
+ * @throws WorkspaceMetaError
+ */
+export async function writeRequirementsSection(
+  workspacePath: string,
+  section: RequirementsSection,
+  opts: { now: string },
+): Promise<void> {
+  let existing: WorkspaceMeta
+  try {
+    existing = await readMeta(workspacePath)
+  } catch (e) {
+    if (e instanceof WorkspaceMetaError && e.code === 'missing') {
+      throw new WorkspaceMetaError(
+        'io-failed',
+        `mate.yaml missing for ${workspacePath}; call ensureMeta() before writeRequirementsSection()`,
+      )
+    }
+    throw e
+  }
+
+  const upgraded = upgradeMetaToV2(existing)
+  const newMeta: WorkspaceMetaV2 = {
+    schemaVersion: SKY_AXIS_META_SCHEMA_VERSION,
+    workspace:     upgraded.workspace,
+    skyAxis: {
+      ...upgraded.skyAxis,
+      lastTouchedAt: opts.now,
+    },
+    requirements:  section,
+  }
+
+  // 用包内私有 writeMetaAtomic 做 .tmp + rename(mode 0o600)
+  const target = metaPath(workspacePath)
+  const tmp = `${target}.tmp`
+  const yaml = YAML.stringify(newMeta, { lineWidth: 0, indent: 2 })
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+  await writeFile(tmp, yaml, { mode: 0o600 })
+  await rename(tmp, target)
+}
+
+/**
  * 确保 mate.yaml 存在且 valid；不存在 → 写默认值，存在 → 刷新 lastTouchedAt。
  *
  * cross-check（fail loud）：
@@ -169,6 +313,11 @@ export async function readMeta(workspacePath: string): Promise<WorkspaceMeta> {
  *   - workspace.id 也必须等于传入的 workspaceId
  *   - 任一不一致 → 抛 `cross-check-failed`（workspace 被外部移动 / ID 改了的
  *     异常态；调用方应让用户手动修，不静默覆盖）
+ *
+ * Sprint 5 增量（YAML-as-SoT）：
+ *   - 命中 v1 → 升级到 v2 + requirements: {}（Sprint 6 migration 负责把
+ *     storage domain 旧数据 dump 进 requirements 段）
+ *   - 命中 v2 → 保留 requirements 内容,只刷元字段
  *
  * 注意：本函数写入是 best-effort，cross-check 在写入前完成。
  *
@@ -179,7 +328,7 @@ export async function ensureMeta(workspacePath: string, opts: {
   workspaceTitle: string
   skyAxisVersion: string
   now:            string
-}): Promise<WorkspaceMeta> {
+}): Promise<WorkspaceMetaV2> {
   let existing: WorkspaceMeta | undefined
   try {
     existing = await readMeta(workspacePath)
@@ -188,7 +337,7 @@ export async function ensureMeta(workspacePath: string, opts: {
     if (!(e instanceof WorkspaceMetaError) || e.code !== 'missing') throw e
   }
 
-  let meta: WorkspaceMeta
+  let meta: WorkspaceMetaV2
   if (existing === undefined) {
     meta = defaultWorkspaceMeta({
       workspaceId:    opts.workspaceId,
@@ -214,18 +363,21 @@ export async function ensureMeta(workspacePath: string, opts: {
       )
     }
     // 保留 firstInstalledAt；刷新 lastTouchedAt；title / version 跟随最新 caller 输入
+    // Sprint 5：v1 → v2 升级(requirements 段初始化空 record)
+    const upgraded = upgradeMetaToV2(existing)
     meta = {
-      schemaVersion: existing.schemaVersion,
+      schemaVersion: upgraded.schemaVersion,
       workspace: {
-        id:    existing.workspace.id,
+        id:    upgraded.workspace.id,
         title: opts.workspaceTitle,
         path:  workspacePath,
       },
       skyAxis: {
         version:         opts.skyAxisVersion,
-        firstInstalledAt: existing.skyAxis.firstInstalledAt,
+        firstInstalledAt: upgraded.skyAxis.firstInstalledAt,
         lastTouchedAt:   opts.now,
       },
+      requirements: upgraded.requirements,
     }
   }
 

@@ -94,6 +94,11 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'workspace-already-has-requirement': return 409  // workspace 已占位
     // ── Sprint 4：artifact 沙箱 ──
     case 'artifact-sandbox-violation':       return 403   // 与 git-sandbox-violation 同语义
+    // ── Sprint 5：YAML-as-SoT ──
+    case 'yaml-parse-failed':                return 500   // 数据损坏,后端 bug
+    case 'yaml-lock-timeout':                return 503   // 锁占用,客户端可重试
+    case 'yaml-write-failed':                return 500   // 写盘失败,系统级
+    case 'migration-failed':                 return 500   // 启动期错误,不通过 API 返回,但保留 code 完整性
   }
 }
 

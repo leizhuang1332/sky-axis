@@ -377,6 +377,11 @@ export interface RequirementError {
     | 'workspace-already-has-requirement'
     /* ── Sprint 4 新增（artifact 落盘沙箱）── */
     | 'artifact-sandbox-violation'
+    /* ── Sprint 5 新增（YAML-as-SoT：需求数据搬到 mate.yaml）── */
+    | 'yaml-parse-failed'
+    | 'yaml-lock-timeout'
+    | 'yaml-write-failed'
+    | 'migration-failed'
   detail?: string
 }
 

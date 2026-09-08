@@ -748,6 +748,16 @@ export const SKY_AXIS_ERROR_CODES = [
   /** artifact 落盘路径逃逸 `${workspacePath}/outputs/`（路径穿越防护触发）。
    *  与 `git-sandbox-violation` 同语义不同来源 —— 各自独立的路径沙箱。 */
   'artifact-sandbox-violation',
+  // ── Sprint 5 新增：YAML-as-SoT(需求数据搬到 mate.yaml) ──
+  /** mate.yaml YAML 解析失败 / zod schema 不匹配 —— 通常是外部工具改坏了文件。 */
+  'yaml-parse-failed',
+  /** flock(.lock)获取失败 / 超时(默认 5s) —— 锁被占,客户端可重试。 */
+  'yaml-lock-timeout',
+  /** atomic write(rename .tmp)失败 —— 通常是磁盘满 / 权限错。 */
+  'yaml-write-failed',
+  /** one-shot 数据迁移失败(storage domain → mate.yaml 过程中失败)。
+   *  host 启动 console.error 列出 workspace path,允许 webServer 继续启动,用户手动处理。 */
+  'migration-failed',
 ] as const
 export type SkyAxisErrorCode = typeof SKY_AXIS_ERROR_CODES[number]
 
