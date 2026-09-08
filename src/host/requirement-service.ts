@@ -64,11 +64,21 @@ import {
   findDuplicateWorkspaceGroups,
 } from './workspace-uniqueness.ts'
 import type { RequirementsSection } from './workspace-meta.ts'
+import { ensureMeta, WorkspaceMetaError } from './workspace-meta.ts'
 import {
   readAllRequirements,
   readRequirement as readRequirementFromStore,
   updateRequirements,
 } from './requirements-store.ts'
+
+/**
+ * sky-axis 插件自报版本(写入 `.sky-axis/mate.yaml` 的 skyAxis.version)。
+ *
+ * 与 `src/index.ts` 的 `SKY_AXIS_PLUGIN_VERSION` / `package.json` 的 `version`
+ * 同步;后续若要做自动化注入(vite define / tsdown banner),统一改这一处。
+ * 服务层 lazy bootstrap 也复用,避免 import 循环。
+ */
+const SKY_AXIS_PLUGIN_VERSION = '0.1.0'
 
 /**
  * sky-axis 物料文件落盘的顶层目录(与 git-service 的 SKY_AXIS_REPOS_DIR 同源):
@@ -1217,13 +1227,26 @@ export class RequirementHostService {
    * Public(Stage 6):migration helper 需要外部把 storage domain 残留 record
    * 搬到对应 workspace,无 service 内部方法能跨 workspace 解析 path —— 这里暴露。
    *
+   * **Lazy bootstrap**(Sprint 5.1 补丁):
+   *   - 启动 effect 只对启动时已存在的 workspace 跑 ensureMeta
+   *   - 启动之后 DSH 新建的 workspace 在 cache miss → resolve 时补 ensureMeta
+   *   - 否则 updateRequirements 会抛 `yaml-write-failed`(mate.yaml missing)
+   *   - 幂等:已存在的 mate.yaml 命中 cross-check(workspaceId 一致)→ no-op
+   *   - 已存在但 workspaceId 不一致 → 抛 cross-check-failed(数据完整性优先)
+   *
    * 抛错:
    *   - `workspace-not-found`:workspaceId 不在 DSH 当前 workspace 列表
    *   - `workspace-list-failed`:apiProxy.workspace.list 返回 RpcResult 失败
+   *   - `yaml-write-failed`/cross-check-failed:ensureMeta 失败透传
    */
   async resolveWorkspacePath(workspaceId: SkyAxisWorkspaceId): Promise<string> {
     const cached = this.resolveWorkspacePathFromCache(workspaceId)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      // Lazy bootstrap:即便缓存命中也确认 mate.yaml 存在 —— 启动之后新
+      // workspace 被 ensureMeta 跳过(没在启动 effect bootstrap 列表里)
+      await this.ensureWorkspaceBootstrap(cached, workspaceId)
+      return cached
+    }
 
     await this.refreshWorkspacePathCache()
     const path = this.workspacePathCache.get(workspaceId)
@@ -1233,7 +1256,60 @@ export class RequirementHostService {
         `workspace '${workspaceId}' is not in the current DSH workspace registry`,
       )
     }
+    await this.ensureWorkspaceBootstrap(path, workspaceId)
     return path
+  }
+
+  /**
+   * 幂等 ensureMeta —— 启动 effect 漏掉的 workspace 在第一次写路径前补齐。
+   *
+   * 失败语义:
+   *   - `cross-check-failed`:mate.yaml 已存在但 workspaceId 不一致 → 抛
+   *     (数据完整性优先,不覆盖用户手工写的 mate.yaml)
+   *   - 其他 WorkspaceMetaError(invalid / io-failed):console.warn 不抛
+   *     —— 让后续 updateRequirements 自己抛 yaml-write-failed,便于诊断
+   *   - 成功(初次或刷新 lastTouchedAt):静默
+   */
+  private async ensureWorkspaceBootstrap(
+    workspacePath: string,
+    workspaceId: SkyAxisWorkspaceId,
+  ): Promise<void> {
+    try {
+      await ensureMeta(workspacePath, {
+        workspaceId,
+        // title 在 service 层拿不到(workspacePathCache 只存 path)
+        // ensureMeta 接受空字符串,启动 effect 会用真实 title 覆盖
+        workspaceTitle: '',
+        skyAxisVersion: SKY_AXIS_PLUGIN_VERSION,
+        now: new Date().toISOString(),
+      })
+    } catch (e) {
+      // WorkspaceMetaError → 翻译成 SkyAxisHostError 让 route 统一处理
+      if (e instanceof WorkspaceMetaError) {
+        if (e.code === 'cross-check-failed') {
+          throw new SkyAxisHostError(
+            'yaml-write-failed',
+            `workspace meta conflict for ${workspacePath}: ${e.message}`,
+          )
+        }
+        if (e.code === 'invalid') {
+          throw new SkyAxisHostError(
+            'yaml-parse-failed',
+            `workspace meta invalid for ${workspacePath}: ${e.message}`,
+          )
+        }
+        throw new SkyAxisHostError(
+          'yaml-write-failed',
+          `workspace meta IO failed for ${workspacePath}: ${e.message}`,
+        )
+      }
+      // 其他非预期错误:console.warn 不抛,让后续 updateRequirements 暴露
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[sky-axis] ensureWorkspaceBootstrap(${workspacePath}, ${workspaceId}) failed:`,
+        e,
+      )
+    }
   }
 
   /**
