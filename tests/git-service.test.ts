@@ -12,11 +12,11 @@
  * 不测试真 git 调用 —— 真实 clone 需要联网 + git 二进制,改在 e2e / 手动
  * 验证阶段覆盖(见 plan Step 11)。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createGitService, SKY_AXIS_REPOS_DIR, gitSpawnEnv, cloneFailed } from '../src/host/git-service.ts'
+import { createGitService, SKY_AXIS_REPOS_DIR, gitSpawnEnv, cloneFailed, NETWORK_ERROR_RE } from '../src/host/git-service.ts'
 import { SkyAxisHostError } from '../src/host/requirement-service.ts'
 
 /** 一个临时风格的 workspaceRoot(用 mkdtemp 同步创建过的真实目录更好,但
@@ -277,5 +277,71 @@ describe('cloneFailed (Plan J: GitLab HTTP 拒绝识别)', () => {
     )
     expect(e.message).not.toMatch(/use https:\/\/ or ssh:\/\//)
     expect(e.message).toContain('Permission denied')
+  })
+})
+
+/* ── Plan K:gitSpawnEnv 注入 GIT_SSH_COMMAND ── */
+
+describe('gitSpawnEnv (Plan K: GIT_SSH_COMMAND 注入)', () => {
+  it('注入 BatchMode=yes 禁用 SSH 自身 prompt', () => {
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/BatchMode=yes/)
+  })
+
+  it('注入 ConnectTimeout=15 限制 TCP hang', () => {
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/ConnectTimeout=15/)
+  })
+
+  it('注入 StrictHostKeyChecking=accept-new 避免 known_hosts prompt', () => {
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/StrictHostKeyChecking=accept-new/)
+  })
+
+  it('注入 ServerAlive keepalive 配置', () => {
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/ServerAliveInterval=10/)
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/ServerAliveCountMax=3/)
+  })
+
+  it('Plan J 的 GIT_TERMINAL_PROMPT=0 仍保留(不冲突)', () => {
+    expect(gitSpawnEnv().GIT_TERMINAL_PROMPT).toBe('0')
+  })
+
+  it('GIT_SSH_COMMAND 是完整字符串(拼接顺序可读)', () => {
+    const cmd = gitSpawnEnv().GIT_SSH_COMMAND
+    expect(cmd).toBe(
+      'ssh -o BatchMode=yes -o ConnectTimeout=15 ' +
+      '-o StrictHostKeyChecking=accept-new ' +
+      '-o ServerAliveInterval=10 -o ServerAliveCountMax=3',
+    )
+  })
+})
+
+/* ── Plan K:NETWORK_ERROR_RE 关键词覆盖 ── */
+
+describe('NETWORK_ERROR_RE (Plan K: 网络/鉴权错误识别)', () => {
+  it.each([
+    ['ssh 连接超时',         'ssh: connect to host code.jms.com port 2222: Connection timed out'],
+    ['curl 风格超时',         'fatal: unable to access … Connection timed out'],
+    ['操作超时',             'Operation timed out (30s)'],
+    ['DNS 失败',             'Could not resolve host github.com'],
+    ['端口拒绝',             'Failed to connect to 127.0.0.1 port 22: Connection refused'],
+    ['路由不可达',             'No route to host'],
+    ['SSH 公钥拒绝',          'Permission denied (publickey).'],
+    ['SSH 连接错误前缀',       'ssh: connect to host x: Connection refused'],
+    ['known_hosts 失败',      'Host key verification failed.'],
+  ])('命中网络错误: %s — "%s"', (_label, stderr) => {
+    expect(NETWORK_ERROR_RE.test(stderr)).toBe(true)
+  })
+
+  it.each([
+    ['branch 不存在',         'error: pathspec \'feature/x\' did not match any file(s) known to git'],
+    ['空 stderr',             ''],
+    ['GitLab HTTP 拒绝',      'fatal: unable to access: Unencrypted HTTP is not supported for GitLab'],
+    ['普通 git 错误',         'fatal: not a git repository'],
+  ])('不命中(非网络错误): %s — "%s"', (_label, stderr) => {
+    expect(NETWORK_ERROR_RE.test(stderr)).toBe(false)
+  })
+
+  it('大小写不敏感', () => {
+    expect(NETWORK_ERROR_RE.test('CONNECTION TIMED OUT')).toBe(true)
+    expect(NETWORK_ERROR_RE.test('permission denied (PublicKey)')).toBe(true)
   })
 })

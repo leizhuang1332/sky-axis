@@ -211,7 +211,7 @@ export function makeMaterialRoutes(service: RequirementHostService): Route[] {
             const reqId = zodParseOrThrow(RequirementIdSchema, reqIdRaw)
             const raw = await readJsonBodyForAdd(req, jsonSection)
             const addedBy = readAddedBy(raw)
-            const updated = await invokeJsonAdd(service, jsonSection, reqId, raw, addedBy)
+            const updated = await invokeJsonAdd(service, jsonSection, reqId, req, raw, addedBy)
             jsonResponse(res, 200, { ok: true, item: updated })
           } catch (error) {
             translateError(res, error)
@@ -319,6 +319,7 @@ async function invokeJsonAdd(
   service: RequirementHostService,
   section: Exclude<MaterialSection, 'prdFiles' | 'attachments'>,
   reqId: ReturnType<typeof RequirementIdSchema.parse>,
+  req: IncomingMessage,
   raw: unknown,
   addedBy: string,
 ): Promise<unknown> {
@@ -329,7 +330,13 @@ async function invokeJsonAdd(
     }
     case 'sourceRepos': {
       const payload = zodParseOrThrow(AddSourceRepoRequestSchema, raw) as AddSourceRepoRequest
-      return await service.addSourceRepo(reqId, payload, addedBy)
+      // Plan K:把 HTTP 请求的 close/aborted 事件桥到 git clone 子进程。
+      //   用户关 tab / 刷新 / 网络断 → req 触发 'close' → 立刻 abort signal
+      //   → git-service 内部监听 signal.abort → SIGTERM git 进程,
+      //   不再跑满 5min。
+      const ac = new AbortController()
+      req.once('close', () => ac.abort(new Error('client disconnected')))
+      return await service.addSourceRepo(reqId, payload, addedBy, { signal: ac.signal })
     }
     case 'designLinks': {
       const payload = zodParseOrThrow(AddDesignLinkRequestSchema, raw) as AddDesignLinkRequest

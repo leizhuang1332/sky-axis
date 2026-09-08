@@ -49,20 +49,33 @@ export const GIT_CLONE_TIMEOUT_MS = 5 * 60 * 1000
 const STDERR_COLLECT_LIMIT = 4096
 
 /**
- * 构建传给 git 子进程的 env（Plan J）。在 process.env 基础上强制 GIT_TERMINAL_PROMPT=0,
- * 让 git 在 headless 模式下不要阻塞在 stdin 上等凭证 / passphrase 提示 —— 这样
- * 凭证缺失会立刻失败并露出真正错误(如「Unencrypted HTTP is not supported」),
- * 而不是被「could not read Username」遮住。
+ * 构建传给 git 子进程的 env（Plan J + Plan K）。在 process.env 基础上强制:
+ *   - GIT_TERMINAL_PROMPT=0:禁 git 自身 stdin prompt(Plan J)
+ *   - GIT_SSH_COMMAND:把 git 内部 spawn 的 ssh 子进程也压到"headless 安全"
+ *     (Plan K —— Plan J 的 GIT_TERMINAL_PROMPT 不会透传到 ssh)
  *
- * 注意:只 ADD 一个变量,不删除 process.env —— SSH_AUTH_SOCK / HOME / HTTP_PROXY
+ * Plan K GIT_SSH_COMMAND 各项含义:
+ *   - BatchMode=yes:禁用 ssh 自身所有 stdin/TTY prompt(passphrase / known_hosts / 端口转发)
+ *   - ConnectTimeout=15:TCP connect 阶段最长 15s,避免网络层 hang 累加 5min
+ *   - StrictHostKeyChecking=accept-new:第一次连陌生 host 自动写 known_hosts(无 prompt)
+ *   - ServerAliveInterval=10 + ServerAliveCountMax=3:30s 内无响应断连
+ *
+ * 注意:只 ADD 变量,不删除 process.env —— SSH_AUTH_SOCK / HOME / HTTP_PROXY
  *   等必须继承,否则 SSH clone / 公司代理会全面失效。
- * 配好 credential helper / ssh-agent 的用户不受影响(git 优先走 helper,不会 fallback
- *   到 terminal prompt)。
+ * 配好 credential helper / ssh-agent 的用户不受影响(BatchMode 不禁 agent forwarding)。
+ * OpenSSH 中 -o 选项优先级最高,会覆盖用户 ~/.ssh/config 中的同名选项(预期)。
  *
  * @internal 公开以便 tests/git-service.test.ts 单元测试断言。
  */
 export function gitSpawnEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  return {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND:
+      'ssh -o BatchMode=yes -o ConnectTimeout=15 ' +
+      '-o StrictHostKeyChecking=accept-new ' +
+      '-o ServerAliveInterval=10 -o ServerAliveCountMax=3',
+  }
 }
 
 /**
@@ -344,6 +357,13 @@ export function createGitService(): GitService {
       //     清理掉 primary 可能创建的半成品目录（git clone 失败时不会自动清理）
       await safeRmdir(opts.destDir).catch(() => undefined)
 
+      // Plan K：根因明显是网络 / 鉴权问题时跳过 fallback,直接抛错。
+      //   fallback(再来一次 5min 网络尝试)对这类错误毫无意义 —— 只会让用户
+      //   等满 10min 才看到同样的错误。
+      if (NETWORK_ERROR_RE.test(primary.stderr)) {
+        throw cloneFailed(primary.stderr, primary.code)
+      }
+
       // 5d. fallback: 先 clone 默认分支，再 checkout -b 创建分支
       //     （用于"远程确实没这个 branch、用户希望创建本地新分支"的场景）
       const fallbackClone = await runGit(
@@ -476,6 +496,26 @@ function truncate(s: string, maxLen: number): string {
  */
 const GITLAB_HTTP_REFUSAL_RE =
   /unencrypted\s+http\s+is\s+not\s+supported(?:\s+for\s+gitlab)?/i
+
+/**
+ * Plan K：网络层 / SSH 鉴权失败关键词。primary clone 命中后跳过 fallback
+ *   (避免二次 5min 累加),直接通过 cloneFailed() 抛错给用户。
+ *
+ * 关键词取自 git / ssh / curl 在网络错误时的标准 stderr —— 跨
+ *   GitHub / GitLab / Gitea / Gitness / 自部署 server 都覆盖。
+ *
+ * 注意:`\b` word boundary 对含 `:` / `(` 的英文短语需要豁免 —— 正则在
+ *   词边界判断时 `:` / `(` 会被切;我们故意在 `:host` / `(publickey)`
+ *   处不加 boundary,直接匹配。
+ */
+/**
+ * Plan K：网络层 / SSH 鉴权失败关键词。primary clone 命中后跳过 fallback
+ *   (避免二次 5min 累加),直接通过 cloneFailed() 抛错给用户。
+ *
+ * @internal 公开以便 tests/git-service.test.ts 单元测试断言。
+ */
+export const NETWORK_ERROR_RE =
+  /(connection timed out|operation timed out|could not resolve host|connection refused|no route to host|Permission denied \(publickey\)|ssh: connect to host|Host key verification failed)/i
 
 /**
  * Plan J：把 git clone 的 stderr 包装成 SkyAxisHostError('git-clone-failed')。

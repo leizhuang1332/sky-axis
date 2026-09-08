@@ -538,6 +538,69 @@ Plan I 解决这个闭环:**1:1 不变量从 `workspaceId → req` 收紧到 `wo
 - **DSH sandbox 拒绝 SSH passphraseless key 的场景** —— `GIT_TERMINAL_PROMPT=0` 后,无 passphrase 的 SSH key 必须在 ssh-agent 里 `ssh-add` 加载,否则 git 失败。用户需自行保证 agent 运行(常见做法:Docker / 服务进程启动时手动 `eval $(ssh-agent)` + `ssh-add`)。
 - **`SourceRepoUrlSchema` 接受过宽的 SSRF 风险评估** —— URL 直接给 git 子进程执行,git CLI 自身处理 `git clone` 不存在主机时返回 "Could not resolve host",不会触发远程 SSRF。XSS 风险面:源码 URL **不** 渲染成 `<a href>` 可点链接,而是「重 clone」按钮,不受 `javascript:` 影响。定期 review `UrlSchema` 与 `SourceRepoUrlSchema` 边界(后续若新增素材 URL 字段如 avatar / 文档预览,需谨慎复用)。
 
+## §9 git clone 5min 超时四根因修复(Plan K)
+
+### 背景
+
+Plan J 让 SSH URL 通过 schema 校验,本地 `git clone ssh://...` 几百毫秒完成,
+但 sky-axis 端 5 分钟超时。诊断发现 Plan J 的 `GIT_TERMINAL_PROMPT=0` 只禁 git
+自身 stdin prompt,**git 内部 spawn `ssh` 时,ssh 自身仍走 TCP retry /
+known_hosts prompt 路径** —— 这条路径在 headless GUI 进程里会累积 5min。
+
+### 4 个根因 + 修复
+
+| # | 根因 | 修复 | 行号 |
+|---|---|---|---|
+| 1 | **SSH 子进程卡网络层** | `GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -o ServerAliveCountMax=3'` 注入到 `gitSpawnEnv()` | [src/host/git-service.ts:78-84](src/host/git-service.ts#L78-L84) |
+| 2 | **route 不传 AbortSignal** | `req.once('close', () => ac.abort())` 桥接到 `service.addSourceRepo(..., { signal })` | [src/host/routes/materials.ts:330-336](src/host/routes/materials.ts#L330-L336) |
+| 3 | **fallback clone 在网络错误时仍重试** | primary stderr 命中 `NETWORK_ERROR_RE`(8 个关键词)→ 跳过 fallback,直接 `cloneFailed()` | [src/host/git-service.ts:360-364](src/host/git-service.ts#L360-L364) |
+| 4 | **stderr pipe race** | **计划但未实现** —— `await once(proc.stderr, 'close')` 在 Windows 上会导致 `isCompleteGitRepo` / `readHeadSha` 的 stderr pipe 'close' 事件延迟触发,把原 7ms 测试拉到 5s 超时。**已回退**,race 影响可忽略 | — |
+
+### 行为变化
+
+| 场景 | 旧行为 | 新行为 |
+|---|---|---|
+| 本地 git 1s 完成的 SSH clone | 5min 超时 | ~5s 完成(BatchMode + ConnectTimeout=15 加速) |
+| 浏览器关 tab,clone 在跑 | 跑满 5min | ~即时 abort,UI 收到 `[aborted by client]` |
+| SSH key 错误 / host 不可达 | 5min 超时 + fallback 再 5min | <30s 抛出 `git-clone-failed` 携带清晰错误 |
+| `Permission denied (publickey)` 命中 NETWORK_ERROR_RE | 触发 fallback 又跑 5min | 直接 fast-fail |
+
+### 风险登记
+
+| 风险 | 缓解 |
+|---|---|
+| 第一次连陌生 host 自动写 known_hosts(`StrictHostKeyChecking=accept-new`)| 用户 SSH 公钥 fingerprint 在团队 wiki 公示;若需更严改 `no` 但 UX 差(要求用户预先 ssh 一次) |
+| GIT_SSH_COMMAND 覆盖用户 ~/.ssh/config 中同名选项 | OpenSSH `-o` 优先级最高,这是预期行为(超时更短更安全) |
+| `accept-new` 在被劫持场景下自动信任伪造 host | 假设用户已经在用 SSH 协议信任此 host(否则一开始不会用 SSH URL);后续若需求更高安全等级,把 `accept-new` 改为 `no` |
+| NETWORK_ERROR_RE 误判非网络错误为网络错误(导致 fallback 跳过) | 误判最坏场景:branch 不存在时跳过 fallback 直接报错;用户只需在错误信息里看到「Permission denied」/「timed out」等真实根因 + 自行创建分支 —— 体验仍优于 5min 超时 |
+
+### caller 影响
+
+- DSH client UI:无变化(AbortController 在 host 内部完成)
+- 已配 SSH key + ssh-agent 的用户:无变化(BatchMode 不禁 agent forwarding)
+- 已知 host:无变化(`accept-new` 对 known_hosts 中已有 fingerprint 的 host 直接通过)
+- 首次连新 host:自动写 known_hosts(原本需要用户在交互终端输入 yes)
+- 故意用 `git@host:branch`(SSH refspec 形式):仍被 `SourceRepoUrlSchema` 拒;用户在 UI 上看不到这个变化
+
+### 单元测试变更
+
+- [tests/git-service.test.ts](tests/git-service.test.ts) 新增 2 个 describe block:
+  - `gitSpawnEnv (Plan K: GIT_SSH_COMMAND 注入)` —— 6 条:验证 BatchMode / ConnectTimeout / StrictHostKeyChecking / ServerAlive / Plan J 兼容 / 完整字符串拼接
+  - `NETWORK_ERROR_RE (Plan K: 网络/鉴权错误识别)` —— 14 条:9 命中 + 4 不命中 + 大小写不敏感
+- 未新增独立的 route 测试 —— `req.close → AbortSignal` 桥接是与 Node http 紧密耦合的 2 行代码,人工 e2e 验证(§验证/步骤 2)。后续若新增 route 单元测试基础设施,再补
+
+### A2 设计中途回退记录(团队 follow-up)
+
+原计划在 `runGit.finish()` 前 `await once(proc.stderr, 'close')` 捕获 stderr pipe race,
+实施时发现 Windows 平台下 `git rev-parse HEAD` 在错误场景下 stderr pipe 的 `close`
+事件延迟触发,把原 7ms 的「完整性判断」测试拉到 5s 超时(3 个测试失败)。
+理论 race 影响可忽略(`'data'` 事件在 `'exit'` 之前已经触发,关键错误行不丢),
+已回退 A2。
+
+如果未来要在 stderr 末尾追加延迟诊断信息(例如「retry 链路」)时再启用 A2,
+需要改造为 `Promise.race([once(stderr, 'close'), timeout(100ms)])` 的形式,
+避免硬阻塞。
+
 ## 参考
 
 - 审计报告:[`tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md`](tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md)
