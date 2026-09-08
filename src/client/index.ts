@@ -113,37 +113,53 @@ function wrapPromise(p: Promise<unknown>, abort?: () => void): UploadHandle {
 /**
  * 构造 sky-axis 给 UI 用的 WorkspaceOps 桥接。
  *
- * 0.1.2:workspace 列表改由 React `useWorkspaces()` hook 订阅;这里
- * 只负责桥接两个平台能力:
+ * 0.1.2:workspace **数据**改由全局 `useWorkspaces()` hook 订阅(sky-axis 走 cordis effect
+ * 路径,理由见 `inject` 注释)。这里只负责桥接两个**平台能力**:
  *   - `pickDirectory` → `ctx.uiWorkspace.pickDirectory()`(UiWorkspace service,
  *     自动处理取消返回 null)
  *   - `createWorkspace` → `ctx.remote.workspace.create({ path })`(Typert
- *     Remote,流订阅自动推送 upsertView 到 useWorkspaces())
+ *     Remote,流订阅自动推送 upsert 给 `ctx.workspaces.list`)
  *
  * 失败映射:Typert Remote 返回 `RemoteResult<T>` 形态(`{ ok: true, value }`
  * / `{ ok: false, error }`),sky-axis 沿用 0.1.1 的 `{ code: 'workspace-create-failed' }`
  * 错误形态 —— modal 不需要改。
+ *
+ * 实现细节 —— **lazy 桥接**(关键):
+ *   不在 buildWorkspaceOps 内部立即访问 `ctx.uiWorkspace` / `ctx.remote`,
+ *   而是闭包持有 ctx,在 modal 真的调 pickDirectory / createWorkspace 时才取。
+ *   这样即使 cordis effect 启动顺序把 sky-axis apply 排在 ui-workspace / dsh-api-remotes
+ *   之前 —— 或者 `ctx.uiWorkspace` 暂时为 undefined(例如 cordis service 还没注册)
+ *   —— 也不会在启动期抛 "cannot get property 'X' without inject"。
+ *   真正调用时取,那时 service 已就绪。inject 数组里仍保留 `'uiWorkspace'` / `'remote'`
+ *   让 cordis 启动时按依赖排序,确保这两个 service 优先注册。
  */
 function buildWorkspaceOps(ctx: Context): WorkspaceOps {
   // 窄类型:`ctx.uiWorkspace` 与 `ctx.remote` 都是各 ui-* / typert 包
   // augment 出来的,这里只挑需要的两个方法,避免静态拉全套 Remote 类型。
-  const uiWorkspace = (ctx as unknown as {
-    uiWorkspace: { pickDirectory(): Promise<string | null> }
-  }).uiWorkspace
-  const remoteWorkspace = (ctx as unknown as {
-    remote: {
-      workspace: {
-        create(input: { path: string }): Promise<
-          | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
-          | { ok: false; error: { code?: string; message?: string } }
-        >
+  const getUiWorkspace = (): { pickDirectory(): Promise<string | null> } => (
+    ctx as unknown as { uiWorkspace: { pickDirectory(): Promise<string | null> } }
+  ).uiWorkspace
+  const getRemoteWorkspace = (): {
+    create(input: { path: string }): Promise<
+      | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
+      | { ok: false; error: { code?: string; message?: string } }
+    >
+  } => (
+    ctx as unknown as {
+      remote: {
+        workspace: {
+          create(input: { path: string }): Promise<
+            | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
+            | { ok: false; error: { code?: string; message?: string } }
+          >
+        }
       }
     }
-  }).remote.workspace
+  ).remote.workspace
   return {
-    pickDirectory: () => uiWorkspace.pickDirectory(),
+    pickDirectory: () => getUiWorkspace().pickDirectory(),
     createWorkspace: async (input) => {
-      const result = await remoteWorkspace.create(input)
+      const result = await getRemoteWorkspace().create(input)
       if (result.ok) {
         return {
           ok: true,
@@ -164,16 +180,22 @@ function buildWorkspaceOps(ctx: Context): WorkspaceOps {
 
 /**
  * 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
- * - 'locale'     UI 文案
- * - 'slots'      已被 sidebar-entry.ts 隐式使用
- * - 'workspaces' 0.1.2:client 半区仍然存在 `ctx.workspaces: IWorkspaces`,
- *                `workspaces.list: WorkspaceSource`(`getSnapshot()` + `subscribe()`);
- *                sky-axis 在 cordis effect 内订阅 → push 给 controller。
- *                React `useWorkspaces()` 全局 hook 只能在 slot 组件里用,
- *                独立 createRoot 树拿不到,故走 cordis 路径。
+ * - 'locale'       UI 文案
+ * - 'slots'        已被 sidebar-entry.ts 隐式使用
+ * - 'workspaces'   0.1.2:client 半区仍然存在 `ctx.workspaces: IWorkspaces`,
+ *                  `workspaces.list: WorkspaceSource`(`getSnapshot()` + `subscribe()`);
+ *                  sky-axis 在 cordis effect 内订阅 → push 给 controller。
+ *                  React `useWorkspaces()` 全局 hook 只能在 slot 组件里用,
+ *                  独立 createRoot 树拿不到,故走 cordis 路径。
+ * - 'uiWorkspace'  0.1.2:`ctx.uiWorkspace: UiWorkspace`(由 `dsh-client-ui-workspace/client` 注册),
+ *                  `pickDirectory()` 在 modal 里被调 —— 必须 inject,否则 cordis 抛
+ *                  "cannot get property 'uiWorkspace' without inject"。
+ * - 'remote'       0.1.2:`ctx.remote.workspace.create()` 走 Typert Remote,
+ *                  Remote 由 `dsh-api-remotes` apply 注册到 `ctx.remote` —— 必须 inject,
+ *                  否则 cordis 同样抛 "cannot get property 'remote' without inject"。
  * - 不 inject sessions —— 新仪表板不订阅会话数据。
  */
-export const inject = ['locale', 'slots', 'workspaces']
+export const inject = ['locale', 'slots', 'workspaces', 'uiWorkspace', 'remote']
 
 /**
  * 挂载 sidebar entry + 主列 page + 装配 requirement 控制器。
