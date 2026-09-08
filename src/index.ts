@@ -24,8 +24,14 @@
  *   - 产物上传接口
  */
 import type { Context } from '@deepseek-ai/cordis'
-// 类型合并：声明 ctx.webServer / ctx.apiProxy / ctx.storageDomain 可用
-import type {} from '@deepseek-ai/dsh-host-apiproxy'
+// 类型合并：声明 ctx.webServer / ctx.workspaceController / ctx.storageDomain 可用
+//
+// 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2):
+//   - `@deepseek-ai/dsh-host-apiproxy` 整体被拆为 controller 包,
+//     没有对应的 ambient module augmentation 可 import —— 各 controller
+//     自带 `declare module '@deepseek-ai/cordis'` 块,只要 import 它们的入口
+//     类型即可让 TS 看到 ctx.workspaceController 等
+import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -40,7 +46,6 @@ import {
   WorkspaceMetaError,
 } from './host/workspace-meta.ts'
 import { ensureInputsLayout } from './host/requirement-service.ts'
-import { skyAxisRequest } from './host/rpc-helper.ts'
 import { createFsWatcherManager, type FsWatcherManager } from './host/fs-watcher-manager.ts'
 import { migrateLegacyRequirements } from './host/migration/requirement-migration.ts'
 import {
@@ -50,8 +55,24 @@ import {
   type WorkspaceId as SkyAxisWorkspaceId,
 } from './protocol.ts'
 
-/** 显式依赖 webServer / apiProxy / storageDomain 服务（cordis 会等这些服务先初始化）。 */
-export const inject = ['webServer', 'apiProxy', 'storageDomain']
+/**
+ * 显式依赖 webServer / workspaceController / storageDomain 服务
+ * （cordis 会等这些服务先初始化）。
+ *
+ * 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2 / §4.4):
+ *   - `apiProxy` row id 在 0.1.2 已不存在 —— 原 ApiProxy 聚合服务被拆为
+ *     `@deepseek-ai/dsh-api-session-controller` / `dsh-api-workspace-controller`
+ *     / `dsh-api-settings-controller` 等独立 controller,session / settings /
+ *     workspace 命令面分别接管各自的 ctx 属性
+ *   - sky-axis 当前唯一用到的 host-side api 是 workspace 相关(list /
+ *     解析 workspaceId),换成 `workspaceController` 即可
+ *   - `storageDomain` 在 0.1.2 仍然存在(报告 §4.7 —— 类型导出与运行时
+ *     完全兼容),继续保留
+ *   - 启动 bootstrap 改等 `reqSvc.whenBaselineReady()` 拿首帧 baseline(由
+ *     `startWorkspaceFollow()` 订阅 `ctx.workspaceController.follow(signal)` 流驱动)
+ *     详见 UPGRADE-MIGRATION-GUIDE.md §1
+ */
+export const inject = ['webServer', 'workspaceController', 'storageDomain']
 
 /**
  * sky-axis 插件自身版本（写入 `.sky-axis/mate.yaml` 的 skyAxis.version 字段）。
@@ -97,8 +118,12 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   // eslint-disable-next-line no-console
   console.info('[sky-axis] host apply: pid=' + process.pid + ' ready (Phase 2.5 + safety-net)')
 
-  // 业务服务：Sprint 5 起不再依赖 storage domain,数据走 `<workspace>/.sky-axis/mate.yaml`
-  const reqSvc = new RequirementHostService(ctx, ctx.apiProxy)
+  // 业务服务:Sprint 5 起不再依赖 storage domain,数据走 `<workspace>/.sky-axis/mate.yaml`
+  //
+  // 0.1.2 迁移:`ctx.apiProxy` 已不存在;原 ApiProxy 聚合服务拆为多个 controller,
+  // sky-axis 当前只需要 workspace 相关,这里直接传 `ctx.workspaceController`。
+  // service 内部 cache 由 `startWorkspaceFollow()` 订阅的 follow 流维护。
+  const reqSvc = new RequirementHostService(ctx, ctx.workspaceController)
   const requirementRoutes = makeRequirementRoutes(reqSvc)
   // Phase 2.5：物料 CRUD 路由（18 个 exact route，6 section × 3 op）
   const materialRoutes = makeMaterialRoutes(reqSvc)
@@ -110,6 +135,20 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   // - 单 manager 跨多个 workspace(去重)
   // - effect disposer 时 stopAll
   const watcherMgr: FsWatcherManager = createFsWatcherManager()
+
+  // 0.1.2:在 effect 内启动 follow 流订阅 —— 必须在 routes 注册之后立即
+  // 启动,这样 routes effect 内嵌的 IIFE 等 `whenBaselineReady()` 才能
+  // 拿到首帧。effect dispose 时 `reqSvc.close()` 会 abort 内部流。
+  //
+  // 注意:这里不传 signal 给 startWorkspaceFollow —— service 内部持有
+  // 一个 AbortController,effect dispose 时通过 `reqSvc.close()` 间接
+  // 触发 abort,避免把 effect signal 直接暴露给 service 内部细节。
+  ctx.effect(() => {
+    reqSvc.startWorkspaceFollow()
+    return () => {
+      void reqSvc.close()
+    }
+  }, 'sky-axis: subscribe workspace follow stream')
 
   ctx.effect(() => {
     const disposers: (() => void)[] = [
@@ -189,39 +228,38 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
     //   1. fs-watcher-manager.watch 该 workspace,onChange 桥接到 reqSvc.onWorkspaceMateYamlChanged
     //   2. migration:把 storage domain 残留记录搬到 mate.yaml(只跑一次)
     //   3. refresh snapshots:让 fs.watch diff 有 baseline
+    //
+    // 0.1.2 迁移:workspace 列表不再由一次性 RPC 拉取,改由
+    // `reqSvc.startWorkspaceFollow()` 订阅 `ctx.workspaceController.follow(signal)` 流;
+    // 首帧 baseline 到达后 `whenBaselineReady()` resolve。本 IIFE 等这个 promise,
+    // 取到 WorkspaceView[] 后再做 ensureMeta + fs-watch 等耗时操作。
+    // 流订阅本身在 routes 注册之后立刻启动(下一个独立 effect),
+    // 这样 baseline 到的瞬间 bootstrap 即可启动,不必额外 await routes。
     void (async (): Promise<void> => {
-      const response = await ctx.apiProxy.workspace.list(skyAxisRequest({}))
-      if (!response.result.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[sky-axis] workspace list failed; skipping mate.yaml bootstrap: ` +
-          `${response.result.error.code}: ${response.result.error.message}`,
-        )
-        return
-      }
+      const views = await reqSvc.whenBaselineReady()
       const now = new Date().toISOString()
       const bootstrappedPaths: string[] = []
       let succeeded = 0
       let failed = 0
-      for (const item of response.result.value.items) {
-        const workspaceId = item.workspaceId as unknown as SkyAxisWorkspaceId
+      for (const view of views) {
+        const workspaceId = view.workspaceId as unknown as SkyAxisWorkspaceId
         try {
-          await ensureMeta(item.path, {
+          await ensureMeta(view.path, {
             workspaceId,
-            workspaceTitle: item.title !== '' ? item.title : '',
+            workspaceTitle: view.title !== '' ? view.title : '',
             skyAxisVersion: SKY_AXIS_PLUGIN_VERSION,
             now,
           })
           // Sprint 3：mkdir inputs/{prd,attachment} —— 复用用户已有目录(决策 3)
-          await ensureInputsLayout(item.path)
-          bootstrappedPaths.push(item.path)
+          await ensureInputsLayout(view.path)
+          bootstrappedPaths.push(view.path)
           succeeded += 1
         } catch (e) {
           failed += 1
           const code = e instanceof WorkspaceMetaError ? e.code : 'unknown'
           // eslint-disable-next-line no-console
           console.warn(
-            `[sky-axis] ensureMeta failed for workspace ${workspaceId} (${item.path}): ` +
+            `[sky-axis] ensureMeta failed for workspace ${workspaceId} (${view.path}): ` +
             `${code}: ${(e as Error).message}`,
           )
         }
@@ -294,7 +332,9 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
 
     return () => {
       for (const d of disposers) d()
-      void reqSvc.close()
+      // reqSvc.close() 现在由独立的 'sky-axis: subscribe workspace follow stream' effect
+      // 负责 —— 它在 routes effect 之前启动(LIFO dispose 顺序保证 close 在 routes 之后),
+      // 这里省略避免重复调用。
     }
   }, 'sky-axis: register ping/health/requirements routes')
 })

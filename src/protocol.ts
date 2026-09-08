@@ -39,7 +39,7 @@ export const SkyAxisEndpoints = {
   requirementDelete: `${SKY_AXIS_API_PREFIX}/requirements/delete`,
   /** SSE：DomainChanged 事件流（持久连接，client 用 EventSource）。 */
   requirementEvents: `${SKY_AXIS_API_PREFIX}/requirements/events`,
-  /** 客户端拉取 workspace 元数据快照（sky-axis 专用 API，不直接代理 DSH apiProxy —— 避免 host 二次转发；客户端应优先用 ctx.workspaces.list）。 */
+  /** 客户端拉取 workspace 元数据快照（sky-axis 专用 API,直接读 host 端缓存的 WorkspaceView,不直接代理 DSH workspaceController —— 避免 host 二次转发;客户端应优先用 useWorkspaces() hook）。 */
   workspaceList: `${SKY_AXIS_API_PREFIX}/workspaces`,
 
   /* ── 物料 CRUD（Phase 2.5）── */
@@ -402,7 +402,7 @@ export type StageHistoryEntry = z.infer<typeof StageHistoryEntrySchema>
  *   - approval：tool 调用的权限确认（run shell / write file 等）
  *   - question：AI 主动询问（多选 / 单选 / 文本）
  *   - review：阶段性 review 请求（产出的 plan / patch 让人审）
- * - rpcId：DSH event/mux 的 rpc id（client 调 `ctx.apiProxy.respond` 时回传）
+ * - rpcId：DSH event/mux 的 rpc id（client 调 `ctx.apiProxy.respond`时回传 —— 0.1.2 改走 session controller,见 TODO）
  * - summary：UI 列表展示用的一句话摘要
  * - createdAt：入队时间（用于排序）
  * - payload：原 JSON 帧内容，UI 渲染复杂问答表单时读取
@@ -479,7 +479,7 @@ export const AiActionRequestSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('respond'),
     rpcId: z.string().min(1),
-    /** 答案 payload —— 由 host 包成 ClientResponse envelope 调 ctx.apiProxy.respond。 */
+    /** 答案 payload —— 由 host 包成 ClientResponse envelope 调 session controller respond（0.1.2 改名,见 TODO）。 */
     answer: z.unknown(),
   }),
   z.object({
@@ -691,8 +691,7 @@ export type RemoveMaterialResponse = z.infer<typeof RemoveMaterialResponseSchema
 /**
  * 主机端 API 错误码（client 据此分桶提示用户）。
  * - validation-failed：入参 zod parse 失败 / HTTP 方法不匹配 / body 超限
- * - workspace-not-found：workspaceId 不在 DSH 当前 workspace 列表中
- * - workspace-list-failed：apiProxy.workspace.list RPC 返回 RpcResult 失败
+ * - workspace-not-found：workspaceId 不在当前 follow 流 baseline / cache 中
  * - requirement-not-found：要删除/获取的 id 不存在
  * - invalid-record：KV 中已存的记录 schema 校验失败（极少见，理论上 domain open 时就拦住了）
  * - internal-error：未捕获异常
@@ -700,7 +699,7 @@ export type RemoveMaterialResponse = z.infer<typeof RemoveMaterialResponseSchema
  * Phase 1.2 增量（AI 协作工作台相关）：
  * - ai-not-configured：sky-axis-collaborator agentPreset 未在 DSH 注册 / 平台能力缺失
  * - ai-session-missing：操作的 requirement 还没启动 AI session（先调 /ai/start）
- * - ai-event-failed：ctx.apiProxy.events.mux() 或 respond 失败
+ * - ai-event-failed：session controller events.mux() 或 respond 失败(0.1.2,原 ctx.apiProxy)
  * - artifact-not-found：getArtifact 取的 artifactId 不存在
  * - stage-invalid：advance 请求的 toStage 与当前 stage 不兼容（如跳跃前进）
  */

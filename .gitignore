@@ -21,3 +21,8 @@ coverage/
 
 # pnpm
 .pnpm-store/
+.claude/
+.agents/
+skills-lock.json
+
+tmp/

@@ -56,7 +56,7 @@ const SKY_AXIS_META_DIR = '.sky-axis'
 
 /* ── zod schema ── */
 
-/** workspace 段：与 apiProxy.workspace.list 返回的 workspace 字段对齐。 */
+/** workspace 段：与 `WorkspaceView`(`@deepseek-ai/dsh-api-workspace-controller`)字段对齐 —— 0.1.2 流驱动 cache 直接落 WorkspaceView,这里只取 path/title 用。 */
 const WorkspaceSectionSchema = z.object({
   id:    z.string().min(1),
   title: z.string(),

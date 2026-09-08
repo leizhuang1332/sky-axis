@@ -34,8 +34,12 @@ const CSS_VIRTUAL_SUFFIX = '.mjs'
  * with no runtime identity to share (no Symbol/instanceof/singleton state).
  * Everything else under @deepseek-ai/* is either a module-table entry
  * (external) or a leak the purity gate rejects.
+ *
+ * dsh 0.1.2: `dsh-host-apiproxy` is gone (split into dsh-api-* packages);
+ * `dsh-session` re-export coverage changed too. The list tracks the packages
+ * whose wire layers are still safe to inline verbatim. See UPGRADE-MIGRATION-GUIDE.md.
  */
-const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand)(\/|$)/
+const INLINE_SAFE = /^@deepseek-ai\/dsh-(api-[a-z0-9]+(?:-[a-z0-9]+)*|session|llm|tools|brand)(\/|$)/
 
 /** Generated descriptor/codec contribution with no shared runtime identity. */
 const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
@@ -47,19 +51,14 @@ const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
 const SKIP_WORKSPACE_BUILD: UserConfig = { entry: '' }
 
 /**
- * Documented TEMPORARY exemption, not a platform module (hence not in
- * web-platform.ts): the snapshot-store engine (createSnapshotStore/defineStore/
- * shallowEqual) lives in runtime pending its promotion-time rehoming, and
- * five importers (locale, ui-layout, ui-conversation ×3) ride this single
- * exemption. At runtime the lazy CJS table answers the require natively:
- * runtime is an immediately-tier row, its factory is registered before any
- * dependent bundle materializes. TODO(webload/store-rehome): remove with the
- * store-engine relocation follow-up.
+ * Externals resolved from the loader module table: the platform seed entries.
+ *
+ * dsh 0.1.2: `RUNTIME_STORE_EXEMPTION` for `@deepseek-ai/dsh-client-runtime/client`
+ * was removed — the snapshot-store engine rehomed to `@deepseek-ai/dsh-client-store`
+ * (the TODO(webload/store-rehome) follow-up is now landed in 0.1.2). All current
+ * importers route through the platform seed table instead of a one-off exemption.
  */
-const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
-
-/** Externals resolved from the loader module table: the platform seed entries plus the documented runtime exemption. */
-const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
+const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
@@ -147,9 +146,15 @@ export function mobileBundle(id: string, entry: string): UserConfig {
       // Wire contracts resolve through node_modules (the exports map lands on
       // the real runtime values) instead of the tsconfig paths' declaration
       // files, which would miss every value export.
+      //
+      // dsh 0.1.2: `dsh-host-apiproxy` was split into `@deepseek-ai/dsh-api-*`
+      // packages (session-controller, workspace-controller, etc.). The legacy
+      // `/api` subpath no longer exists; mobile bundles that need the same
+      // wire contracts must depend on the specific controller packages and
+      // resolve through them. UPGRADE-MIGRATION-GUIDE.md §2 covers re-targeting.
       name: 'dsh-mobile-value-resolution',
       resolveId(source: string) {
-        const match = /^@deepseek-ai\/dsh-host-apiproxy\/api(?:\/.*)?$/.exec(source)
+        const match = /^@deepseek-ai\/dsh-api-[a-z0-9]+(?:-[a-z0-9]+)*(?:\/.*)?$/.exec(source)
         if (match === null) return null
         try {
           return mobileRequire.resolve(source)

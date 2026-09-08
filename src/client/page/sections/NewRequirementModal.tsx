@@ -28,7 +28,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/sky-axis-controller.ts'
-import type { WorkspaceOps } from '../../index.ts'
+import { useWorkspaceOps } from '../../shared/workspace-context.tsx'
 import { Modal } from '../../ui/Modal.tsx'
 import { Field } from '../../ui/Field.tsx'
 import css from './new-requirement-modal.module.css'
@@ -50,9 +50,6 @@ export interface NewRequirementModalProps {
   submitError?: RequirementError | null
   /** 是否正在提交（submit 按钮显示 loading）。 */
   submitting: boolean
-  /** DSH 平台 workspace 创建能力透传（apply 期间由 client/index.ts 填充）。
-   *  undefined = 当前没有 ctx.workspaces 能力可用，隐藏「+ 创建工作区」入口。 */
-  workspaceOps?: WorkspaceOps
   /** 用户点击提交。parent 调 controller.createRequirement。 */
   onSubmit: (input: {
     workspaceId: string
@@ -88,7 +85,10 @@ function firstAvailable(
 }
 
 export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
-  const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, workspaceOps, onSubmit, onClose } = props
+  const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, onSubmit, onClose } = props
+  /* 0.1.2:从 Context 拿 WorkspaceOps —— Provider 没 mount 时 useWorkspaceOps() 会
+   *   throw,直接连根组件都渲染不出来,所以这里不需要 `=== undefined` 守卫。 */
+  const workspaceOps = useWorkspaceOps()
   // 默认空 map —— 早期 mount / controller 还没注入 takenByWorkspaceId 时按"无占用"处理
   const taken: ReadonlyMap<string, RequirementEntry> = takenByWorkspaceId ?? EMPTY_TAKEN
 
@@ -147,7 +147,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
    *      「刚建好但 select 还没刷新」的一瞬歧义。
    */
   const handleCreateWorkspace = async (): Promise<void> => {
-    if (workspaceOps === undefined || creatingWorkspace) return
+    if (creatingWorkspace) return
     setCreatingWorkspace(true)
     try {
       const path = await workspaceOps.pickDirectory()
@@ -233,21 +233,19 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
               )
             })}
           </select>
-          {/* DSH 平台 workspace 创建入口 —— 复用 ctx.workspaces.pickDirectory + create。
-              apply(ctx) 还没跑完时 workspaceOps 为 undefined，链接隐藏。 */}
-          {workspaceOps !== undefined && (
-            <button
-              type="button"
-              className={css.linkButton}
-              onClick={() => { void handleCreateWorkspace() }}
-              disabled={creatingWorkspace}
-              title={t('requirement.new.createWorkspaceHint')}
-            >
-              {creatingWorkspace
-                ? t('requirement.new.creatingWorkspace')
-                : `+ ${t('requirement.new.createWorkspace')}`}
-            </button>
-          )}
+          {/* DSH 平台 workspace 创建入口 —— 复用 ctx.uiWorkspace.pickDirectory +
+              ctx.remote.workspace.create。Provider 必然 mount,所以按钮总是显示。 */}
+          <button
+            type="button"
+            className={css.linkButton}
+            onClick={() => { void handleCreateWorkspace() }}
+            disabled={creatingWorkspace}
+            title={t('requirement.new.createWorkspaceHint')}
+          >
+            {creatingWorkspace
+              ? t('requirement.new.creatingWorkspace')
+              : `+ ${t('requirement.new.createWorkspace')}`}
+          </button>
         </Field>
 
         <Field label={t('requirement.new.titleLabel')} hint={t('requirement.new.titleHint')}>

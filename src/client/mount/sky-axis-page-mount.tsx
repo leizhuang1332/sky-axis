@@ -15,6 +15,7 @@
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkyAxisController } from '../controller/sky-axis-controller.ts'
+import { WorkspaceOpsProvider, type WorkspaceOps } from '../shared/workspace-context.tsx'
 import { SkyAxisPage } from '../page/SkyAxisPage.tsx'
 import css from '../page/SkyAxisPage.module.css'
 
@@ -49,6 +50,12 @@ export interface MountSkyAxisOptions {
   controller: SkyAxisController
   /** locale t 函数（SkyAxisPage 内 section 引用）。 */
   t: PropsLocale<'sky-axis'>['t']
+  /**
+   * 0.1.2:WorkspaceOps 桥接（pickDirectory + createWorkspace）。
+   * 由 `apply(ctx)` 期间 `buildWorkspaceOps(ctx)` 构造,通过 Provider 透传给
+   * 任意深度的子树。Provider 没 mount → 子树不渲染,故 modal 不需要兜底守卫。
+   */
+  workspaceOps: WorkspaceOps
 }
 
 /**
@@ -58,7 +65,7 @@ export interface MountSkyAxisOptions {
  * @returns disposer unmounting the tree and restoring the column.
  */
 export function mountSkyAxisPage(opts: MountSkyAxisOptions): () => void {
-  const { controller, t } = opts
+  const { controller, t, workspaceOps } = opts
   let root: Root | undefined
   let container: HTMLDivElement | undefined
 
@@ -82,7 +89,11 @@ export function mountSkyAxisPage(opts: MountSkyAxisOptions): () => void {
     root = createRoot(container)
     // 把 controller 传给 SkyAxisPage，由它内部 useSyncExternalStore 订阅
     // viewKey 变化 —— SPA 风格内部路由不需要路由库。
-    root.render(<SkyAxisPage t={t} onClose={() => { controller.closePage() }} controller={controller} />)
+    root.render(
+      <WorkspaceOpsProvider value={workspaceOps}>
+        <SkyAxisPage t={t} onClose={() => { controller.closePage() }} controller={controller} />
+      </WorkspaceOpsProvider>,
+    )
   }
 
   // 框架在 boot 之后才挂主列；MutationObserver 等待它出现。

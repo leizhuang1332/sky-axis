@@ -27,7 +27,6 @@ import { useCallback, useMemo, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkyAxisController, SkyAxisViewKey } from '../controller/sky-axis-controller.ts'
-import { getWorkspaceOps, type WorkspaceOps } from '../index.ts'
 import { Toast } from '../ui/Toast.tsx'
 import { NewRequirementModal } from './sections/NewRequirementModal.tsx'
 import { SkyAxisSidebar } from './sidebar/SkyAxisSidebar.tsx'
@@ -73,9 +72,7 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<typeof requirementsError>(null)
 
-  /* ── DSH 平台 workspace 能力（apply(ctx) 期间填充，组件 mount 时一次性读取）──
-     apply 还没跑完时为 undefined —— modal 在该场景下隐藏创建入口，退化为纯选择形态。 */
-  const [workspaceOps] = useState<WorkspaceOps | undefined>(() => getWorkspaceOps())
+  /* 0.1.2:`workspaceOps` 由 modal 通过 `useWorkspaceOps()` 自取 —— 此处不再 useState 持有。 */
 
   const openModal = useCallback((): void => {
     setSubmitError(null)
@@ -252,7 +249,9 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
         </button>
       </footer>
 
-      {/* 「新建需求」弹窗 —— 顶层渲染，遮罩覆盖整个 page */}
+      {/* 「新建需求」弹窗 —— 顶层渲染,遮罩覆盖整个 page。
+          0.1.2:`workspaceOps` 由 modal 内部通过 `useWorkspaceOps()` hook 自取,
+          不再由父组件透传 prop。 */}
       {modalOpen && (
         <NewRequirementModal
           t={t}
@@ -260,7 +259,6 @@ export function SkyAxisPage({ t, onClose, controller }: SkyAxisPageProps): JSX.E
           takenByWorkspaceId={takenByWorkspaceId}
           submitError={submitError}
           submitting={submitting}
-          workspaceOps={workspaceOps}
           onSubmit={handleSubmit}
           onClose={closeModal}
         />

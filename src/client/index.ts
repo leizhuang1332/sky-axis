@@ -12,22 +12,54 @@
  *   互相打架。
  *
  * Phase 1 增量：
- *   - inject 加 'workspaces'：订阅 ctx.workspaces.list → controller.setWorkspaces
  *   - 创建 RequirementClient（fetch host 半区 Requirement CRUD）
  *   - 注入 client/createSkyAxisController 的 loadImpl / createImpl / deleteImpl
  *   - subscribeRequirementEvents → controller.handleStreamEvent
  *   - controller.loadRequirements() 拉初始列表
  *
+ * Phase 2 §2 迁移（0.1.2）：
+ *   - workspace 数据流:cordis effect 订阅 `ctx.workspaces.list` → React 组件层
+ *     用 `useWorkspaces()` 全局 hook(`@deepseek-ai/dsh-client-ui-workspace/client`)
+ *   - workspace 平台能力(pickDirectory / create):模块级 `workspaceOps` 变量
+ *     → React Context(`WorkspaceOpsProvider` 在 mountSkyAxisPage 里包),
+ *     modal 用 `useWorkspaceOps()` hook 消费
+ *   - inject 数组去掉 `'workspaces'`(由 useWorkspaces 替代)
+ *
  * 旧的 sidebar.footer.action slot 注册已废弃（弹窗卡片形态被整页取代）。
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// 类型导入：拉取 locale 插件的 ctx.locale 合并
+import type { Context } from '@deepseek-ai/cordis'
+// 类型导入:拉取各 client-ui-* 插件的 ctx 声明合并
+//
+// 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.1 / §4.4):
+//   - 原 `@deepseek-ai/dsh-client-runtime/client` 整体被删
+//   - `ClientContext` 在 0.1.1 里就是 `cordis.Context` 的 alias(只是名字长)
+//   - 0.1.2 把原本集中在 dsh-client-runtime 的 `declare module '@deepseek-ai/cordis'`
+//     块拆到各 ui-* 包 + api-* 包 —— `ctx.uiWorkspace` 由 `dsh-client-ui-workspace/client`
+//     augment,`ctx.workspaces` 由 `dsh-api-workspace-controller/client` augment
+//     (注意 `ctx.workspaces` 0.1.2 仍然存在,只是来源变了;type 用 `IWorkspaces`)
+//   - `useWorkspaces()` 全局 hook 由 `dsh-client-ui-workspace/client` 通过
+//     `declare module '@deepseek-ai/dsh-client-ui-slots' { GlobalStandardProps.useWorkspaces }`
+//     提供 —— 但它**只能**在 slot 组件里用(framework 通过 `renderSlot` 注入);
+//     sky-axis 走的是独立 `createRoot` React 树,无法直接消费,仍走
+//     `ctx.workspaces.list.subscribe` cordis effect 路径,与 §1 host 半区
+//     `workspaceController.follow(signal)` 对称
+//   - 这里 import 各 ui-* / api-* 入口,让 TS 看到对应的 ctx 属性
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
+
+/** 0.1.2:ClientContext 退化为 cordis.Context 别名(由各 ui-* 包的
+ *  declare module 合并 ctx 属性)。原 0.1.1 的 dsh-client-runtime/client
+ *  把所有声明合并集中放在一处,0.1.2 拆到 4-5 个包里。 */
+export type ClientContext = Context
 import { RequirementClient, subscribeRequirementEvents } from './api/requirement-client.ts'
-import { createSkyAxisController, type RequirementOption, type UploadHandle } from './controller/sky-axis-controller.ts'
+import { createSkyAxisController, type UploadHandle } from './controller/sky-axis-controller.ts'
 import { mountSidebarEntry } from './mount/sidebar-entry.ts'
 import { mountSkyAxisPage } from './mount/sky-axis-page-mount.tsx'
 import { en, zh, type SkyAxisKey } from './locales.ts'
+import type { WorkspaceOps } from './shared/workspace-context.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -38,31 +70,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** 本插件拥有的字典命名空间。 */
 const NS = 'sky-axis'
-
-/**
- * DSH workspace 平台能力透传 —— 由 `apply(ctx)` 期间填充。
- *
- * 设计动机：让 UI（NewRequirementModal）能直接复用 dsh-client-runtime
- * 暴露的 `ctx.workspaces.pickDirectory()` / `ctx.workspaces.create()`，
- * 不在 sky-axis 内部拼装任何路径/目录/IO 逻辑。
- *
- *   - `pickDirectory`：弹原生目录选择器；用户取消时 resolve `null`。
- *   - `createWorkspace`：用选中路径调 DSH 平台创建 workspace。
- *     DSH 失败时 throw `WorkspaceCreateError`，本 helper 捕获后
- *     映射成 `{ ok: false, error: { code, detail } }` 形态给 UI；
- *     成功后 ctx.workspaces.list 会自动推送新 snapshot，UI 不需要手动刷新。
- */
-interface WorkspaceOps {
-  pickDirectory: () => Promise<string | null>
-  createWorkspace: (input: { path: string }) => Promise<{
-    ok: boolean
-    id?: string
-    title?: string
-    error?: { code: 'workspace-create-failed'; detail?: string }
-  }>
-}
-
-let workspaceOps: WorkspaceOps | undefined
 
 /**
  * 把 client `Result<T>` 包装成 controller `UploadHandle`（abort 兜底 noop）。
@@ -104,23 +111,69 @@ function wrapPromise(p: Promise<unknown>, abort?: () => void): UploadHandle {
 }
 
 /**
- * 组件 mount 时读取 `workspaceOps`（由 apply(ctx) 期间填入）。
- * 早期 mount / apply 尚未跑完时返回 undefined —— modal 在该场景下
- * 隐藏「+ 创建工作区」入口，保留纯选择形态。
+ * 构造 sky-axis 给 UI 用的 WorkspaceOps 桥接。
+ *
+ * 0.1.2:workspace 列表改由 React `useWorkspaces()` hook 订阅;这里
+ * 只负责桥接两个平台能力:
+ *   - `pickDirectory` → `ctx.uiWorkspace.pickDirectory()`(UiWorkspace service,
+ *     自动处理取消返回 null)
+ *   - `createWorkspace` → `ctx.remote.workspace.create({ path })`(Typert
+ *     Remote,流订阅自动推送 upsertView 到 useWorkspaces())
+ *
+ * 失败映射:Typert Remote 返回 `RemoteResult<T>` 形态(`{ ok: true, value }`
+ * / `{ ok: false, error }`),sky-axis 沿用 0.1.1 的 `{ code: 'workspace-create-failed' }`
+ * 错误形态 —— modal 不需要改。
  */
-function getWorkspaceOps(): WorkspaceOps | undefined {
-  return workspaceOps
+function buildWorkspaceOps(ctx: Context): WorkspaceOps {
+  // 窄类型:`ctx.uiWorkspace` 与 `ctx.remote` 都是各 ui-* / typert 包
+  // augment 出来的,这里只挑需要的两个方法,避免静态拉全套 Remote 类型。
+  const uiWorkspace = (ctx as unknown as {
+    uiWorkspace: { pickDirectory(): Promise<string | null> }
+  }).uiWorkspace
+  const remoteWorkspace = (ctx as unknown as {
+    remote: {
+      workspace: {
+        create(input: { path: string }): Promise<
+          | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
+          | { ok: false; error: { code?: string; message?: string } }
+        >
+      }
+    }
+  }).remote.workspace
+  return {
+    pickDirectory: () => uiWorkspace.pickDirectory(),
+    createWorkspace: async (input) => {
+      const result = await remoteWorkspace.create(input)
+      if (result.ok) {
+        return {
+          ok: true,
+          id: result.value.workspace.workspaceId as unknown as string,
+          title: result.value.workspace.title,
+        }
+      }
+      return {
+        ok: false,
+        error: {
+          code: 'workspace-create-failed',
+          detail: result.error.message ?? result.error.code,
+        },
+      }
+    },
+  }
 }
 
 /**
  * 插件运行所需的 client 服务（cordis 注入契约 —— 缺一个就拿不到对应 ctx 属性）。
  * - 'locale'     UI 文案
- * - 'workspaces' 工作区列表（订阅 ctx.workspaces.list）
  * - 'slots'      已被 sidebar-entry.ts 隐式使用
- *
- * 注意：不再 inject sessions，因为新仪表板不订阅会话数据。
+ * - 'workspaces' 0.1.2:client 半区仍然存在 `ctx.workspaces: IWorkspaces`,
+ *                `workspaces.list: WorkspaceSource`(`getSnapshot()` + `subscribe()`);
+ *                sky-axis 在 cordis effect 内订阅 → push 给 controller。
+ *                React `useWorkspaces()` 全局 hook 只能在 slot 组件里用,
+ *                独立 createRoot 树拿不到,故走 cordis 路径。
+ * - 不 inject sessions —— 新仪表板不订阅会话数据。
  */
-export const inject = ['locale', 'workspaces', 'slots']
+export const inject = ['locale', 'slots', 'workspaces']
 
 /**
  * 挂载 sidebar entry + 主列 page + 装配 requirement 控制器。
@@ -215,11 +268,20 @@ export function apply(ctx: ClientContext): void {
 
   // 5. 主列 page mount —— 在 effect 内执行，确保 locale.bind 在字典
   //    注册完成之后调用，t 函数能正确解析 key。
+  //
+  // 0.1.2 迁移:平台能力(pickDirectory / createWorkspace)从模块级变量改成 React Context;
+  //   `buildWorkspaceOps(ctx)` 在 effect 期间一次性构造 WorkspaceOps 桥接
+  //   (持有 `ctx.uiWorkspace.pickDirectory` + `ctx.remote.workspace.create`),
+  //   通过 `mountSkyAxisPage` 传给 React 根,Provider 再下发到 modal。
+  //   workspace **数据流**没走 Context —— 仍由 effect 6 订阅
+  //   `ctx.workspaces.list: WorkspaceSource` 推给 controller(理由:见效果 6 注释)。
+  //   见 UPGRADE-MIGRATION-GUIDE.md §2。
   ctx.effect(() => {
     const t = ctx.locale.bind(NS)
     let dispose: (() => void) | undefined
     try {
-      dispose = mountSkyAxisPage({ controller, t })
+      const workspaceOps = buildWorkspaceOps(ctx)
+      dispose = mountSkyAxisPage({ controller, t, workspaceOps })
     } catch (error) {
       console.error('[sky-axis] page mount failed:', error)
     }
@@ -228,46 +290,41 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'sky-axis: mount page')
 
-  // 6. 订阅 ctx.workspaces.list → controller.setWorkspaces
+  // 6. 订阅 workspace 流(`ctx.workspaces.list`)→ controller.setWorkspaces
+  //
+  // 0.1.2 决策记录:考虑过改用 React `useWorkspaces()` 全局 hook(由
+  //   `dsh-client-ui-workspace/client` 的 `declare module '@deepseek-ai/dsh-client-ui-slots'`
+  //   augment 暴露),但实测那个 hook **只能**在 framework slot 组件里用 —— slot dispatcher
+  //   通过 `ctx.slots.provideRoot({ hooks: { workspaces: ... } })` 把 HostObservable
+  //   注册成 React context,只有 `renderSlot(...)` 派发的 slot 组件能拿到 hook。
+  //   sky-axis 走的是独立 `createRoot` React 树(mountSkyAxisPage 自己 root),
+  //   没接 framework 的 slot context,直接 `useWorkspaces()` 会 throw / 返回 undefined。
+  //   故仍走 cordis effect 路径 —— 与 §1 host 半区 `workspaceController.follow(signal)`
+  //   对称。0.1.2 的 `IWorkspaces.list: WorkspaceSource` 提供 `getSnapshot()` +
+  //   `subscribe()`,接口与 0.1.1 完全兼容;只是 `items` 元素类型从旧 `Workspace`
+  //   换成新 `WorkspaceView`,这里投影成 `RequirementOption[]` 喂 controller。
   ctx.effect(() => {
-    const pushWorkspaces = (): void => {
-      const items = ctx.workspaces.list.getSnapshot().items
-      const opts: RequirementOption[] = items.map(item => ({
-        id: item.workspaceId as unknown as string,
-        title: item.title !== '' ? item.title : basename(item.path),
-        path: item.path,
-      }))
-      controller.setWorkspaces(opts)
+    // 窄类型:`ctx.workspaces.list` 是 IWorkspaces 的 readonly 字段,这里只取
+    //   list(WorkspaceSource)做投影,避免静态拉全套 IWorkspaces 方法类型。
+    const list = (ctx.workspaces as unknown as {
+      list: {
+        getSnapshot(): { items: ReadonlyArray<{ workspaceId: unknown; title: string; path: string }> }
+        subscribe(listener: () => void): () => void
+      }
+    }).list
+    const push = (): void => {
+      controller.setWorkspaces(
+        list.getSnapshot().items.map((w) => ({
+          id: w.workspaceId as unknown as string,
+          title: w.title,
+          path: w.path,
+        })),
+      )
     }
-    pushWorkspaces()
-    const dispose = ctx.workspaces.list.subscribe(pushWorkspaces)
+    push()
+    const dispose = list.subscribe(push)
     return () => { dispose() }
   }, 'sky-axis: subscribe workspaces')
-
-  // 6.5 填充 workspaceOps —— 把 DSH 平台能力透传给 UI（NewRequirementModal）。
-  //     平台创建成功后会自动通过 ctx.workspaces.list 推送新 snapshot，
-  //     上面的 pushWorkspaces effect 自动把新 workspace 注入 controller。
-  workspaceOps = {
-    pickDirectory: () => ctx.workspaces.pickDirectory(),
-    createWorkspace: async (input) => {
-      try {
-        const view = await ctx.workspaces.create({ path: input.path })
-        return {
-          ok: true,
-          id: view.workspaceId as unknown as string,
-          title: view.title,
-        }
-      } catch (e) {
-        return {
-          ok: false,
-          error: {
-            code: 'workspace-create-failed',
-            detail: e instanceof Error ? e.message : String(e),
-          },
-        }
-      }
-    },
-  }
 
   // 7. 订阅 SSE 事件流 → controller.handleStreamEvent
   ctx.effect(() => {
@@ -292,13 +349,13 @@ export function apply(ctx: ClientContext): void {
   }, 'sky-axis: load requirements (initial)')
 }
 
-/** 简单 basename（避免再引 node:path）。 */
-function basename(p: string): string {
-  const i = p.lastIndexOf('/')
-  return i === -1 ? p : p.slice(i + 1)
-}
-
 // 包表面：cordis 加载所需的 apply + 命名空间 key 类型
+//
+// 0.1.2 迁移说明:`getWorkspaceOps` + `WorkspaceOps` 不再从这里导出 ——
+// 它们已经搬到 `src/client/shared/workspace-context.tsx`(React Context),
+// modal 通过 `useWorkspaceOps()` hook 消费。`WorkspaceOps` 类型本身
+// 在新模块里 export,这里用 `export type { WorkspaceOps }` 转发以保持
+// 旧 import 路径的兼容性(只是 NewRequirementModal 内部不再需要)。
 export type { SkyAxisKey }
 export type {
   SkyAxisController,
@@ -310,5 +367,4 @@ export type {
 } from './controller/sky-axis-controller.ts'
 export { ENTRY_SELECTOR } from './mount/sidebar-entry.ts'
 export { SKY_AXIS_VIEW_SELECTOR } from './mount/sky-axis-page-mount.tsx'
-export { getWorkspaceOps }
-export type { WorkspaceOps }
+export type { WorkspaceOps } from './shared/workspace-context.tsx'

@@ -26,7 +26,7 @@ import {
   type Requirement,
   type WorkspaceSummary,
 } from '../../protocol.ts'
-import { SkyAxisHostError, type RequirementHostService, fetchWorkspaces } from '../requirement-service.ts'
+import { SkyAxisHostError, type RequirementHostService } from '../requirement-service.ts'
 
 /** webServer 注册的 route shape（参考 dsh-host-webserver 公开类型）。 */
 interface Route {
@@ -288,17 +288,27 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
       },
     },
 
-    /* ── GET /workspaces（client 降级方案用）── */
+    /* ── GET /workspaces（client 降级方案用）──
+     *
+     * 0.1.2:不再发 RPC —— 直接读 `service.getWorkspaceViews()` 的同步
+     * cache;cache 由 `startWorkspaceFollow()` 持续维护。
+     *
+     * 边界语义:
+     *   - baseline 还没到 → 返回 `[]`(`workspace-list-empty`)。前端应该
+     *     优先用 `useWorkspaces()` hook(自动随 baseline resolve),只有
+     *     老版本 / fallback 路径才走这个 endpoint
+     *   - baseline 已到但 DSH 把列表清空 → 返回 `[]`(workspace 全删了)
+     */
     {
       kind: 'exact',
       path: SkyAxisEndpoints.workspaceList,
       handler: async (_req, res) => {
         try {
-          const items = await fetchWorkspaces(service.apiProxy)
-          const summaries: WorkspaceSummary[] = items.map(item => ({
-            id: item.id,
-            title: item.title,
-            path: item.path,
+          const views = service.getWorkspaceViews()
+          const summaries: WorkspaceSummary[] = views.map(view => ({
+            id: view.workspaceId as unknown as never,
+            title: view.title,
+            path: view.path,
           }))
           jsonResponse(res, 200, { ok: true, items: summaries })
         } catch (error) {

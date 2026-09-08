@@ -1,7 +1,7 @@
 /**
- * sky-axis 插件 host 半区业务服务 —— 持有 apiProxy 引用 + workspacePathCache,
- * 封装所有「需求」相关的业务逻辑(list / get / create / delete / 物料 CRUD /
- * artifact 落盘),供 host routes 调用。
+ * sky-axis 插件 host 半区业务服务 —— 持有 workspaceController 引用 +
+ * workspaceViewCache,封装所有「需求」相关的业务逻辑(list / get / create /
+ * delete / 物料 CRUD / artifact 落盘),供 host routes 调用。
  *
  * Sprint 5 演进(YAML-as-SoT):
  *   - 删 `@deepseek-ai/dsh-storage-domain` 依赖 —— 不再持有 domain/table handle
@@ -14,22 +14,44 @@
  *   - SSE 订阅改内部 pub-sub —— Stage 6 由 fs-watcher-manager 的 onChange 回调
  *     `emitChange` 推送;这里只保留 subscribeDomainChanges API 签名不变
  *
+ * 0.1.2 演进(workspace controller 流化):
+ *   - 删 `ApiProxy` 依赖,改 `WorkspaceController`(由 `startWorkspaceFollow()`
+ *     订阅其 `follow(signal)` 流,事件驱动维护 `workspaceViewCache`)
+ *   - 缓存命中即返回,不再发 RPC;首次 bootstrap 等 `whenBaselineReady()` 拿到
+ *     首帧 baseline
+ *
  * 生命周期:
  *   1. 构造:不再异步初始化(没有 domain open);同步建好,直接可用
  *   2. 业务方法:全部 await resolveWorkspacePath / readAllRequirements / updateRequirements
- *   3. 关闭:close() 幂等;目前无外部资源(Stage 6 fs-watcher-manager 由 index.ts 持有)
+ *   3. 关闭:close() 幂等;abort 内部 follow 流 AbortController,释放 fs-watcher
  *
  * 关键设计:
  *   - ID 生成:`${ISO}-${rand6}`,可 localeCompare 排序,碰撞概率极低
- *   - workspace 校验:create 时调 apiProxy.workspace.list 校验 workspaceId 真实存在
+ *   - workspace 校验:cache hit 即认为存在;create 时也会复用 `resolveWorkspacePath`
+ *     走同一路径,cache miss 抛 workspace-not-found
  *   - 1:1 不变量:在 mutator 内部检查(read-modify-write 锁内原子检查 + 写)
  *   - 不存 workspace 元数据快照:仅存 workspaceId(FK)
  */
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
-import type { WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy'
+import type {
+  WorkspaceController,
+  WorkspaceFollowFrame,
+  WorkspaceView,
+} from '@deepseek-ai/dsh-api-workspace-controller'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller'
+/**
+ * 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2):
+ *   - 原 `@deepseek-ai/dsh-host-apiproxy` 整体被删,`ApiProxy` 类型不再存在
+ *   - workspace 相关的服务入口改用 `@deepseek-ai/dsh-api-workspace-controller`
+ *     导出的 `WorkspaceController`(继承自 `TypertRemoteService`,提供流式
+ *     `follow(signal) → AsyncIterable<WorkspaceFollowFrame>` API)
+ *   - `WorkspaceId` 类型从 `@deepseek-ai/dsh-host-apiproxy` 改到同 controller 包
+ *   - service 通过 `startWorkspaceFollow()` 订阅流,事件驱动维护
+ *     `workspaceViewCache`(替代原 60s TTL 的 path-only cache)
+ *   - 详见 UPGRADE-MIGRATION-GUIDE.md §1
+ */
 import {
   AddDesignLinkRequest,
   AddExternalLinkRequest,
@@ -51,7 +73,6 @@ import {
   defaultRequirementFields,
 } from '../protocol.ts'
 import * as artifactWriter from './artifact-writer.ts'
-import { skyAxisRequest } from './rpc-helper.ts'
 import {
   createGitService,
   SKY_AXIS_REPOS_DIR,
@@ -318,18 +339,28 @@ async function unlinkMaterialFile(workspacePath: string, relativePath: string): 
  *
  * Sprint 5:不再持有 storage domain handle;所有持久化通过 requirements-store
  * 走 `<workspace>/.sky-axis/mate.yaml` 的 `requirements` 段。
+ *
+ * 0.1.2 迁移(dsh-upgrade-audit §2.2 + UPGRADE-MIGRATION-GUIDE §1):
+ *   - 0.1.1:`workspacePathCache` 60s TTL 由 `this.apiProxy.workspace.list(req)`
+ *     一次性 RPC 主动刷新
+ *   - 0.1.2:由 `ctx.workspaceController.follow(signal)` 流订阅驱动,`workspaceViewCache`
+ *     缓存 `WorkspaceView`(workspaceId/path/title/sessionIds/时间戳),baseline 帧灌全量,
+ *     upsert/remove 增量维护。无 TTL,无主动 refresh
  */
 export class RequirementHostService {
-  /** workspaceId → 真实 path 的本地缓存(每次 list workspace 后刷新一次)。 */
-  private workspacePathCache = new Map<SkyAxisWorkspaceId, string>()
-  /** workspace 列表上次拉取时间(ms epoch),用于缓存 TTL。 */
-  private workspaceCacheLoadedAt = 0
-  /** 缓存 TTL:60s —— workspace 创建/删除/重命名后最长 60s 同步。 */
-  private static readonly WORKSPACE_CACHE_TTL_MS = 60_000
+  /**
+   * workspaceId → 真实 `WorkspaceView`(由 follow 流事件驱动维护)。
+   *
+   * 0.1.2 选 WorkspaceView 而非 path 字符串的原因:routes/requirements.ts
+   * 的 GET /workspaces 端点(以及未来的 workspace-meta 详情接口)需要
+   * workspaceId / title / path 三个字段 —— 用 View 一次缓存全部字段
+   * 拿出去直接投影,省去一次 RPC。`resolveWorkspacePath` 只取 `.path`。
+   */
+  private workspaceViewCache = new Map<SkyAxisWorkspaceId, WorkspaceView>()
 
   /**
    * reqId → workspacePath 反向索引(供 get(id) 用)。
-   * - 懒填充:第一次 get(id) 时按当前 workspacePathCache 扫一遍
+   * - 懒填充:第一次 get(id) 时按当前 workspaceViewCache 扫一遍
    * - 增量维护:list / create / remove / subscribeDomainChanges 回调时更新
    * - 弱保证:跨进程 / 外部工具改 mate.yaml 后可能短暂 stale;fallback 兜底全量扫
    */
@@ -348,15 +379,132 @@ export class RequirementHostService {
 
   private closed = false
 
+  /**
+   * 0.1.2:内部 follow 流的 AbortController —— `close()` 时 abort,
+   * `consumeWorkspaceFollow` 检测后退出。effect dispose 也会触发 abort
+   * (我们用 effect.signal 桥接到这个 controller),但保留显式持有便于
+   * 测试 / 显式 teardown 路径。
+   */
+  private readonly followAbortController = new AbortController()
+
+  /**
+   * 0.1.2:首次 baseline 到达时 resolve;`whenBaselineReady()` 复用。
+   * 后续 reconnect 触发的 baseline 不再 resolve(已经过了;reconnect
+   * 自身有完整重灌机制)。
+   */
+  private readonly baselineReady: {
+    promise: Promise<readonly WorkspaceView[]>
+    resolve: (views: readonly WorkspaceView[]) => void
+  }
+
   /** Phase 2.6 源码关联:git 沙箱封装(stateless,可在多 service 间共享)。 */
   readonly gitService: GitService = createGitService()
 
   constructor(
     private readonly ctx: import('@deepseek-ai/cordis').Context,
-    /** apiProxy 公开给 host routes 使用(fetchWorkspaces 路由通过它拉 workspace 列表)。 */
-    readonly apiProxy: ApiProxy,
+    /**
+     * 0.1.2:替换原 `ApiProxy` 聚合服务为细粒度 `WorkspaceController`。
+     * 由 host apply 注入;后续 `startWorkspaceFollow()` 内部使用
+     * `this.ctx.workspaceController.follow(signal)` 订阅流。字段保留
+     * readonly 仅供 routes/requirements.ts#GET /workspaces 路径直接读取。
+     */
+    readonly workspaceController: WorkspaceController,
   ) {
     // 不再需要 storageDomain 注入;Stage 6 由 fs-watcher-manager 推 emitChange
+    let resolveBaseline!: (views: readonly WorkspaceView[]) => void
+    const promise = new Promise<readonly WorkspaceView[]>((resolve) => {
+      resolveBaseline = resolve
+    })
+    this.baselineReady = { promise, resolve: resolveBaseline }
+  }
+
+  /**
+   * 0.1.2:在 cordis effect 内订阅 `workspaceController.follow(signal)` 流,
+   * 维护 `workspaceViewCache`。由 host apply 在 effect 内调用一次,effect
+   * cleanup 时通过 `reqSvc.close()` abort 内部 AbortController 释放。
+   *
+   * 实现要点:
+   *   - 首帧必须 type='baseline',灌全量 cache
+   *   - 后续帧 type='upsert'/'remove'/'order'/'archived' 增量维护
+   *   - 流被 generator 中断(workspace 进程重启 / connection 断) → 自动
+   *     重连并再来一帧 baseline 覆盖 cache
+   *   - 解析过的 workspaceViewCache 已稳定 → resolveWorkspacePath /
+   *     resolveAllWorkspacePaths 走纯缓存(不再发请求)
+   */
+  startWorkspaceFollow(): void {
+    // 用内部持有的 AbortController —— `close()` 时一并 abort,
+    // effect dispose 不必感知 signal 的存在(降低 index.ts 接线复杂度)
+    void this.consumeWorkspaceFollow(this.followAbortController.signal).catch((err) => {
+      if (this.followAbortController.signal.aborted) return
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] workspace follow stream aborted:', err)
+    })
+  }
+
+  private async consumeWorkspaceFollow(signal: AbortSignal): Promise<void> {
+    const controller = this.ctx.workspaceController
+    while (!signal.aborted) {
+      try {
+        for await (const frame of controller.follow(signal)) {
+          if (signal.aborted) break
+          this.applyWorkspaceFollowFrame(frame)
+        }
+        // for await 正常结束(理论上 follow 永不返回)→ 视为流结束,break outer
+        break
+      } catch (err) {
+        if (signal.aborted) throw err
+        // eslint-disable-next-line no-console
+        console.warn('[sky-axis] workspace follow stream iteration failed; retrying after backoff:', err)
+        // 短暂退避后重连
+        await new Promise<void>((resolve) => setTimeout(resolve, 1_000))
+      }
+    }
+  }
+
+  private applyWorkspaceFollowFrame(frame: WorkspaceFollowFrame): void {
+    switch (frame.type) {
+      case 'baseline': {
+        // 全量覆盖 —— 任何 in-flight 反向索引 / snapshots 仍然安全
+        // (workspace 不存 requirement,反向索引里 req.workspaceId 不存在
+        // 即视为 stale;后续 get(id) 会触发全量扫表重建)
+        const fresh = new Map<SkyAxisWorkspaceId, WorkspaceView>()
+        for (const item of frame.value.items) {
+          fresh.set(item.workspaceId as unknown as SkyAxisWorkspaceId, item)
+        }
+        this.workspaceViewCache = fresh
+        // 首帧到达,resolve baselineReady promise(只 resolve 一次)
+        this.baselineReady.resolve(this.snapshotViews())
+        return
+      }
+      case 'upsert': {
+        const ws = frame.workspace
+        this.workspaceViewCache.set(
+          ws.workspaceId as unknown as SkyAxisWorkspaceId,
+          ws,
+        )
+        return
+      }
+      case 'remove': {
+        this.workspaceViewCache.delete(
+          frame.workspaceId as unknown as SkyAxisWorkspaceId,
+        )
+        return
+      }
+      case 'order':
+        // workspace 顺序变更不影响 workspaceId → view 映射,忽略
+        return
+      case 'archived':
+        // archived session 列表变更不影响 workspace view,忽略
+        return
+    }
+  }
+
+  /**
+   * 当前 cache 全部 view 的快照(只读)。
+   * routes/requirements.ts#GET /workspaces 透传 client 用。
+   */
+  private snapshotViews(): readonly WorkspaceView[] {
+    return [...this.workspaceViewCache.values()]
   }
 
   /* ── 内部 pub-sub(Stage 6 fs-watcher-manager 接入)── */
@@ -512,10 +660,16 @@ export class RequirementHostService {
   /**
    * 关闭 service(幂等)。释放 domain handle 触发 backend unit close;
    * DSH host 重启 / 插件卸载时调用。
+   *
+   * 0.1.2:同时 abort 内部 follow 流的 AbortController —— `consumeWorkspaceFollow`
+   * 检测到 abort 后立刻退出,`startWorkspaceFollow` 端的 .catch handler
+   * 因 signal.aborted 而 no-op。effect dispose 也会 abort,但这里
+   * 兜底一次防止 effect 先于 close 跑完。
    */
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.followAbortController.abort()
     this.domainChangeListeners.clear()
   }
 
@@ -563,7 +717,7 @@ export class RequirementHostService {
 
   /**
    * 跨 workspace 读全部 requirement + 增量维护反向索引。
-   * workspace 列表来自 apiProxy.workspace.list(60s TTL 缓存)。
+   * workspace 列表来自 `workspaceViewCache`(由 follow 流驱动)。
    *
    * 注意:某个 workspace 的 mate.yaml 损坏 → 跳过该 workspace + console.warn。
    * (Sprint 5 的 yaml-parse-failed 错误码;不影响其他 workspace 列表)
@@ -598,7 +752,7 @@ export class RequirementHostService {
    *
    * @throws SkyAxisHostError
    *   - 'workspace-not-found':workspaceId 不在 DSH 当前 workspace 列表
-   *   - 'workspace-list-failed':apiProxy.workspace.list 返回 RpcResult 失败
+   *     (cache miss;baseline 还没到或真的不存在)
    *   - 'workspace-already-has-requirement':该 workspace 已有关联 requirement
    *   - 'yaml-parse-failed' / 'yaml-write-failed' / 'yaml-lock-timeout':mate.yaml IO
    */
@@ -1218,11 +1372,8 @@ export class RequirementHostService {
 
   /**
    * 解析 workspaceId → 真实文件系统 path(同时校验 workspace 存在)。
-   * 60s 内不重复拉 apiProxy.workspace.list(缓存命中直接返回)。
-   */
-  /**
-   * 解析 workspaceId → 真实文件系统 path(同时校验 workspace 存在)。
-   * 60s 内不重复拉 apiProxy.workspace.list(缓存命中直接返回)。
+   * 直接查 `workspaceViewCache`(由 follow 流驱动);cache hit 即返回,
+   * miss 抛 `workspace-not-found`(包括 baseline 还没到的极罕见场景)。
    *
    * Public(Stage 6):migration helper 需要外部把 storage domain 残留 record
    * 搬到对应 workspace,无 service 内部方法能跨 workspace 解析 path —— 这里暴露。
@@ -1236,7 +1387,6 @@ export class RequirementHostService {
    *
    * 抛错:
    *   - `workspace-not-found`:workspaceId 不在 DSH 当前 workspace 列表
-   *   - `workspace-list-failed`:apiProxy.workspace.list 返回 RpcResult 失败
    *   - `yaml-write-failed`/cross-check-failed:ensureMeta 失败透传
    */
   async resolveWorkspacePath(workspaceId: SkyAxisWorkspaceId): Promise<string> {
@@ -1248,14 +1398,18 @@ export class RequirementHostService {
       return cached
     }
 
-    await this.refreshWorkspacePathCache()
-    const path = this.workspacePathCache.get(workspaceId)
-    if (path === undefined) {
+    // 0.1.2:缓存 miss 后不再主动 refresh —— cache 由 follow 流维护。
+    // 这里要么是 cache 真的空(baseline 还没到,极罕见)、要么是这个
+    // workspaceId 不存在。前者再 throw workspace-not-found 也是合理
+    // (调用方重试可拿到 baseline);后者本来就是错误语义。
+    const view = this.workspaceViewCache.get(workspaceId)
+    if (view === undefined) {
       throw new SkyAxisHostError(
         'workspace-not-found',
         `workspace '${workspaceId}' is not in the current DSH workspace registry`,
       )
     }
+    const path = view.path
     await this.ensureWorkspaceBootstrap(path, workspaceId)
     return path
   }
@@ -1277,8 +1431,9 @@ export class RequirementHostService {
     try {
       await ensureMeta(workspacePath, {
         workspaceId,
-        // title 在 service 层拿不到(workspacePathCache 只存 path)
-        // ensureMeta 接受空字符串,启动 effect 会用真实 title 覆盖
+        // 0.1.2:workspaceViewCache 里其实有 title,但本方法在 resolveWorkspacePath
+        // 命中缓存后调用,调用栈里没传 title(签名上也不传);ensureMeta 接受
+        // 空字符串,启动 effect 会用真实 title 覆盖。
         workspaceTitle: '',
         skyAxisVersion: SKY_AXIS_PLUGIN_VERSION,
         now: new Date().toISOString(),
@@ -1314,48 +1469,50 @@ export class RequirementHostService {
 
   /**
    * 仅查缓存(不发 API);用于反向索引命中后的路径推导 + 命中后的快速路径。
+   *
+   * 0.1.2:不再做 TTL 检查 —— 缓存由 `consumeWorkspaceFollow` 流驱动,
+   * 任何时候 cache 里有就直接返回;空集意味着 baseline 还没到(罕见,只在
+   * apply 启动到首帧之间)→ 返回 undefined 让上层走 fallback。
    */
   private resolveWorkspacePathFromCache(workspaceId: SkyAxisWorkspaceId): string | undefined {
-    const now = Date.now()
-    if (
-      this.workspacePathCache.size > 0
-      && now - this.workspaceCacheLoadedAt < RequirementHostService.WORKSPACE_CACHE_TTL_MS
-    ) {
-      return this.workspacePathCache.get(workspaceId)
-    }
-    return undefined
+    return this.workspaceViewCache.get(workspaceId)?.path
   }
 
   /**
-   * 拿全部 workspace path(无 TTL 校验,每次都拉;仅 readAllAcrossWorkspaces 内部用)。
+   * 拿全部 workspace path(直接读缓存;仅 `readAllAcrossWorkspaces` 内部用)。
+   *
+   * 0.1.2:不再调主动 refresh —— 缓存由 follow 流维护。
+   * 空集意味着 baseline 还没到,返回 `[]`(扫描不到任何 requirement,
+   * 不抛错,与 0.1.1 的空 cache 语义一致)。
    */
   private async resolveAllWorkspacePaths(): Promise<string[]> {
-    await this.refreshWorkspacePathCache()
-    return [...this.workspacePathCache.values()]
+    return [...this.workspaceViewCache.values()].map(view => view.path)
   }
 
-  /** 刷 workspacePathCache(60s TTL)。 */
-  private async refreshWorkspacePathCache(): Promise<void> {
-    const now = Date.now()
-    if (
-      this.workspacePathCache.size > 0
-      && now - this.workspaceCacheLoadedAt < RequirementHostService.WORKSPACE_CACHE_TTL_MS
-    ) {
-      return
-    }
-    const response = await this.apiProxy.workspace.list(skyAxisRequest({}))
-    if (!response.result.ok) {
-      throw new SkyAxisHostError(
-        'workspace-list-failed',
-        `apiProxy.workspace.list failed: ${response.result.error.code}: ${response.result.error.message}`,
-      )
-    }
-    const fresh = new Map<SkyAxisWorkspaceId, string>()
-    for (const item of response.result.value.items) {
-      fresh.set(item.workspaceId as unknown as SkyAxisWorkspaceId, item.path)
-    }
-    this.workspacePathCache = fresh
-    this.workspaceCacheLoadedAt = now
+  /**
+   * 公开:等首帧 baseline 到达后 resolve —— 启动期一次性 bootstrap
+   * (ensureMeta / fs-watch / migration)需要全量 workspace 列表,这里
+   * 是 0.1.2 唯一阻塞等待流首帧的位置;后续 resolveWorkspacePath /
+   * resolveAllWorkspacePaths 都走同步缓存。
+   *
+   * 失败:流连不上(controller 重启 / DSH 进程崩溃)→ 抛 controller
+   * 错误。host apply 应把 bootstrap 嵌入 try/catch,失败 console.warn
+   * 不阻塞 webServer。
+   */
+  whenBaselineReady(): Promise<readonly WorkspaceView[]> {
+    return this.baselineReady.promise
+  }
+
+  /**
+   * 公开:同步拿当前 cache 里的全部 WorkspaceView。
+   * 给 routes/requirements.ts#GET /workspaces(以及未来的 workspace
+   * detail 端点)用 —— 透传 client,作为 `useWorkspaces()` 的 fallback。
+   *
+   * 不发请求,空集 = baseline 还没到(返回 `[]`,由 route 决定要不要
+   * 503 / fallback)。
+   */
+  getWorkspaceViews(): readonly WorkspaceView[] {
+    return this.snapshotViews()
   }
 
   /**
@@ -1368,30 +1525,7 @@ export class RequirementHostService {
   }
 }
 
-/**
- * sky-axis workspace 元数据拉取(透传给 client,client 端首选 ctx.workspaces.list;
- * 仅当 client 注入失败 / 老版本兼容时 fallback)。
- */
-export async function fetchWorkspaces(apiProxy: ApiProxy): Promise<Array<{ id: SkyAxisWorkspaceId; title: string; path: string }>> {
-  const response = await apiProxy.workspace.list(skyAxisRequest({}))
-  if (!response.result.ok) {
-    throw new SkyAxisHostError(
-      'workspace-list-failed',
-      `apiProxy.workspace.list failed: ${response.result.error.code}: ${response.result.error.message}`,
-    )
-  }
-  return response.result.value.items.map(item => ({
-    id: item.workspaceId as unknown as SkyAxisWorkspaceId,
-    title: item.title !== '' ? item.title : basename(item.path),
-    path: item.path,
-  }))
-}
-
-/** 兼容 node:path.basename 但不需要 import path 全套。 */
-function basename(p: string): string {
-  const i = p.lastIndexOf('/')
-  return i === -1 ? p : p.slice(i + 1)
-}
-
-/* ── 类型 re-export(避免 consumer 反复 import @deepseek-ai/dsh-host-apiproxy)── */
-export type { ApiProxy, WorkspaceId }
+/* ── 类型 re-export(避免 consumer 反复 import @deepseek-ai/dsh-api-workspace-controller)── */
+// 0.1.2 迁移:原 `ApiProxy` 已删,替换为 `WorkspaceController`。
+// `WorkspaceId` 从 `dsh-host-apiproxy` 改到 `dsh-api-workspace-controller`。
+export type { WorkspaceController, WorkspaceId }

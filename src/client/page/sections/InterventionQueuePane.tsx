@@ -7,7 +7,7 @@
  *   - 队列空时显示空状态文案
  *
  * Phase 3 增量：
- *   - 接入 approval/question 应答 → ctx.apiProxy.respond
+ *   - 接入 approval/question 应答 → ctx.session.respond(0.1.2,原 ctx.apiProxy)
  *   - 队列项实时更新（push / remove via SSE interventionAdded / interventionRemoved）
  */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
