@@ -56,9 +56,13 @@ const SKY_AXIS_META_DIR = '.sky-axis'
 
 /* ── zod schema ── */
 
-/** workspace 段：与 `WorkspaceView`(`@deepseek-ai/dsh-api-workspace-controller`)字段对齐 —— 0.1.2 流驱动 cache 直接落 WorkspaceView,这里只取 path/title 用。 */
+/** workspace 段：与 `WorkspaceView`(`@deepseek-ai/dsh-api-workspace-controller`)字段对齐 —— 0.1.2 流驱动 cache 直接落 WorkspaceView,这里只取 path/title 用。
+ *
+ *  Plan H:`id` 是 informational only —— DSH uuid 是入口参数,path 才是
+ *  on-disk identity。旧 mate.yaml(含 id)继续 parse;新默认 write 可省略 id。
+ *  仅 `path` 在 ensureMeta cross-check 中强制。 */
 const WorkspaceSectionSchema = z.object({
-  id:    z.string().min(1),
+  id:    z.string().min(1).optional(),
   title: z.string(),
   path:  z.string().min(1),
 })
@@ -106,9 +110,13 @@ export type WorkspaceMeta = z.infer<typeof WorkspaceMetaSchema>
 /** v2 形态：caller 拿到 meta 后用 schemaVersion 收窄。 */
 export type WorkspaceMetaV2 = z.infer<typeof WorkspaceMetaV2Schema>
 
-/** 构造默认 mate.yaml 对象（host ensureMeta 工厂用,输出 v2 形态）。 */
+/** 构造默认 mate.yaml 对象（host ensureMeta 工厂用,输出 v2 形态）。
+ *
+ *  Plan H：`workspaceId` 改为 optional —— 传入时写入 `workspace.id`（供日志
+ *  / debug 追溯）,不传时 YAML 中省略该字段（path 是唯一身份）。 */
 export function defaultWorkspaceMeta(opts: {
-  workspaceId:    WorkspaceId
+  /** 可选 DSH uuid。传入时写入 workspace.id;不传时 YAML 中无该字段。 */
+  workspaceId?:   WorkspaceId
   workspaceTitle: string
   workspacePath:  string
   skyAxisVersion: string
@@ -117,7 +125,7 @@ export function defaultWorkspaceMeta(opts: {
   return {
     schemaVersion: SKY_AXIS_META_SCHEMA_VERSION,
     workspace: {
-      id:    opts.workspaceId,
+      ...(opts.workspaceId !== undefined ? { id: opts.workspaceId } : {}),
       title: opts.workspaceTitle,
       path:  opts.workspacePath,
     },
@@ -308,11 +316,18 @@ export async function writeRequirementsSection(
 /**
  * 确保 mate.yaml 存在且 valid；不存在 → 写默认值，存在 → 刷新 lastTouchedAt。
  *
- * cross-check（fail loud）：
- *   - 现有 meta 的 workspace.path 必须等于传入的 workspacePath
- *   - workspace.id 也必须等于传入的 workspaceId
- *   - 任一不一致 → 抛 `cross-check-failed`（workspace 被外部移动 / ID 改了的
- *     异常态；调用方应让用户手动修，不静默覆盖）
+ * cross-check（fail loud，Plan H 起仅校验 path）：
+ *   - 现有 meta 的 workspace.path 必须等于传入的 workspacePath（不变）
+ *   - ~~workspace.id 也必须等于传入的 workspaceId~~ —— Plan H 移除。DSH 删
+ *     + 重建同路径工作区是合法操作,sky-axis 不再因 uuid 轮换而拒绝。
+ *   - path 不一致 → 抛 `cross-check-failed`（workspace 被外部移动 / mate.yaml
+ *     被拷到别的目录；调用方应让用户手动修,不静默覆盖）
+ *
+ * Plan H 行为：
+ *   - `workspace.id` 是 informational only —— on-disk 身份是 path,不是 DSH uuid
+ *   - `opts.workspaceId` 改为 optional：
+ *     - 传入 → 写入 `workspace.id`（覆盖旧值,DSH 给新 uuid 时自动 update）
+ *     - 不传 → 保留旧 `workspace.id`（若存在）；旧值也缺则 YAML 中省略
  *
  * Sprint 5 增量（YAML-as-SoT）：
  *   - 命中 v1 → 升级到 v2 + requirements: {}（Sprint 6 migration 负责把
@@ -324,7 +339,9 @@ export async function writeRequirementsSection(
  * @throws WorkspaceMetaError
  */
 export async function ensureMeta(workspacePath: string, opts: {
-  workspaceId:    WorkspaceId
+  /** 可选 DSH uuid。Plan H 起不再强制 cross-check；传入时写入 workspace.id
+   *  （覆盖旧值）,不传时保留旧 id（若有）。 */
+  workspaceId?:   WorkspaceId
   workspaceTitle: string
   skyAxisVersion: string
   now:            string
@@ -340,14 +357,14 @@ export async function ensureMeta(workspacePath: string, opts: {
   let meta: WorkspaceMetaV2
   if (existing === undefined) {
     meta = defaultWorkspaceMeta({
-      workspaceId:    opts.workspaceId,
+      ...(opts.workspaceId !== undefined ? { workspaceId: opts.workspaceId } : {}),
       workspaceTitle: opts.workspaceTitle,
       workspacePath:  workspacePath,
       skyAxisVersion: opts.skyAxisVersion,
       now:            opts.now,
     })
   } else {
-    // cross-check：现有 meta 与当前 caller 上下文是否一致
+    // Plan H:仅校验 path（id 是 informational,DSH uuid 轮换不抛）
     if (existing.workspace.path !== workspacePath) {
       throw new WorkspaceMetaError(
         'cross-check-failed',
@@ -355,20 +372,15 @@ export async function ensureMeta(workspacePath: string, opts: {
         `requested workspacePath (${workspacePath}) — workspace may have been moved`,
       )
     }
-    if (existing.workspace.id !== opts.workspaceId) {
-      throw new WorkspaceMetaError(
-        'cross-check-failed',
-        `mate.yaml workspace.id (${existing.workspace.id}) does not match ` +
-        `requested workspaceId (${opts.workspaceId}) — workspace identity changed`,
-      )
-    }
     // 保留 firstInstalledAt；刷新 lastTouchedAt；title / version 跟随最新 caller 输入
     // Sprint 5：v1 → v2 升级(requirements 段初始化空 record)
     const upgraded = upgradeMetaToV2(existing)
+    // 解析应写入的 id:opts 显式传入优先（DSH 给的新 uuid）,否则保留已有
+    const nextId = opts.workspaceId ?? upgraded.workspace.id
     meta = {
       schemaVersion: upgraded.schemaVersion,
       workspace: {
-        id:    upgraded.workspace.id,
+        ...(nextId !== undefined ? { id: nextId } : {}),
         title: opts.workspaceTitle,
         path:  workspacePath,
       },

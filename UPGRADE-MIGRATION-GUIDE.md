@@ -293,6 +293,67 @@ pnpm install @deepseek-ai/dsh@0.1.1-rc.1 @deepseek-ai/dsh-client-runtime@0.1.1-r
 - §1 / §2 完成后未释放的 0.1.2 工作:
   - `ctx.apiProxy.respond`(session controller respond) — `protocol.ts:405,482`、`InterventionQueuePane.tsx:10`、`protocol.ts:702` 仍引用,等 session controller sprint 单独迁移
 
+## §6 Path-stable identity(Plan H)
+
+### 背景
+
+DSH plugin ≤ 0.1.1 把 `workspace.id`(DSH uuid)当作 on-disk 身份,写入 `mate.yaml` 并由 `ensureMeta` 严格 cross-check。DSH 删 + 重建同路径工作区是合法操作(DSH 给新 uuid),但 sky-axis 把这当数据完整性破坏,抛:
+
+```
+workspace meta conflict for <path>:
+mate.yaml workspace.id (4ead1602-...) does not match
+requested workspaceId (58766308-...) — workspace identity changed
+```
+
+修复策略:**sky-axis 的 on-disk 身份与 DSH uuid 解耦。`path` 是身份,DSH uuid 是 informational only**。
+
+### Schema 变更
+
+- [`src/host/workspace-meta.ts:60-70`](src/host/workspace-meta.ts#L60-L70) `WorkspaceSectionSchema.id` 改 `z.string().min(1).optional()`
+- [`src/host/workspace-meta.ts:113-138`](src/host/workspace-meta.ts#L113-L138) `defaultWorkspaceMeta` 接受 optional `workspaceId`,不传时不写 `id` 字段
+- [`src/host/workspace-meta.ts:317-403`](src/host/workspace-meta.ts#L317-L403) `ensureMeta` 签名 `workspaceId` 改 optional;**移除** line 358-364 的 id 严格 cross-check;refresh 分支保留/覆盖 id 的逻辑改为 `nextId = opts.workspaceId ?? existing.id`
+
+### 行为变化
+
+| 场景                                | Before Plan H              | After Plan H                |
+|-------------------------------------|----------------------------|-----------------------------|
+| path + id 都匹配                     | OK                         | OK                          |
+| **path 匹配 + id 不同(uuid 轮换)**   | **throw cross-check-failed** | **OK(自动覆盖或保留)**       |
+| path 不一致(mate.yaml 被拷到别的目录) | throw cross-check-failed   | throw cross-check-failed(不变)|
+
+### 数据迁移
+
+**无操作**。`workspace.id` 改为 zod `.optional()` 后,旧 mate.yaml(含 id 字段)继续 parse,无需任何改动文件。新默认 write 不写 id(除非 caller 显式传);已有 `workspace.id` 字段在 refresh 分支会被保留(若 caller 不传新 id)。
+
+### caller 影响
+
+- [`src/host/requirement-service.ts:1427-1478`](src/host/requirement-service.ts#L1427-L1478) `ensureWorkspaceBootstrap` 行为自动跟随 `ensureMeta` —— DSH uuid 轮换不再抛错,仅 path mismatch 抛 `yaml-write-failed`(错误文案改为 `workspace meta path conflict`)
+- [`src/index.ts:240-264`](src/index.ts#L240-L264) 启动 effect 不变,继续传 `workspaceId` 给 `ensureMeta`(作为 informational trace)
+- `Requirement.workspaceId` 字段不变 —— 继续记录创建时的 DSH uuid,客户端 UI 分组逻辑(`SkyAxisPage.tsx:139`、`RequirementsList.tsx:67-69`)照常工作
+- `resolveWorkspacePath(workspaceId)` 缓存 miss 仍抛 `workspace-not-found`(见已知 follow-up)
+
+### 单元测试变更
+
+[`tests/workspace-meta.test.ts`](tests/workspace-meta.test.ts):
+
+- 删除 `cross-check fail:workspaceId 不一致 → throws cross-check-failed`(原 line 205-212):行为不再可达
+- 新增 6 个 `Plan H: path is the on-disk identity` 测试用例:
+  1. `id mismatch 不再抛错` —— 新 uuid 覆盖旧 uuid
+  2. `caller 不传 id 时保留已有 id`
+  3. `caller 不传 id + 旧 mate.yaml 无 id → 也不写 id`
+  4. `schema 容忍旧 mate.yaml 有 id 字段(向后兼容读)`
+  5. `schema 容忍 v1 mate.yaml 无 workspace.id`
+  6. `defaultWorkspaceMeta` 双向(传/不传 workspaceId)
+- 首次调用测试新增 Plan H 变体(不传 id → YAML 中无 id)
+
+测试结果:`workspace-meta.test.ts` 26 passed / 1 failed(后者是 Windows 平台 `chmod 0o000` 不阻止读,pre-existing 平台限制,与本改动无关)。
+
+### 已知 follow-up(不在 §6 范围)
+
+- **`resolveWorkspacePath` 缓存 miss fallback** —— DSH 删 + 重建后,旧 uuid 不在 `workspaceViewCache` 里,host 仍抛 `workspace-not-found`。短期靠"DSH 'baseline' 帧到达后再操作"规避;长期做"扫描 baseline paths 的 mate.yaml 找 orphan"或"DSH 提供 path-stable id(Plan K)"
+- **UI 层 archived-orphaned 角标** —— 老需求(uuid-A)在新工作区下显示为"工作区已删除"占位符。后续可加 archived-orphaned badge 提示用户
+- **DSH 提供 path-stable id(Plan K)** —— 如果 DSH 后续给 `workspace.id = hash(path)`,可以回填 `requirement.workspaceId` 让 uuid 重新稳定
+
 ## 参考
 
 - 审计报告:[`tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md`](tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md)

@@ -1,7 +1,7 @@
 /**
  * src/host/workspace-meta.ts 单元测试。
  *
- * 测试目标（Sprint 2：工作区目录结构改造）：
+ * 测试目标（Sprint 2：工作区目录结构改造 + Plan H path-stable identity）：
  *   - readMeta 行为：
  *     - 文件不存在 → throws WorkspaceMetaError('missing')
  *     - YAML 语法错 → throws WorkspaceMetaError('invalid')
@@ -10,7 +10,8 @@
  *   - ensureMeta 行为：
  *     - 首次调用 → 写默认值（firstInstalledAt == lastTouchedAt == now）
  *     - 二次调用 → 保留 firstInstalledAt，更新 lastTouchedAt
- *     - cross-check fail（workspaceId / workspacePath 不一致）→ throws 'cross-check-failed'
+ *     - cross-check fail（仅 path 不一致）→ throws 'cross-check-failed'
+ *     - Plan H:id mismatch 不再抛错 —— 新 uuid 可覆盖旧 uuid；不传 id 则保留旧
  *   - 原子写：写完后磁盘上不存在 .tmp 残留
  *   - 幂等性：连续两次 ensureMeta 不报错
  *
@@ -150,6 +151,18 @@ describe('ensureMeta', () => {
     await expect(access(_metaPath(workspaceRoot))).resolves.toBeUndefined()
   })
 
+  it('Plan H：首次调用不传 workspaceId → 写默认值无 id 字段', async () => {
+    const meta = await ensureMeta(workspaceRoot, makeOpts({ workspaceId: undefined }))
+    expect(meta.workspace).not.toHaveProperty('id')
+    expect(meta.workspace.path).toBe(workspaceRoot)
+    expect(meta.workspace.title).toBe('Test Workspace')
+    expect(meta.skyAxis.firstInstalledAt).toBe(NOW)
+    // 磁盘上 YAML 也不含 id
+    const raw = await readFile(_metaPath(workspaceRoot), 'utf8')
+    const parsed = YAML.parse(raw) as { workspace: { id?: string } }
+    expect(parsed.workspace.id).toBeUndefined()
+  })
+
   it('二次调用：保留 firstInstalledAt，更新 lastTouchedAt', async () => {
     const first = await ensureMeta(workspaceRoot, makeOpts())
     expect(first.skyAxis.firstInstalledAt).toBe(NOW)
@@ -202,14 +215,7 @@ describe('ensureMeta', () => {
     }
   })
 
-  it('cross-check fail：现有 mate.yaml 的 workspaceId 与 caller 不一致 → throws cross-check-failed', async () => {
-    await ensureMeta(workspaceRoot, makeOpts())
-    await expect(ensureMeta(workspaceRoot, makeOpts({
-      workspaceId: 'ws-different' as unknown as typeof WORKSPACE_ID,
-    }))).rejects.toMatchObject({
-      code: 'cross-check-failed',
-    })
-  })
+  // Plan H 移除 id cross-check —— 此用例不再可达,见下方 'Plan H: id mismatch 不抛错'
 
   it('现有 mate.yaml 损坏 → throws invalid（不静默修复）', async () => {
     // 先写一个损坏文件
@@ -363,5 +369,106 @@ describe('readMeta v2 schema', () => {
     await expect(readMeta(workspaceRoot)).rejects.toMatchObject({
       code: 'invalid',
     })
+  })
+})
+
+/* ── Plan H: path is the on-disk identity ─────────────────────────────── */
+
+describe('Plan H: path is the on-disk identity', () => {
+  it('id mismatch 不再抛错 —— 新 uuid 覆盖旧 uuid（DSH 删 + 重建同路径）', async () => {
+    // 首次:uuid-A
+    const first = await ensureMeta(workspaceRoot, makeOpts({
+      workspaceId: 'uuid-A' as unknown as typeof WORKSPACE_ID,
+    }))
+    expect(first.workspace.id).toBe('uuid-A')
+    expect(first.skyAxis.firstInstalledAt).toBe(NOW)
+
+    // 二次:同 path 但新 uuid —— Plan H 之前会抛 cross-check-failed,之后应当成功
+    const second = await ensureMeta(workspaceRoot, makeOpts({
+      workspaceId: 'uuid-B' as unknown as typeof WORKSPACE_ID,
+    }))
+    expect(second.workspace.path).toBe(workspaceRoot)
+    expect(second.workspace.id).toBe('uuid-B')   // 显式覆盖
+    expect(second.skyAxis.firstInstalledAt).toBe(NOW)  // 保留
+    expect(second.skyAxis.lastTouchedAt).toBe(NOW)     // 刷新
+    expect(second.requirements).toEqual({})            // 保留
+  })
+
+  it('caller 不传 id 时保留已有 id（不擦除）', async () => {
+    await ensureMeta(workspaceRoot, makeOpts({
+      workspaceId: 'uuid-A' as unknown as typeof WORKSPACE_ID,
+    }))
+    const second = await ensureMeta(workspaceRoot, makeOpts({ workspaceId: undefined }))
+    expect(second.workspace.id).toBe('uuid-A')   // 保留
+  })
+
+  it('caller 不传 id + 旧 mate.yaml 无 id → 也不写 id', async () => {
+    // 手工写一个 v2 mate.yaml 不带 workspace.id
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 2,
+      workspace: { title: 'Old Title', path: workspaceRoot },
+      skyAxis: { version: '0.0.1', firstInstalledAt: NOW, lastTouchedAt: NOW },
+      requirements: {},
+    }), 'utf8')
+
+    const meta = await ensureMeta(workspaceRoot, makeOpts({ workspaceId: undefined }))
+    expect(meta.workspace).not.toHaveProperty('id')
+    expect(meta.workspace.path).toBe(workspaceRoot)
+    expect(meta.workspace.title).toBe('Test Workspace')  // 跟随最新 caller
+  })
+
+  it('schema 容忍旧 mate.yaml 有 id 字段（向后兼容读）', async () => {
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 2,
+      workspace: { id: 'legacy-uuid', title: 'Old', path: workspaceRoot },
+      skyAxis: { version: '0.0.1', firstInstalledAt: NOW, lastTouchedAt: NOW },
+      requirements: {},
+    }), 'utf8')
+
+    const meta = await readMeta(workspaceRoot)
+    expect(meta.workspace.id).toBe('legacy-uuid')   // 仍然读得到
+    expect(meta.workspace.path).toBe(workspaceRoot)
+  })
+
+  it('schema 容忍 v1 mate.yaml 无 workspace.id', async () => {
+    const target = _metaPath(workspaceRoot)
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, YAML.stringify({
+      schemaVersion: 1,
+      workspace: { title: 'v1 NoId', path: workspaceRoot },
+      skyAxis: { version: '0.0.1', firstInstalledAt: NOW, lastTouchedAt: NOW },
+    }), 'utf8')
+
+    const meta = await readMeta(workspaceRoot)
+    if (meta.schemaVersion !== 1) throw new Error('expected v1')
+    expect(meta.workspace.id).toBeUndefined()
+    expect(meta.workspace.path).toBe(workspaceRoot)
+  })
+
+  it('defaultWorkspaceMeta 不传 workspaceId 时不写 id', () => {
+    const meta = defaultWorkspaceMeta({
+      workspaceTitle: 'X',
+      workspacePath: workspaceRoot,
+      skyAxisVersion: SKY_AXIS_VERSION,
+      now: NOW,
+    })
+    expect(meta.workspace).not.toHaveProperty('id')
+    expect(meta.workspace.path).toBe(workspaceRoot)
+    expect(meta.workspace.title).toBe('X')
+  })
+
+  it('defaultWorkspaceMeta 传 workspaceId 时写 id', () => {
+    const meta = defaultWorkspaceMeta({
+      workspaceId: 'X' as unknown as typeof WORKSPACE_ID,
+      workspaceTitle: 'X',
+      workspacePath: workspaceRoot,
+      skyAxisVersion: SKY_AXIS_VERSION,
+      now: NOW,
+    })
+    expect(meta.workspace.id).toBe('X')
   })
 })

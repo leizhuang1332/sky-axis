@@ -1417,12 +1417,16 @@ export class RequirementHostService {
   /**
    * 幂等 ensureMeta —— 启动 effect 漏掉的 workspace 在第一次写路径前补齐。
    *
+   * Plan H:workspaceId 是 informational —— DSH uuid 轮换（删 + 重建同路径）
+   * 不再触发 cross-check。path 不一致仍然抛（operator 把 mate.yaml 拷到别的
+   * 目录是真实损坏）。
+   *
    * 失败语义:
-   *   - `cross-check-failed`:mate.yaml 已存在但 workspaceId 不一致 → 抛
-   *     (数据完整性优先,不覆盖用户手工写的 mate.yaml)
-   *   - 其他 WorkspaceMetaError(invalid / io-failed):console.warn 不抛
-   *     —— 让后续 updateRequirements 自己抛 yaml-write-failed,便于诊断
-   *   - 成功(初次或刷新 lastTouchedAt):静默
+   *   - `cross-check-failed`:仅 path mismatch → 抛 yaml-write-failed
+   *   - `invalid`:yaml 损坏 → 抛 yaml-parse-failed
+   *   - 其他 WorkspaceMetaError(io-failed):抛 yaml-write-failed
+   *   - 非 WorkspaceMetaError 错误:console.warn 不抛
+   *   - 成功(初次 / refresh lastTouchedAt / id 自动更新):静默
    */
   private async ensureWorkspaceBootstrap(
     workspacePath: string,
@@ -1430,6 +1434,8 @@ export class RequirementHostService {
   ): Promise<void> {
     try {
       await ensureMeta(workspacePath, {
+        // Plan H:此处 workspaceId 写入 mate.yaml 作为 informational trace。
+        // DSH 删 + 重建同路径工作区时,新 uuid 会自动覆盖旧值(无 cross-check)。
         workspaceId,
         // 0.1.2:workspaceViewCache 里其实有 title,但本方法在 resolveWorkspacePath
         // 命中缓存后调用,调用栈里没传 title(签名上也不传);ensureMeta 接受
@@ -1442,9 +1448,10 @@ export class RequirementHostService {
       // WorkspaceMetaError → 翻译成 SkyAxisHostError 让 route 统一处理
       if (e instanceof WorkspaceMetaError) {
         if (e.code === 'cross-check-failed') {
+          // Plan H:仅 path mismatch 会触发此分支(uuid 差异已不抛)
           throw new SkyAxisHostError(
             'yaml-write-failed',
-            `workspace meta conflict for ${workspacePath}: ${e.message}`,
+            `workspace meta path conflict for ${workspacePath}: ${e.message}`,
           )
         }
         if (e.code === 'invalid') {

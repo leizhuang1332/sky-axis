@@ -244,6 +244,9 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       for (const view of views) {
         const workspaceId = view.workspaceId as unknown as SkyAxisWorkspaceId
         try {
+          // Plan H:workspaceId 是 informational —— 写入 mate.yaml.workspace.id
+          // 作为日志/调试 trace;不同 uuid 但同 path 不会让 ensureMeta 抛错。
+          // path 是 on-disk 唯一身份。
           await ensureMeta(view.path, {
             workspaceId,
             workspaceTitle: view.title !== '' ? view.title : '',
