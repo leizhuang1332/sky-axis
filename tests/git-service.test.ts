@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createGitService, SKY_AXIS_REPOS_DIR } from '../src/host/git-service.ts'
+import { createGitService, SKY_AXIS_REPOS_DIR, gitSpawnEnv, cloneFailed } from '../src/host/git-service.ts'
 import { SkyAxisHostError } from '../src/host/requirement-service.ts'
 
 /** 一个临时风格的 workspaceRoot(用 mkdtemp 同步创建过的真实目录更好,但
@@ -167,5 +167,115 @@ describe('GitService 完整性判断', () => {
       destDir,
       workspaceRoot,
     })).rejects.toMatchObject({ code: 'git-clone-incomplete' })
+  })
+})
+
+/* ── Plan J：gitSpawnEnv + cloneFailed 单元测试 ── */
+
+describe('gitSpawnEnv (Plan J)', () => {
+  it('强制 GIT_TERMINAL_PROMPT=0,关闭 stdin 凭证提示', () => {
+    const env = gitSpawnEnv()
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+  })
+
+  it('继承 SSH_AUTH_SOCK(SSH clone 必须有 agent socket)', () => {
+    const orig = process.env.SSH_AUTH_SOCK
+    process.env.SSH_AUTH_SOCK = '/tmp/ssh-agent-test-sock'
+    try {
+      expect(gitSpawnEnv().SSH_AUTH_SOCK).toBe('/tmp/ssh-agent-test-sock')
+    } finally {
+      if (orig === undefined) delete process.env.SSH_AUTH_SOCK
+      else process.env.SSH_AUTH_SOCK = orig
+    }
+  })
+
+  it('继承 HTTP_PROXY(企业内网 git clone 走代理)', () => {
+    const orig = process.env.HTTP_PROXY
+    process.env.HTTP_PROXY = 'http://proxy.example.com:8080'
+    try {
+      expect(gitSpawnEnv().HTTP_PROXY).toBe('http://proxy.example.com:8080')
+    } finally {
+      if (orig === undefined) delete process.env.HTTP_PROXY
+      else process.env.HTTP_PROXY = orig
+    }
+  })
+
+  it('继承 HOME(credential helper 在 ~/.gitconfig 找配置)', () => {
+    const origHome = process.env.HOME
+    const origUserProfile = process.env.USERPROFILE
+    process.env.HOME = '/tmp/fake-home'
+    try {
+      const env = gitSpawnEnv()
+      expect(env.HOME).toBe('/tmp/fake-home')
+    } finally {
+      if (origHome === undefined) delete process.env.HOME
+      else process.env.HOME = origHome
+      if (origUserProfile === undefined) delete process.env.USERPROFILE
+      else process.env.USERPROFILE = origUserProfile
+    }
+  })
+
+  it('返回值是 process.env 的浅拷贝,改 gitSpawnEnv() 不影响 process.env', () => {
+    const orig = process.env.GIT_TERMINAL_PROMPT
+    const env = gitSpawnEnv()
+    env.GIT_TERMINAL_PROMPT = '1'
+    expect(process.env.GIT_TERMINAL_PROMPT).toBe(orig)
+  })
+})
+
+describe('cloneFailed (Plan J: GitLab HTTP 拒绝识别)', () => {
+  it('识别 GitLab "Unencrypted HTTP is not supported" 改写 detail', () => {
+    const e = cloneFailed(
+      'fatal: unable to access …: Unencrypted HTTP is not supported for GitLab',
+      128,
+    )
+    expect(e.code).toBe('git-clone-failed')
+    expect(e.message).toMatch(/use https:\/\/ or ssh:\/\//)
+    expect(e.message).toContain('Unencrypted HTTP')
+  })
+
+  it('识别无 "for GitLab" 后缀的版本(部分 GitLab 老版本)', () => {
+    const e = cloneFailed(
+      'fatal: unable to access: Unencrypted HTTP is not supported',
+      128,
+    )
+    expect(e.message).toMatch(/use https:\/\/ or ssh:\/\//)
+  })
+
+  it('大小写不敏感识别', () => {
+    const e = cloneFailed(
+      'fatal: UNENCRYPTED HTTP IS NOT SUPPORTED',
+      128,
+    )
+    expect(e.message).toMatch(/use https:\/\/ or ssh:\/\//)
+  })
+
+  it('未知 stderr 保持原样,不误改写', () => {
+    const e = cloneFailed('Could not resolve host github.com', 128)
+    expect(e.code).toBe('git-clone-failed')
+    expect(e.message).toContain('Could not resolve host')
+    expect(e.message).not.toMatch(/use https:\/\/ or ssh:\/\//)
+  })
+
+  it('空 stderr + code 提供 fallback', () => {
+    const e = cloneFailed('', 128)
+    expect(e.code).toBe('git-clone-failed')
+    expect(e.message).toContain('exited with code 128')
+  })
+
+  it('长 stderr 被截断到 500 字符', () => {
+    const long = 'a'.repeat(2000)
+    const e = cloneFailed(long, 128)
+    // 截断在 'a'.repeat(500) = 500 字符,加上 cloneFailed 包装前缀(< 50 字符)
+    expect(e.message.length).toBeLessThan(600)
+  })
+
+  it('认证失败保持原样,不被改写成 https/ssh 提示', () => {
+    const e = cloneFailed(
+      'Permission denied (publickey).\r\nfatal: Could not read from remote repository.',
+      128,
+    )
+    expect(e.message).not.toMatch(/use https:\/\/ or ssh:\/\//)
+    expect(e.message).toContain('Permission denied')
   })
 })

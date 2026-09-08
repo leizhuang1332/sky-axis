@@ -108,6 +108,71 @@ export const UrlSchema = z.string().url().refine(
 )
 export type Url = z.infer<typeof UrlSchema>
 
+/**
+ * 源码仓库 URL —— 用于 git clone 目标。**比 UrlSchema 宽松**:
+ * 接受任何 git CLI 原生支持的 scheme + 简写形式。
+ *
+ * 为什么不用 UrlSchema:
+ *   - UrlSchema 语义是「可在浏览器里点开的链接」(防 XSS/SSRF)。
+ *   - 源码 URL 是 git CLI 消费,git 原生支持 SSH 简写和 git+前缀;
+ *     强制 http/https 会让用户无法用 SSH key 关联内网 GitLab / 自建仓库。
+ *   - PrdLink / DesignLink / ExternalLink 仍保留 UrlSchema —— 这些「点击即打开」
+ *     的链接严格 http/https 是正确的。
+ *
+ * 接受:
+ *   - http://host[:port]/path[.git]
+ *   - https://host[:port]/path[.git]
+ *   - ssh://[user@]host[:port]/path[.git]
+ *   - git://host[:port]/path[.git]
+ *   - git+https://... / git+ssh://...(npm/pip 风格前缀)
+ *   - SCP 简写:[user@]host:path[.git]
+ *
+ * 拒绝:
+ *   - file://, javascript:, data:, ftp://, mailto:, tel:, ws:, wss:
+ *   - 空字符串 / 仅 git+ 前缀 / 仅 scheme 无 path / 含控制字符
+ *   - 长度 > 2048
+ *
+ * 注意:zod 自带的 `.url()` 不能用 —— `new URL()` 不支持 SCP 简写
+ *   (`git@github.com:foo/bar.git`),且能解析 `mailto:` 等非 git scheme。
+ */
+const SCP_SHORTHAND_RE =
+  /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:[A-Za-z0-9._\-./]+$/
+
+export const SourceRepoUrlSchema = z.string().min(1).max(2048).refine(
+  (raw) => {
+    const s = raw.trim()
+    if (s === '') return false
+    // 去 npm 风格 git+ 前缀(git+https://, git+ssh://, git+git@...)
+    const stripped = s.startsWith('git+') ? s.slice(4) : s
+    // 防御性:拒绝控制字符(防 log injection / null 字节)
+    if (/[\x00-\x1f\x7f]/.test(stripped)) return false
+    // SCP 简写分支:[user@]host:path(无 //)
+    if (!stripped.includes('://')) {
+      if (!SCP_SHORTHAND_RE.test(stripped)) return false
+      const colonIdx = stripped.indexOf(':')
+      const afterColon = stripped.slice(colonIdx + 1)
+      // 拒绝 SSH refspec(如 `git@github.com:main`) —— 真正的路径必须含
+      // '/' 或以 '.git' 结尾。这是与 git 文档一致的启发式:
+      // refspec 通常是单 token,path 至少含一段目录分隔。
+      const looksLikePath = afterColon.includes('/') || afterColon.endsWith('.git')
+      if (!looksLikePath) return false
+      return true
+    }
+    // 标准 URL 形式
+    let u: URL
+    try { u = new URL(stripped) } catch { return false }
+    const proto = u.protocol
+    if (proto !== 'http:' && proto !== 'https:' && proto !== 'ssh:' && proto !== 'git:') {
+      return false
+    }
+    const path = u.pathname.replace(/^\/+/, '')
+    if (path === '') return false
+    return true
+  },
+  { message: 'invalid git URL: must be http(s)://, ssh://, git://, git+https://, git+ssh://, or [user@]host:path SCP shorthand' },
+)
+export type SourceRepoUrl = z.infer<typeof SourceRepoUrlSchema>
+
 /** 用户标识 —— DSH workspace 用户 id；空字符串 = 系统/未知。 */
 export const UserIdSchema = z.string().min(0).max(128)
 export type UserId = z.infer<typeof UserIdSchema>
@@ -158,7 +223,7 @@ export type PrdLink = z.infer<typeof PrdLinkSchema>
  */
 export const SourceRepoSchema = z.object({
   id:           MaterialItemIdSchema,
-  url:          UrlSchema,
+  url:          SourceRepoUrlSchema,
   /** git branch / tag / commit ref；空字符串 = 默认分支（host 解析时回退）。 */
   branch:       z.string().max(255),
   /** last commit SHA（short 7 字符或 full 40 字符均可）；optional —— 未同步时为空。 */
@@ -293,7 +358,8 @@ export type MaterialSection = z.infer<typeof MaterialSectionSchema>
  * 4 个 JSON add 请求 schema —— 故意省略服务端生成字段
  * （id / addedAt / addedBy / uploadedBy / path）。
  * 字段语义：
- *   - url：受限 http/https（UrlSchema）
+ *   - url：PRD/Design/External 仍受限 http/https（UrlSchema,防 XSS/SSRF）；
+ *        source repo 用 SourceRepoUrlSchema（接受 http/https/ssh/git + SCP 简写）
  *   - title / description：长度上限的字符串
  *   - source / kind：受控枚举（避免脏数据污染 UI 图标 / 提取策略）
  */
@@ -305,7 +371,7 @@ export const AddPrdLinkRequestSchema = z.object({
 export type AddPrdLinkRequest = z.infer<typeof AddPrdLinkRequestSchema>
 
 export const AddSourceRepoRequestSchema = z.object({
-  url:           UrlSchema,
+  url:           SourceRepoUrlSchema,
   branch:        z.string().min(1).max(255),    // Phase 2.6: 加 min(1) —— 同步 clone 时必须明确分支
   lastCommitSha: z.string().regex(/^[a-f0-9]{7,40}$/).optional(),
   description:   z.string().max(500),

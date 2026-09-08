@@ -30,6 +30,7 @@ import {
   RequirementStatusSchema,
   RequirementsListResponseSchema,
   SourceRepoSchema,
+  SourceRepoUrlSchema,
   UrlSchema,
   UserIdSchema,
   WorkspacesListResponseSchema,
@@ -535,6 +536,69 @@ describe('MaterialsSchema（需求物料）', () => {
     expect(UrlSchema.safeParse('http://x.com').success).toBe(true)
     expect(UrlSchema.safeParse('data:text/plain,abc').success).toBe(false)
     expect(UrlSchema.safeParse('not-a-url').success).toBe(false)
+  })
+
+  /* ── Plan J：SourceRepoUrlSchema（git 仓库 URL，允许 ssh/scp/git+）── */
+
+  describe('SourceRepoUrlSchema', () => {
+    it.each([
+      ['http URL',                'http://github.com/owner/repo.git'],
+      ['https URL',               'https://github.com/owner/repo.git'],
+      ['SSH URL 形式',            'ssh://git@github.com/owner/repo.git'],
+      ['SSH URL 带端口',          'ssh://git@code.jms.com:2222/project/jms/spm/yl-jms-spm-collect-schedule.git'],
+      ['git:// 协议',             'git://github.com/owner/repo.git'],
+      ['git+https 前缀',          'git+https://github.com/owner/repo.git'],
+      ['git+ssh 前缀',            'git+ssh://git@github.com/owner/repo.git'],
+      ['SCP 简写 git@host:path',  'git@github.com:owner/repo.git'],
+      ['SCP 多层 owner path',     'git@gitlab.com:group/sub/proj.git'],
+      ['https 多层 path',         'https://gitlab.com/group/sub/proj.git'],
+      ['尾斜杠',                  'https://github.com/owner/repo/'],
+      ['无 .git 后缀',            'https://gitlab.com/x/y/miner'],
+      ['首尾空白被 trim',         '  https://github.com/owner/repo.git  '],
+      ['大写 scheme',             'HTTPS://github.com/owner/repo.git'],
+      ['http 内网',               'http://code.jms.com/project/jms/spm/x.git'],
+    ])('接受: %s (%s)', (_label, url) => {
+      expect(SourceRepoUrlSchema.safeParse(url).success).toBe(true)
+    })
+
+    it.each([
+      ['空字符串',                ''],
+      ['仅空白',                  '   '],
+      ['not-a-url',               'not-a-url'],
+      ['file://',                 'file:///tmp/foo/bar.git'],
+      ['javascript:',             'javascript:alert(1)'],
+      ['data:',                   'data:text/plain,abc'],
+      ['ftp://',                  'ftp://example.com/repo.git'],
+      ['mailto:',                 'mailto:foo@bar.com'],
+      ['tel:',                    'tel:+1234567890'],
+      ['ws://',                   'ws://example.com/repo.git'],
+      ['仅 scheme 无 path',       'https://github.com'],
+      ['SCP 无 path (host:branch)', 'git@github.com:main'],
+      ['git+ 无 scheme',          'git+'],
+      ['超长 (>2048)',            'https://github.com/' + 'a'.repeat(2050)],
+    ])('拒绝: %s (%s)', (_label, url) => {
+      expect(SourceRepoUrlSchema.safeParse(url).success).toBe(false)
+    })
+
+    it('AddSourceRepoRequestSchema 通过 SSH URL 校验', () => {
+      const ok = AddSourceRepoRequestSchema.safeParse({
+        url: 'ssh://git@code.jms.com:2222/project/jms/spm/yl-jms-spm-collect-schedule.git',
+        branch: 'main',
+        description: 'spm schedule',
+        displayName: 'spm-collect',
+      })
+      expect(ok.success).toBe(true)
+    })
+
+    it('AddSourceRepoRequestSchema 拒绝 javascript: URL', () => {
+      const bad = AddSourceRepoRequestSchema.safeParse({
+        url: 'javascript:alert(1)',
+        branch: 'main',
+        description: 'x',
+        displayName: 'x',
+      })
+      expect(bad.success).toBe(false)
+    })
   })
 
   it('UserIdSchema 空字符串合法（系统/未知）', () => {

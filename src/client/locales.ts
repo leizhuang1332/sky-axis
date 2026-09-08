@@ -388,7 +388,11 @@ export const zh = {
   'requirement.error.network-error': '网络请求失败',
   /* ── Phase 2.6 源码关联错误码 ── */
   'requirement.error.git-not-installed': '未检测到 git，请先安装 git 并确保在 PATH 中',
-  'requirement.error.git-clone-failed': '源码克隆失败（网络/权限/协议错误），请检查 URL 或稍后重试',
+  'requirement.error.git-clone-failed':
+    '源码克隆失败。常见原因：(1) 服务器拒绝明文 HTTP —— 请改用 https:// 或 ssh://；' +
+    '(2) SSH key 未加载 —— 请检查 ssh-add / SSH_AUTH_SOCK；' +
+    '(3) 私有仓库需要凭证 —— 请配置 credential helper。' +
+    '详细 stderr 见下方。',
   'requirement.error.git-checkout-failed': '创建分支失败，请检查分支名是否合法',
   'requirement.error.git-sandbox-violation': '目标路径非法，请检查 workspace 配置',
   'requirement.error.git-timeout': '克隆超过 5 分钟超时，请检查网络或仓库大小',
@@ -798,7 +802,11 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.error.network-error': 'Network request failed',
   /* ── Phase 2.6 source-repo error codes ── */
   'requirement.error.git-not-installed': 'git is not installed or not on PATH; please install git first',
-  'requirement.error.git-clone-failed': 'git clone failed (network/auth/protocol); check URL or retry',
+  'requirement.error.git-clone-failed':
+    'git clone failed. Common causes: (1) server rejects plain HTTP — use https:// or ssh://; ' +
+    '(2) SSH key not loaded — check ssh-add / SSH_AUTH_SOCK; ' +
+    '(3) private repo needs credentials — configure a credential helper. ' +
+    'See stderr below.',
   'requirement.error.git-checkout-failed': 'Failed to create branch; check if branch name is valid',
   'requirement.error.git-sandbox-violation': 'Invalid target path; check workspace configuration',
   'requirement.error.git-timeout': 'Clone timed out after 5 minutes; check network or repo size',

@@ -296,6 +296,94 @@ describe('RequirementClient.import (Plan I)', () => {
   })
 })
 
+/* ── Plan J：addSourceRepo SSH URL 接受 ── */
+
+describe('RequirementClient.addSourceRepo (Plan J: SSH URL 接受)', () => {
+  it('SSH URL 通过客户端预校验并发起 POST', async () => {
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: SAMPLE }))
+    const c = new RequirementClient()
+    const reqId = SAMPLE.id
+    const handle = c.addSourceRepo(reqId, {
+      url: 'ssh://git@code.jms.com:2222/project/jms/spm/yl-jms-spm-collect-schedule.git',
+      branch: 'main',
+      description: 'spm schedule',
+      displayName: 'spm-collect',
+    }, 'user-1')
+
+    const r = await handle.promise
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.id).toBe(SAMPLE.id)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`/api/sky-axis/materials/sourceRepos/add?requirementId=${encodeURIComponent(reqId)}`)
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.url).toBe('ssh://git@code.jms.com:2222/project/jms/spm/yl-jms-spm-collect-schedule.git')
+    expect(body.addedBy).toBe('user-1')
+  })
+
+  it('SCP 简写 URL 也通过客户端预校验', async () => {
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: SAMPLE }))
+    const c = new RequirementClient()
+    const handle = c.addSourceRepo(SAMPLE.id, {
+      url: 'git@github.com:anthropic-ai/sdk.git',
+      branch: 'main',
+      description: 'anthropic sdk',
+      displayName: 'sdk',
+    })
+    const r = await handle.promise
+    expect(r.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('客户端拒绝 SSH refspec(把 refspec 当成 SSH URL 上传 → 预校验失败)', async () => {
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: SAMPLE }))
+    const c = new RequirementClient()
+    const handle = c.addSourceRepo(SAMPLE.id, {
+      url: 'git@github.com:main',  // 看着像 SSH refspec,无 path → 拒
+      branch: 'main',
+      description: 'x',
+      displayName: 'x',
+    })
+    const r = await handle.promise
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('validation-failed')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('客户端拒绝 file:// URL', async () => {
+    const fetchMock = mockFetchOnce(okJson({ ok: true, item: SAMPLE }))
+    const c = new RequirementClient()
+    const handle = c.addSourceRepo(SAMPLE.id, {
+      url: 'file:///etc/passwd',
+      branch: 'main',
+      description: 'x',
+      displayName: 'x',
+    })
+    const r = await handle.promise
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('validation-failed')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('服务端 ApiError → 透传 code(SSH URL 已过预校验,服务端可报 auth 错)', async () => {
+    mockFetchOnce(errJson('git-clone-failed', 'Permission denied (publickey)'))
+    const c = new RequirementClient()
+    const handle = c.addSourceRepo(SAMPLE.id, {
+      url: 'ssh://git@github.com/private/repo.git',
+      branch: 'main',
+      description: 'private',
+      displayName: 'p',
+    })
+    const r = await handle.promise
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.code).toBe('git-clone-failed')
+      expect(r.detail).toContain('Permission denied')
+    }
+  })
+})
+
 describe('RequirementClient.remove', () => {
   it('成功：返回 { id }', async () => {
     const fetchMock = mockFetchOnce(okJson({ ok: true, id: SAMPLE.id }))

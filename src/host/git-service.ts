@@ -49,6 +49,23 @@ export const GIT_CLONE_TIMEOUT_MS = 5 * 60 * 1000
 const STDERR_COLLECT_LIMIT = 4096
 
 /**
+ * 构建传给 git 子进程的 env（Plan J）。在 process.env 基础上强制 GIT_TERMINAL_PROMPT=0,
+ * 让 git 在 headless 模式下不要阻塞在 stdin 上等凭证 / passphrase 提示 —— 这样
+ * 凭证缺失会立刻失败并露出真正错误(如「Unencrypted HTTP is not supported」),
+ * 而不是被「could not read Username」遮住。
+ *
+ * 注意:只 ADD 一个变量,不删除 process.env —— SSH_AUTH_SOCK / HOME / HTTP_PROXY
+ *   等必须继承,否则 SSH clone / 公司代理会全面失效。
+ * 配好 credential helper / ssh-agent 的用户不受影响(git 优先走 helper,不会 fallback
+ *   到 terminal prompt)。
+ *
+ * @internal 公开以便 tests/git-service.test.ts 单元测试断言。
+ */
+export function gitSpawnEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+}
+
+/**
  * 沙箱前缀 —— 工作区顶层 `repos/` 目录的相对路径。
  *
  * Sprint 1 演进：原值 `.sky-axis/repos` → `repos`（顶层化），复用用户已存在的
@@ -123,7 +140,7 @@ let gitAvailable: boolean | undefined
 export async function probeGit(): Promise<boolean> {
   if (gitAvailable !== undefined) return gitAvailable
   await new Promise<void>((resolveProbe) => {
-    const proc = spawn('git', ['--version'], { stdio: 'ignore' })
+    const proc = spawn('git', ['--version'], { stdio: 'ignore', env: gitSpawnEnv() })
     proc.on('error', () => { resolveProbe() })
     proc.on('exit', (code) => {
       gitAvailable = code === 0
@@ -176,6 +193,8 @@ function runGit(
       stdio: ['ignore', 'ignore', 'pipe'],
       // 显式 no detached；macOS 上 git 默认不会 detach，但加显式声明更安全
       detached: false,
+      // Plan J:headless 模式下禁止 git 在 stdin 上弹凭证提示 —— 失败时露出真正错误
+      env: gitSpawnEnv(),
     })
 
     const finish = (result: SpawnOk | SpawnErr) => {
@@ -338,10 +357,9 @@ export function createGitService(): GitService {
         if (fallbackClone.reason === 'timeout') {
           throw new SkyAxisHostError('git-timeout', truncate(fallbackClone.stderr, 500))
         }
-        throw new SkyAxisHostError(
-          'git-clone-failed',
-          truncate(fallbackClone.stderr, 500) || `git clone exited with code ${fallbackClone.code}`,
-        )
+        // Plan J：cloneFailed() 识别 GitLab「Unencrypted HTTP is not supported」
+        //   模式,改写 detail 让用户立即知道该用 https:// 或 ssh://
+        throw cloneFailed(fallbackClone.stderr, fallbackClone.code)
       }
 
       const checkout = await runGit(
@@ -386,6 +404,8 @@ async function readHeadSha(destDir: string, timeoutMs: number, signal?: AbortSig
 
     const proc = spawn('git', ['-C', destDir, 'rev-parse', 'HEAD'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Plan J:同 runGit() —— 禁止 git 在 stdin 弹凭证提示
+      env: gitSpawnEnv(),
     })
 
     const finish = (code: number | null) => {
@@ -448,6 +468,37 @@ function relativePath(workspaceRoot: string, destDir: string): string {
 function truncate(s: string, maxLen: number): string {
   if (s.length <= maxLen) return s
   return s.slice(0, maxLen) + '…'
+}
+
+/**
+ * Plan J：GitLab 16+ 默认拒绝明文 HTTP 的错误文案(多版本略有差异)。
+ * 匹配范围刻意宽到「任何 Gitea / GitLab / Gitness 自部署实例也会触发同关键词」的形态。
+ */
+const GITLAB_HTTP_REFUSAL_RE =
+  /unencrypted\s+http\s+is\s+not\s+supported(?:\s+for\s+gitlab)?/i
+
+/**
+ * Plan J：把 git clone 的 stderr 包装成 SkyAxisHostError('git-clone-failed')。
+ * 优先识别「服务器拒绝明文 HTTP」模式(GitLab 典型错误),改写 detail 让用户
+ * 立刻知道该用 https:// 或 ssh://;其他错误保持原样以避免误改写。
+ *
+ * @internal 公开以便 tests/git-service.test.ts 单元测试断言。
+ */
+export function cloneFailed(
+  stderr: string,
+  code: number | undefined,
+): SkyAxisHostError {
+  const trimmed = truncate(stderr, 500)
+  if (GITLAB_HTTP_REFUSAL_RE.test(stderr)) {
+    return new SkyAxisHostError(
+      'git-clone-failed',
+      `server rejected plain-HTTP URL; use https:// or ssh:// instead (detail: ${trimmed})`,
+    )
+  }
+  return new SkyAxisHostError(
+    'git-clone-failed',
+    trimmed || `git clone exited with code ${code}`,
+  )
 }
 
 /** 容错的 rm -rf(destDir 不存在时静默,否则抛)。 */

@@ -467,6 +467,77 @@ Plan I 解决这个闭环:**1:1 不变量从 `workspaceId → req` 收紧到 `wo
 - **DSH shell 级别的「自动 re-attach workspace」** —— DSH 重建时自动调 sky-axis import;目前 DSH 不知 sky-axis 存在,留接口扩展点
 - **UI 上的「老需求在新工作区下显示」角标(archived-orphaned)** —— Plan H follow-up #2 简化掉:Plan I 把"导入"做成主动动作,角标可后续简化
 
+## §8 源码仓库 URL 支持 SSH/git 协议 + spawn env 修复(Plan J)
+
+### 背景
+
+0.1.2 + Plan I 阶段暴露两个 git clone bug:
+
+1. **SSH URL 被 schema 拒绝** —— `ssh://git@code.jms.com:2222/project/jms/spm/x.git` 在客户端预校验阶段被 `UrlSchema` 拒,提示 "only http/https URLs are allowed"。但下游 `url-utils.ts` / `git-service.ts` 早就支持 SSH/SCP/git+ 简写,form 的 `<input type="text">` 注释明确写「部分 git URL 不是 https,例如 git@github.com:xxx」—— 设计意图本来就要支持 SSH,**schema 反而是唯一卡点**。
+2. **HTTP URL 在强制 HTTPS 的服务器上失败时错误被遮住** —— git 试图在 stdin 上弹凭证提示(HTTP 密码 / SSH passphrase),但 `spawn(..., { stdio: ['ignore', 'ignore', 'pipe'] })` 关了 stdin,导致 git 失败并报 "could not read Username",把真正的根因(GitLab 「Unencrypted HTTP is not supported」)完全盖住。
+
+### 核心改动
+
+**Schema 拆分**(src/protocol.ts):
+
+- 新增 `SourceRepoUrlSchema`:接受 http/https/ssh/git + git+ 前缀 + SCP 简写 `git@host:path`,拒绝 `file:` / `javascript:` / `data:` / `ftp:` / `mailto:` / `tel:` / `ws:` 等(防 XSS/SSRF),拒绝 SSH refspec 形式如 `git@host:main`(单 token 无 path)。
+- `UrlSchema` 保持 strict(http/https only)—— 仍用于 `PrdLinkSchema` / `DesignLinkSchema` / `ExternalLinkSchema`(防 XSS/SSRF,这些是用户点开的链接)。
+- `SourceRepoSchema.url` 和 `AddSourceRepoRequestSchema.url` 从 `UrlSchema` 改用 `SourceRepoUrlSchema`,让 SSH URL 能 round-trip 进 mate.yaml / 存储。
+
+**spawn env 修复**(src/host/git-service.ts):
+
+- 抽 `gitSpawnEnv()` helper:`{ ...process.env, GIT_TERMINAL_PROMPT: '0' }`。继承 SSH_AUTH_SOCK / HOME / HTTP_PROXY 等关键变量,**只 ADD** 一个 env,不删任何东西。
+- 所有 `spawn('git', ...)` 调用(probeGit / runGit / readHeadSha)都传 `env: gitSpawnEnv()`。
+- 效果:git 不再阻塞 stdin 等凭证提示;配好的 credential helper / SSH agent 仍正常工作;没配的话立刻失败,真实错误(服务器拒绝 / 协议不支持)显现。
+
+**错误 UX**(src/host/git-service.ts + src/client/locales.ts):
+
+- 新增 `cloneFailed(stderr, code)` helper,识别 GitLab 「Unencrypted HTTP is not supported」(大小写不敏感、有无「for GitLab」后缀都识别)→ 改写 detail 为 `server rejected plain-HTTP URL; use https:// or ssh:// instead (detail: ...)`。
+- `requirement.error.git-clone-failed` locale 文案(zh + en)给出三类常见原因的排查提示:服务器拒 HTTP / SSH key 未加载 / 凭证 helper 未配。原始 stderr 仍通过 `SkyAxisHostError.message` 透传给 UI(`FormErrorBar` 渲染)。
+
+### 行为变化
+
+| 输入 URL | 旧行为 | 新行为 |
+|---|---|---|
+| `https://github.com/x/y.git` | OK | OK |
+| `http://gitlab.internal/x.git`(GitLab 接受 HTTP) | OK(clone 成功) | OK(clone 成功) |
+| `http://gitlab.example/x.git`(GitLab 拒 HTTP) | 失败:cryptic "could not read Username" | 失败:清晰 "server rejected plain-HTTP URL; use https:// or ssh://" |
+| `ssh://git@github.com/x/y.git` | **失败:** "only http/https URLs are allowed" | OK |
+| `ssh://git@code.jms.com:2222/p/spm/x.git` | **失败:** 同上 | OK |
+| `git@github.com:x/y.git`(SCP 简写) | **失败:** 同上 | OK |
+| `git+https://github.com/x/y.git` | **失败:** 同上 | OK |
+| `git@github.com:main`(SSH refspec) | 失败: "only http/https URLs are allowed" | 失败: "invalid git URL: ..."(更精确的提示) |
+| `file:///etc/passwd` | 失败(schema) | 失败(schema) |
+| `javascript:alert(1)` | 失败(schema) | 失败(schema) |
+
+### caller 影响
+
+- **DSH client UI**:`AddSourceRepoForm` 输入框已经是 `type="text"`,无客户端改动。校验失败时原本 1 类文案("only http/https URLs are allowed")分裂为 2 类(SSH URL 合法 + javascript:/file: 等仍拒),用户感知是「报错变少、可输入变多」。
+- **现有 stored URL**(DB / mate.yaml):
+  - HTTP/HTTPS:通过(原 schema 也通过)。
+  - SSH URL(若有):通过(原 schema 拒,新 schema 通过)。**首次加载需走 schema parse 链路** —— `SourceRepoSchema.parse()` 在读 mate.yaml 时会调,失败 → `invalid-record` 错误码。无影响的前提是仓库内没历史 SSH stored URL。
+- **错误码 union**:未变(`git-clone-failed` 仍是 `git-clone-failed`,仅 detail 变)。
+- **process.env 外部依赖**:无变化 —— `gitSpawnEnv()` 只读不写。
+
+### 数据迁移
+
+无需迁移。新 `SourceRepoUrlSchema` 是旧 `UrlSchema` 的真超集:`http:` / `https:` 原 schema 通过的 URL,新 schema 全部通过。
+
+### 单元测试变更
+
+- **tests/protocol.test.ts** — 新增 `SourceRepoUrlSchema` describe:14 accept + 14 reject + `AddSourceRepoRequestSchema` 集成断言(SSH 通过 + javascript: 拒)。共 30 条新用例。
+- **tests/requirement-client.test.ts** — 新增 `addSourceRepo (Plan J: SSH URL 接受)` describe:5 条 —— SSH URL 通过预校验并 POST、SCP 简写通过、SSH refspec 被拒、file:// 被拒、服务端 ApiError 透传。
+- **tests/git-service.test.ts** — 新增 `gitSpawnEnv (Plan J)` describe:5 条 —— 强制 `GIT_TERMINAL_PROMPT=0`、继承 SSH_AUTH_SOCK / HTTP_PROXY / HOME、改返回值不影响 process.env。新增 `cloneFailed (Plan J: GitLab HTTP 拒绝识别)` describe:7 条 —— GitLab 识别(有无「for GitLab」后缀都识别)、大小写不敏感、空 stderr fallback、长 stderr 截断、认证失败不被误改写。
+
+测试结果:`pnpm test` 全绿;仅已知的 5 个 Windows 平台限制(artifact-writer / material-file path 分隔符 + workspace-meta chmod 0o000)未变。
+
+### 已知 follow-up(不在 §8 范围)
+
+- **真 git clone 集成测试** —— 需要 git 二进制 + 网络,放 e2e / 手动验证阶段。当前单元测试只覆盖 schema / sandbox / 错误识别;`spawn` 真实调用在 DSH 部署侧的 e2e harness 覆盖。
+- **凭证 helper UI 配置** —— 当前用户得在系统层配 `git config --global credential.helper`。后续可加 sky-axis 设置面板配置 `gh auth` / `git-credential-manager`。
+- **DSH sandbox 拒绝 SSH passphraseless key 的场景** —— `GIT_TERMINAL_PROMPT=0` 后,无 passphrase 的 SSH key 必须在 ssh-agent 里 `ssh-add` 加载,否则 git 失败。用户需自行保证 agent 运行(常见做法:Docker / 服务进程启动时手动 `eval $(ssh-agent)` + `ssh-add`)。
+- **`SourceRepoUrlSchema` 接受过宽的 SSRF 风险评估** —— URL 直接给 git 子进程执行,git CLI 自身处理 `git clone` 不存在主机时返回 "Could not resolve host",不会触发远程 SSRF。XSS 风险面:源码 URL **不** 渲染成 `<a href>` 可点链接,而是「重 clone」按钮,不受 `javascript:` 影响。定期 review `UrlSchema` 与 `SourceRepoUrlSchema` 边界(后续若新增素材 URL 字段如 avatar / 文档预览,需谨慎复用)。
+
 ## 参考
 
 - 审计报告:[`tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md`](tmp/0.1.1rc1-to-0.1.2rc1/UPGRADE-ADAPTATION.md)
