@@ -30,7 +30,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon,
+  ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon, EyeIcon,
 } from '../../icons/icons.tsx'
 import type {
   AdjustTaskListPatch,
@@ -58,6 +58,7 @@ import { InterventionRespondDrawer } from '../sections/InterventionRespondDrawer
 import { FailedTaskResolveModal } from '../sections/FailedTaskResolveModal.tsx'
 import { StageGateModal, type StageGateSummary } from '../sections/StageGateModal.tsx'
 import { SteerBar, type SteerSendRecord } from '../sections/SteerBar.tsx'
+import { AuditTimelineModal } from '../sections/AuditTimelineModal.tsx'
 import { Modal } from '../../ui/Modal.tsx'
 import { allMockTaskLists, mockDriftSnapshot, pickMockTaskList, summarizeForStepper } from './requirement-detail.mock.ts'
 import css from './RequirementDetailPage.module.css'
@@ -128,6 +129,9 @@ export function RequirementDetailPage({
   const [steerText, setSteerText] = useState<string>('')
   const [steerSubmitting, setSteerSubmitting] = useState<boolean>(false)
   const [steerRecent, setSteerRecent] = useState<readonly SteerSendRecord[]>([])
+
+  /* ── PR-E 迭代 7：审计时间线 modal 状态 ── */
+  const [auditOpen, setAuditOpen] = useState<boolean>(false)
 
   const handleOpenRewindStage = useCallback((_trigger: 'stage-go-back') => {
     setRewindDrawer({ open: true, trigger: 'stage-go-back', taskId: null })
@@ -359,6 +363,16 @@ export function RequirementDetailPage({
             <span className={`${css.priority} ${css[`priority_${requirement.priority}` as 'priority_normal']}`}>
               {t(`requirement.priority.${requirement.priority}`)}
             </span>
+            {/* PR-E 迭代 7：审计时间线入口按钮 */}
+            <button
+              type="button"
+              className={css.auditButton}
+              onClick={(): void => { setAuditOpen(true) }}
+              title={t('requirement.detail.audit.buttonHint')}
+              aria-label={t('requirement.detail.audit.buttonLabel')}
+            >
+              <EyeIcon size={14} className={css.auditButtonIcon} />
+            </button>
           </div>
           <div className={css.headerMeta}>
             <span className={css.metaItem}>
@@ -557,6 +571,22 @@ export function RequirementDetailPage({
             onAdvance={handleAdvanceStage}
             onStay={handleStayStage}
             submitting={stageGateSubmitting}
+          />
+        </Modal>
+      )}
+
+      {/* PR-E 迭代 7：审计时间线 modal —— 居中 Modal 条件渲染 */}
+      {auditOpen && (
+        <Modal
+          title={t('requirement.detail.audit.title')}
+          onClose={(): void => { setAuditOpen(false) }}
+          maxWidth={720}
+        >
+          <AuditTimelineModal
+            t={t}
+            requirement={requirement}
+            taskList={mockTaskList}
+            onClose={(): void => { setAuditOpen(false) }}
           />
         </Modal>
       )}

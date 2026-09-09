@@ -41,6 +41,32 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* PR-E 迭代 7：审计时间线入口按钮 —— 图标按钮，复用 backButton 视觉但更紧凑 */
+.auditButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.auditButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.auditButtonIcon {
+  display: block;
+}
+
 .headerMain {
   flex: 1;
   display: flex;

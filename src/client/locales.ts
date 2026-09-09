@@ -386,6 +386,23 @@ export const zh = {
   'requirement.detail.steer.sendHint': '发送（Ctrl/Cmd + Enter）',
   'requirement.detail.steer.recent': '最近指令',
 
+  /* PR-E 迭代 7：审计时间线 */
+  'requirement.detail.audit.buttonLabel': '审计时间线',
+  'requirement.detail.audit.buttonHint': '查看审计时间线',
+  'requirement.detail.audit.title': '审计时间线',
+  'requirement.detail.audit.filter.all': '全部',
+  'requirement.detail.audit.filter.stage': '阶段流转',
+  'requirement.detail.audit.filter.task': 'task 状态',
+  'requirement.detail.audit.filter.artifact': '产物写入',
+  'requirement.detail.audit.filter.intervention': '人工介入',
+  'requirement.detail.audit.empty': '暂无审计事件',
+  'requirement.detail.audit.emptyFiltered': '该维度暂无事件',
+  'requirement.detail.audit.event.count': '共 {n} 条事件',
+  'requirement.detail.audit.event.resolved': '已应答',
+  'requirement.detail.audit.event.reason': '原因：{reason}',
+  'requirement.detail.audit.event.steerNote': '实时指令',
+  'requirement.detail.audit.event.driftSnapshot': 'drift 快照',
+
   /* 详情页 Tab Header + 需求物料 tab（Phase 1.13 新增）*/
   'requirement.detail.tabHeader.ariaLabel': '需求详情标签',
   'requirement.detail.tabHeader.materials': '需求物料',
@@ -952,6 +969,23 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.steer.send': 'Send',
   'requirement.detail.steer.sendHint': 'Send (Ctrl/Cmd + Enter)',
   'requirement.detail.steer.recent': 'Recent steers',
+
+  /* PR-E iteration 7: audit timeline */
+  'requirement.detail.audit.buttonLabel': 'Audit timeline',
+  'requirement.detail.audit.buttonHint': 'View audit timeline',
+  'requirement.detail.audit.title': 'Audit timeline',
+  'requirement.detail.audit.filter.all': 'All',
+  'requirement.detail.audit.filter.stage': 'Stage transitions',
+  'requirement.detail.audit.filter.task': 'Task status',
+  'requirement.detail.audit.filter.artifact': 'Artifacts',
+  'requirement.detail.audit.filter.intervention': 'Interventions',
+  'requirement.detail.audit.empty': 'No audit events yet',
+  'requirement.detail.audit.emptyFiltered': 'No events in this dimension',
+  'requirement.detail.audit.event.count': '{n} events',
+  'requirement.detail.audit.event.resolved': 'resolved',
+  'requirement.detail.audit.event.reason': 'Reason: {reason}',
+  'requirement.detail.audit.event.steerNote': 'steer note',
+  'requirement.detail.audit.event.driftSnapshot': 'drift snapshot',
 
   /* Detail page tab header + Materials tab (Phase 1.13) */
   'requirement.detail.tabHeader.ariaLabel': 'Requirement detail tabs',
