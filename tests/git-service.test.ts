@@ -334,7 +334,8 @@ describe('NETWORK_ERROR_RE (Plan K: 网络/鉴权错误识别)', () => {
   it.each([
     ['branch 不存在',         'error: pathspec \'feature/x\' did not match any file(s) known to git'],
     ['空 stderr',             ''],
-    ['GitLab HTTP 拒绝',      'fatal: unable to access: Unencrypted HTTP is not supported for GitLab'],
+    // Plan L:GitLab HTTP 拒绝 已从"非网络错"调整为"网络错"语义(primary 阶段跳过 fallback)。
+    // 详细覆盖见下方 `NETWORK_ERROR_RE (Plan L: HTTP 专属错误)` describe block。
     ['普通 git 错误',         'fatal: not a git repository'],
   ])('不命中(非网络错误): %s — "%s"', (_label, stderr) => {
     expect(NETWORK_ERROR_RE.test(stderr)).toBe(false)
@@ -343,5 +344,34 @@ describe('NETWORK_ERROR_RE (Plan K: 网络/鉴权错误识别)', () => {
   it('大小写不敏感', () => {
     expect(NETWORK_ERROR_RE.test('CONNECTION TIMED OUT')).toBe(true)
     expect(NETWORK_ERROR_RE.test('permission denied (PublicKey)')).toBe(true)
+  })
+})
+
+/* ── Plan L:HTTP 慢传输保护 + HTTP 专属错误识别 ── */
+
+describe('gitSpawnEnv (Plan L: HTTP 慢传输保护)', () => {
+  it('注入 GIT_HTTP_LOW_SPEED_LIMIT=1000 阈值 1KB/s', () => {
+    expect(gitSpawnEnv().GIT_HTTP_LOW_SPEED_LIMIT).toBe('1000')
+  })
+
+  it('注入 GIT_HTTP_LOW_SPEED_TIME=30 持续 30s 慢即断', () => {
+    expect(gitSpawnEnv().GIT_HTTP_LOW_SPEED_TIME).toBe('30')
+  })
+
+  it('Plan K 的 GIT_SSH_COMMAND 仍保留(不冲突)', () => {
+    expect(gitSpawnEnv().GIT_SSH_COMMAND).toMatch(/BatchMode=yes/)
+  })
+})
+
+describe('NETWORK_ERROR_RE (Plan L: HTTP 专属错误)', () => {
+  it.each([
+    ['GitLab HTTP 拒绝',     'fatal: unable to access: Unencrypted HTTP is not supported for GitLab'],
+    ['Gitea HTTP 拒绝',      'fatal: unable to access: Unencrypted HTTP is not supported'],
+    ['curl 18 传输断',       'RPC failed; curl 18 transfer closed with outstanding read data remaining'],
+    ['curl 56 接收失败',     'RPC failed; curl 56 GnuTLS recv error'],
+    ['自签名证书',           'SSL certificate problem: self signed certificate'],
+    ['证书过期',             'server certificate verification failed. CAfile: /etc/ssl/certs/ca-certificates.crt CRLfile: none'],
+  ])('命中 HTTP 错误: %s — "%s"', (_label, stderr) => {
+    expect(NETWORK_ERROR_RE.test(stderr)).toBe(true)
   })
 })

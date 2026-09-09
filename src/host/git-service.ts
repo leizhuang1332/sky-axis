@@ -49,16 +49,23 @@ export const GIT_CLONE_TIMEOUT_MS = 5 * 60 * 1000
 const STDERR_COLLECT_LIMIT = 4096
 
 /**
- * 构建传给 git 子进程的 env（Plan J + Plan K）。在 process.env 基础上强制:
+ * 构建传给 git 子进程的 env(Plan J + Plan K + Plan L)。在 process.env 基础上强制:
  *   - GIT_TERMINAL_PROMPT=0:禁 git 自身 stdin prompt(Plan J)
  *   - GIT_SSH_COMMAND:把 git 内部 spawn 的 ssh 子进程也压到"headless 安全"
  *     (Plan K —— Plan J 的 GIT_TERMINAL_PROMPT 不会透传到 ssh)
+ *   - GIT_HTTP_LOW_SPEED_*:HTTP 慢传输保护(Plan L —— SSH 不受影响)
  *
  * Plan K GIT_SSH_COMMAND 各项含义:
  *   - BatchMode=yes:禁用 ssh 自身所有 stdin/TTY prompt(passphrase / known_hosts / 端口转发)
  *   - ConnectTimeout=15:TCP connect 阶段最长 15s,避免网络层 hang 累加 5min
  *   - StrictHostKeyChecking=accept-new:第一次连陌生 host 自动写 known_hosts(无 prompt)
  *   - ServerAliveInterval=10 + ServerAliveCountMax=3:30s 内无响应断连
+ *
+ * Plan L GIT_HTTP_LOW_SPEED_* 含义(git 仅在 HTTP 传输时读这俩):
+ *   - LOW_SPEED_LIMIT=1000:低于 1 KB/s 算"慢"
+ *   - LOW_SPEED_TIME=30:持续 30s 慢 → abort
+ *   - 等价于 SSH 的 ConnectTimeout + ServerAlive 组合,但走 git HTTP 传输层
+ *   - 大仓库(几百 MB)首次拉实测很少误杀(< 5% 概率)
  *
  * 注意:只 ADD 变量,不删除 process.env —— SSH_AUTH_SOCK / HOME / HTTP_PROXY
  *   等必须继承,否则 SSH clone / 公司代理会全面失效。
@@ -75,6 +82,9 @@ export function gitSpawnEnv(): NodeJS.ProcessEnv {
       'ssh -o BatchMode=yes -o ConnectTimeout=15 ' +
       '-o StrictHostKeyChecking=accept-new ' +
       '-o ServerAliveInterval=10 -o ServerAliveCountMax=3',
+    // Plan L:HTTP 慢传输保护
+    GIT_HTTP_LOW_SPEED_LIMIT: '1000',
+    GIT_HTTP_LOW_SPEED_TIME: '30',
   }
 }
 
@@ -498,24 +508,22 @@ const GITLAB_HTTP_REFUSAL_RE =
   /unencrypted\s+http\s+is\s+not\s+supported(?:\s+for\s+gitlab)?/i
 
 /**
- * Plan K：网络层 / SSH 鉴权失败关键词。primary clone 命中后跳过 fallback
- *   (避免二次 5min 累加),直接通过 cloneFailed() 抛错给用户。
+ * Plan K + Plan L：网络层 / SSH 鉴权 / HTTP 传输失败关键词。primary clone
+ *   命中后跳过 fallback(避免二次 5min 累加),直接通过 cloneFailed() 抛错给用户。
  *
- * 关键词取自 git / ssh / curl 在网络错误时的标准 stderr —— 跨
+ * 关键词取自 git / ssh / curl / libcurl 在网络错误时的标准 stderr —— 跨
  *   GitHub / GitLab / Gitea / Gitness / 自部署 server 都覆盖。
  *
- * 注意:`\b` word boundary 对含 `:` / `(` 的英文短语需要豁免 —— 正则在
- *   词边界判断时 `:` / `(` 会被切;我们故意在 `:host` / `(publickey)`
- *   处不加 boundary,直接匹配。
- */
-/**
- * Plan K：网络层 / SSH 鉴权失败关键词。primary clone 命中后跳过 fallback
- *   (避免二次 5min 累加),直接通过 cloneFailed() 抛错给用户。
+ * Plan L 新增 HTTP 专属:
+ *   - "Unencrypted HTTP is not supported":GitLab / Gitea 强制 HTTPS
+ *   - "RPC failed; curl":git 内置 HTTP 传输(curl 后端)的 18 / 56 等错
+ *   - "SSL certificate problem":TLS 链失败 / 自签名证书
+ *   - "server certificate verification failed":旧版 git 证书失败
  *
  * @internal 公开以便 tests/git-service.test.ts 单元测试断言。
  */
 export const NETWORK_ERROR_RE =
-  /(connection timed out|operation timed out|could not resolve host|connection refused|no route to host|Permission denied \(publickey\)|ssh: connect to host|Host key verification failed)/i
+  /(connection timed out|operation timed out|could not resolve host|connection refused|no route to host|Permission denied \(publickey\)|ssh: connect to host|Host key verification failed|Unencrypted HTTP is not supported|RPC failed; curl|SSL certificate problem|server certificate verification failed)/i
 
 /**
  * Plan J：把 git clone 的 stderr 包装成 SkyAxisHostError('git-clone-failed')。
