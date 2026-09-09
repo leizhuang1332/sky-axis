@@ -1,6 +1,6 @@
 # @leizhuang/sky-axis
 
-English | [English](README.md)
+简体中文 | [English](README.md)
 
 一个纯浏览器的 DSH Web GUI 插件：在主列渲染「开发工作台」sky-axis SPA，
 包括一个可折叠 icon rail 的 sidebar、个人二级目录（个人 → 需求列表）、

@@ -1,6 +1,6 @@
 # @leizhuang/sky-axis
 
-中文 | [中文](README.zh.md)
+English | [中文](README.zh.md)
 
 A browser-only DSH web GUI plugin that renders a developer workspace
 ("sky-axis") in the main column: a sidebar with a collapsible icon rail, a
