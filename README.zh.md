@@ -8,6 +8,124 @@ English | [English](README.md)
 host 半区的需求 CRUD + SSE 同步。挂在 sidebar 主树 entry 席位（与 Chat
 / Skills 等同级），**无需修改 DSH 任何源码**。
 
+---
+
+![alt text](image.png)
+![alt text](image-1.png)
+
+**AI 工作台 —— 5 阶段流水线 + 任务子循环 + 回退机制**
+
+```mermaid
+flowchart LR
+  U["理解<br/>spec.md"]
+  P["规划<br/>plan.md + tasks.json"]
+  I["实现<br/>patches/ (按任务)"]
+  V["验证<br/>verify-report.md"]
+  D["交付<br/>delivery.md"]
+
+  U --> P --> I --> V --> D
+
+  subgraph I_CYCLE["实现任务子循环"]
+    T_PEND["pending"] --> T_RUN["in_progress"]
+    T_RUN --> T_VER["verifying"]
+    T_VER -->|"通过"| T_DONE["done"]
+    T_VER -->|"失败 (≤2次)"| T_RUN
+    T_VER -->|"失败 (>2次)"| T_FAIL["failed"]
+    T_FAIL -->|"回退"| P
+  end
+
+  V -.->|"验证失败"| I
+  I -.->|"偏离计划"| P
+  P -.->|"目标错位"| U
+  D -.->|"回滚"| V
+```
+
+---
+
+## 项目简介
+
+**sky-axis** 是面向 DSH（DeepSeek Harness）的开发工作台插件，把结构化的
+需求管理与 AI 驱动的开发工作流带进你的 IDE——让一条需求不再只是一条聊天
+消息，而是一个可追踪、物料齐全、AI 可执行的工作单元。
+
+### 要解决的问题
+
+现有 AI 编程助手都运行在单一、易逝的会话之上。没有结构化的地方来沉淀
+「我们要做什么、为什么做」，没有一条从理解到交付的流水线驱动 AI，也缺
+乏检测并纠正 AI 跑偏的机制。PRD、设计稿、源码仓库、附件等开发物料散
+落在各个工具里，团队缺少一个需求驱动开发的单一事实来源。
+
+### 如何解决
+
+sky-axis 在 DSH 内挂载一个整页的**「开发工作台」**——**零源码侵入**。
+它引入一条 **5 阶段 AI 流水线**（理解 → 规划 → 实现 → 验证 → 交付），
+每个阶段产出类型化产物、拆解为任务，并支持偏差检测与人工介入。需求与
+DSH 工作区 1:1 绑定，以 YAML（`.sky-axis/mate.yaml`）持久化，并通过文
+件锁保证并发安全。
+
+### 能为用户带来什么
+
+- **结构化需求** —— 按工作区创建、分组、追踪全生命周期，并通过 SSE
+  跨标签页实时同步。
+- **AI 工作台** —— 5 阶段 Stepper + 任务列表 + 偏差检测 + 回退 / 回滚，
+  AI 不再脱缰奔跑。
+- **物料中心** —— PRD 文件 / 链接、源码仓库、设计稿、附件、外部链接
+  一处归集。
+- **人在回路** —— 5 个介入点（任务开始、执行中插话、任务验收、失败
+  处理、阶段门禁）让你始终掌控。
+- **零集成成本** —— 纯浏览器插件，挂到 DSH sidebar 即可使用，无需
+  修改任何 DSH 源码。
+
+### 主要功能点
+
+- Sidebar 主树入口（36px 圆形图标），可折叠为 icon rail，含个人二级
+  目录（个人 → 概览 / 需求列表）。
+- 6 个顶层视图：首页 / 团队 / 个人 / 需求列表 / 报表 / 设置。
+- 需求 CRUD，按工作区分组，SSE 实时同步。
+- 需求详情页含「**需求物料**」与「**AI 工作台**」两个 Tab。
+- 5 阶段 AI 流水线（理解 → 规划 → 实现 → 验证 → 交付），三列布局：
+  AI 协奏 / 阶段工作区 / 介入队列。
+- 任务拆解，8 态任务状态机 + 偏差检测。
+- 6 类物料区（PRD 文件、PRD 链接、源码仓库、设计稿、附件、外部链接）。
+- YAML 作为单一事实来源（SoT），原子文件锁写入。
+- 通过官方 `ctx.locale` 服务支持中 / 英双语。
+
+### 架构图
+
+**整体架构 —— 一个 DSH 插件内的三个半区**
+
+```mermaid
+flowchart LR
+  subgraph DSH["DSH host 进程 (Node)"]
+    direction TB
+    WS["工作区控制器<br/>ctx.workspaceController"]
+    SD["Storage Domain<br/>(已迁移出)"]
+    subgraph SKY["sky-axis 插件"]
+      direction TB
+      HOST["host 半区<br/>src/index.ts<br/>注册 webServer 路由"]
+      INV["invariant 半区<br/>src/invariant.ts<br/>(无断言)"]
+      BROWSER["browser 半区<br/>src/client/<br/>sidebar + SPA"]
+    end
+  end
+
+  subgraph BROWSER_SIDE["浏览器 (React SPA)"]
+    direction TB
+    UI["SkyAxisPage<br/>6 视图 + 详情页"]
+    CTRL["sky-axis-controller<br/>状态机"]
+    API["requirement-client<br/>fetch + EventSource"]
+  end
+
+  HOST -->|"webServer 路由"| API
+  API -->|"REST /api/sky-axis/..."| HOST
+  API -->|"SSE 事件"| CTRL
+  CTRL -->|"useSyncExternalStore"| UI
+  BROWSER --> UI
+  HOST -->|"follow 流"| WS
+  HOST -->|"读写"| FS[(".sky-axis/mate.yaml<br/>inputs/ outputs/ repos/")]
+```
+
+---
+
 ## 功能
 
 - 在 sidebar 主树添加 `SkyAxis` entry（36px 圆形图标）；点击 entry 切换

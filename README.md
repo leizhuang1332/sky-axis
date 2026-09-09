@@ -1,5 +1,7 @@
 # @leizhuang/sky-axis
 
+中文 | [中文](README.zh.md)
+
 A browser-only DSH web GUI plugin that renders a developer workspace
 ("sky-axis") in the main column: a sidebar with a collapsible icon rail, a
 two-level personal menu (Personal → Requirements), 5 top-level views
@@ -7,6 +9,129 @@ two-level personal menu (Personal → Requirements), 5 top-level views
 Requirement CRUD + SSE sync against the host half. It mounts into the
 official sidebar entry seat — no DSH source changes, nothing runs on the
 host's UI side beyond the routes it registers.
+
+---
+
+![alt text](image.png)
+![alt text](image-1.png)
+
+**AI workbench — 5-stage pipeline with task sub-cycle and rewind**
+
+```mermaid
+flowchart LR
+  U["Understand<br/>spec.md"]
+  P["Plan<br/>plan.md + tasks.json"]
+  I["Implement<br/>patches/ (per task)"]
+  V["Verify<br/>verify-report.md"]
+  D["Deliver<br/>delivery.md"]
+
+  U --> P --> I --> V --> D
+
+  subgraph I_CYCLE["Implement task sub-cycle"]
+    T_PEND["pending"] --> T_RUN["in_progress"]
+    T_RUN --> T_VER["verifying"]
+    T_VER -->|"pass"| T_DONE["done"]
+    T_VER -->|"fail (≤2x)"| T_RUN
+    T_VER -->|"fail (>2x)"| T_FAIL["failed"]
+    T_FAIL -->|"rewind"| P
+  end
+
+  V -.->|"verify failed"| I
+  I -.->|"plan drift"| P
+  P -.->|"goal misaligned"| U
+  D -.->|"rollback"| V
+```
+
+---
+
+## Introduction
+
+**sky-axis** is a developer workbench plugin for DSH (DeepSeek Harness) that
+brings structured requirement management and AI-driven development workflows
+into your IDE — so a requirement is no longer a chat message, but a tracked,
+material-rich, AI-executable unit of work.
+
+### The Problem
+
+Modern AI coding assistants operate on a single, ephemeral conversation. There
+is no structured place to capture *what* we are building and *why*, no pipeline
+that drives AI from understanding to delivery, and no mechanism to detect or
+correct when the AI drifts off course. Development materials — PRDs, design
+docs, source repos, attachments — scatter across tools, and teams lack a single
+source of truth for requirement-driven development.
+
+### The Solution
+
+sky-axis mounts a full-page **"Developer Workbench"** (开发工作台) inside DSH —
+**zero source changes**. It introduces a **5-stage AI pipeline**
+(Understand → Plan → Implement → Verify → Deliver) where each stage produces
+typed artifacts, decomposes into tasks, and supports drift detection plus
+human intervention. Requirements are bound 1:1 to DSH workspaces and persisted
+as YAML (`.sky-axis/mate.yaml`) with file locking for safe concurrent access.
+
+### What You Get
+
+- **Structured requirements** — create, group by workspace, and track the full
+  lifecycle with real-time SSE sync across tabs.
+- **AI workbench** — a 5-stage stepper with task lists, drift detection, and
+  rewind / rollback so AI never runs unchecked.
+- **Materials hub** — PRD files & links, source repos, design links,
+  attachments, and external links gathered in one place.
+- **Human-in-the-loop** — 5 intervention points (task start, mid-execution
+  steer, task acceptance, failure resolution, stage gate) keep you in control.
+- **Zero-integration** — a pure browser plugin that plugs into DSH's sidebar
+  without modifying any DSH source.
+
+### Key Features
+
+- Sidebar entry (36px icon) with collapsible icon rail + two-level personal
+  menu (Personal → Overview / Requirements).
+- 6 views: Home / Team / Personal / Requirements / Reports / Settings.
+- Requirement CRUD with workspace grouping and SSE real-time sync.
+- Requirement detail page with **Materials** and **AI Workbench** tabs.
+- 5-stage AI pipeline (Understand → Plan → Implement → Verify → Deliver) with
+  a three-column layout: AI Conductor / Stage Workspace / Intervention Queue.
+- Task decomposition with 8-state task status and drift detection.
+- 6 material sections (PRD files, PRD links, source repos, design links,
+  attachments, external links).
+- YAML-as-SoT persistence with atomic file locking.
+- Chinese / English i18n via the official `ctx.locale` service.
+
+### Architecture Diagrams
+
+**Overall architecture — three halves inside one DSH plugin**
+
+```mermaid
+flowchart LR
+  subgraph DSH["DSH host process (Node)"]
+    direction TB
+    WS["Workspace Controller<br/>ctx.workspaceController"]
+    SD["Storage Domain<br/>(legacy, migrated out)"]
+    subgraph SKY["sky-axis plugin"]
+      direction TB
+      HOST["host half<br/>src/index.ts<br/>register webServer routes"]
+      INV["invariant half<br/>src/invariant.ts<br/>(no assertions)"]
+      BROWSER["browser half<br/>src/client/<br/>sidebar + SPA"]
+    end
+  end
+
+  subgraph BROWSER_SIDE["Browser (React SPA)"]
+    direction TB
+    UI["SkyAxisPage<br/>6 views + detail page"]
+    CTRL["sky-axis-controller<br/>state machine"]
+    API["requirement-client<br/>fetch + EventSource"]
+  end
+
+  HOST -->|"webServer routes"| API
+  API -->|"REST /api/sky-axis/..."| HOST
+  API -->|"SSE events"| CTRL
+  CTRL -->|"useSyncExternalStore"| UI
+  BROWSER --> UI
+  HOST -->|"follow stream"| WS
+  HOST -->|"read/write"| FS[(".sky-axis/mate.yaml<br/>inputs/ outputs/ repos/")]
+```
+
+---
 
 ## What it does
 
