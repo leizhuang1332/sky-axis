@@ -229,6 +229,13 @@ export const zh = {
   'requirement.detail.taskList.actionRedo': '重做',
   'requirement.detail.taskList.actionRewind': '回退',
   'requirement.detail.taskList.actionSkip': '跳过',
+  /* PR-B：Start 按钮（只在 pending 时渲染）+ 4 个按钮的 hover hint */
+  'requirement.detail.taskList.actionStart': '开始',
+  'requirement.detail.taskList.actionStartHint': '把 task 状态从 pending 切到 in_progress',
+  'requirement.detail.taskList.actionAcceptHint': '手动接受当前 task 产出',
+  'requirement.detail.taskList.actionRedoHint': '重新执行 task（retryCount+1）',
+  'requirement.detail.taskList.actionRewindHint': 'PR-C 待接入（打开 rewind drawer）',
+  'requirement.detail.taskList.actionSkipHint': '跳过当前 task',
   /* task 状态标签（右上角 chip 用）*/
   'requirement.detail.task.status.pending': '待开始',
   'requirement.detail.task.status.in_progress': '进行中',
@@ -680,6 +687,13 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.detail.taskList.actionRedo': 'Redo',
   'requirement.detail.taskList.actionRewind': 'Rewind',
   'requirement.detail.taskList.actionSkip': 'Skip',
+  /* PR-B: Start button (rendered only when pending) + 4 button hover hints */
+  'requirement.detail.taskList.actionStart': 'Start',
+  'requirement.detail.taskList.actionStartHint': 'Switch task status from pending to in_progress',
+  'requirement.detail.taskList.actionAcceptHint': 'Manually accept current task output',
+  'requirement.detail.taskList.actionRedoHint': 'Re-execute task (retryCount+1)',
+  'requirement.detail.taskList.actionRewindHint': 'PR-C pending (opens rewind drawer)',
+  'requirement.detail.taskList.actionSkipHint': 'Skip current task',
   /* task status labels (used by right-aligned chip) */
   'requirement.detail.task.status.pending': 'Pending',
   'requirement.detail.task.status.in_progress': 'In progress',

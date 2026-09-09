@@ -930,3 +930,489 @@ describe('projectTaskList（Plan 阶段产物 → client mirror）', () => {
     }
   })
 })
+
+/* ── PR-B / 迭代 3：Task 状态机 helper + controller mutation ── */
+
+import {
+  appendTaskTransition,
+  findPlanArtifact,
+  lastOpenSubHistoryEntry,
+  parseTaskListFromArtifact,
+  serializeTaskList,
+  updateTaskInPlanArtifact,
+  type RequirementArtifact,
+} from '../src/client/controller/sky-axis-controller.ts'
+
+/** 构造一个 plan artifact（含 1 个 pending task 的 TaskList JSON）。 */
+function makePlanArtifact(overrides: Partial<{ tasks: RequirementTask[]; producedAtStage: 'understand' | 'plan' | 'implement' }> = {}): RequirementArtifact {
+  const tasks = overrides.tasks ?? [
+    {
+      id: 'T-001',
+      title: 'demo task',
+      goal: 'demo',
+      acceptance: ['a'],
+      dependencies: [],
+      filesExpected: [],
+      status: 'pending',
+      subHistory: [],
+      artifactRefs: [],
+      retryCount: 0,
+      enteredAt: '2026-08-30T12:00:00.000Z',
+    },
+  ]
+  const list: RequirementTaskList = {
+    tasks,
+    producedAt: '2026-08-30T12:00:00.000Z',
+    producedAtStage: overrides.producedAtStage ?? 'implement',
+  }
+  return {
+    id: 'plan-art-1',
+    kind: 'plan',
+    title: 'Task plan',
+    createdAt: '2026-08-30T12:00:00.000Z',
+    body: serializeTaskList(list),
+  }
+}
+
+/** 构造一个带 plan artifact 的 requirement fixture。 */
+function makeReqWithPlan(artOverrides: Parameters<typeof makePlanArtifact>[0] = {}): RequirementEntry {
+  return makeReq({
+    id: 'req-prb-1',
+    artifacts: { 'plan-art-1': makePlanArtifact(artOverrides) },
+  })
+}
+
+describe('Task helpers（PR-B）', () => {
+  describe('findPlanArtifact', () => {
+    it('找到 kind="plan" 的 artifact', () => {
+      const plan = makePlanArtifact()
+      const req = makeReq({ artifacts: { a: plan, b: { id: 'b', kind: 'note', title: 'n', createdAt: 't', body: '' } } })
+      expect(findPlanArtifact(req)).toBe(plan)
+    })
+
+    it('多个 artifact 时返回第一个 plan（Object.values 顺序）', () => {
+      const plan = makePlanArtifact()
+      const note: RequirementArtifact = { id: 'n1', kind: 'note', title: 'n', createdAt: 't', body: '' }
+      const req = makeReq({ artifacts: { 'plan-art-1': plan, 'note-1': note } })
+      const found = findPlanArtifact(req)
+      expect(found?.kind).toBe('plan')
+    })
+
+    it('无 plan artifact 时返回 null', () => {
+      const req = makeReq({ artifacts: { 'n1': { id: 'n1', kind: 'note', title: 'n', createdAt: 't', body: '' } } })
+      expect(findPlanArtifact(req)).toBeNull()
+    })
+  })
+
+  describe('parseTaskListFromArtifact', () => {
+    it('合法 plan artifact body → 解析出 tasks/producedAt/producedAtStage', () => {
+      const art = makePlanArtifact({
+        tasks: [
+          { id: 'T-A', title: 'A', goal: '', acceptance: [], dependencies: [], filesExpected: [], status: 'done', subHistory: [], artifactRefs: [], retryCount: 0, enteredAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'T-B', title: 'B', goal: '', acceptance: [], dependencies: [], filesExpected: [], status: 'in_progress', subHistory: [], artifactRefs: [], retryCount: 0, enteredAt: '2026-01-01T00:00:00.000Z' },
+        ],
+      })
+      const out = parseTaskListFromArtifact(art)
+      expect(out).not.toBeNull()
+      expect(out?.tasks).toHaveLength(2)
+      expect(out?.producedAt).toBe('2026-08-30T12:00:00.000Z')
+      expect(out?.producedAtStage).toBe('implement')
+    })
+
+    it('非 plan artifact → 返回 null', () => {
+      const note: RequirementArtifact = { id: 'n', kind: 'note', title: 'n', createdAt: 't', body: '{"tasks":[]}' }
+      expect(parseTaskListFromArtifact(note)).toBeNull()
+    })
+
+    it('body 不是合法 JSON → 返回 null（不抛）', () => {
+      const art: RequirementArtifact = { id: 'p', kind: 'plan', title: 'p', createdAt: 't', body: '{not json' }
+      expect(parseTaskListFromArtifact(art)).toBeNull()
+    })
+
+    it('body 是合法 JSON 但缺 tasks 字段 → 返回 null', () => {
+      const art: RequirementArtifact = { id: 'p', kind: 'plan', title: 'p', createdAt: 't', body: '{"producedAt":"2026-01-01T00:00:00.000Z"}' }
+      expect(parseTaskListFromArtifact(art)).toBeNull()
+    })
+
+    it('tasks 不是数组 → 返回 null', () => {
+      const art: RequirementArtifact = { id: 'p', kind: 'plan', title: 'p', createdAt: 't', body: '{"tasks":"oops","producedAt":"2026-01-01T00:00:00.000Z","producedAtStage":"plan"}' }
+      expect(parseTaskListFromArtifact(art)).toBeNull()
+    })
+  })
+
+  describe('serializeTaskList', () => {
+    it('与 parseTaskListFromArtifact 构成 round-trip', () => {
+      const list: RequirementTaskList = {
+        tasks: [
+          { id: 'T-1', title: 't1', goal: 'g', acceptance: ['a'], dependencies: ['T-0'], filesExpected: ['f.ts'], status: 'rolled_back', subHistory: [{ status: 'in_progress', enteredAt: '2026-01-01T00:00:00.000Z' }], artifactRefs: ['a1'], retryCount: 2, lastDriftScore: 0.5, enteredAt: '2026-01-01T00:00:00.000Z' },
+        ],
+        producedAt: '2026-01-01T00:00:00.000Z',
+        producedAtStage: 'plan',
+      }
+      const art: RequirementArtifact = { id: 'p', kind: 'plan', title: 'p', createdAt: 't', body: serializeTaskList(list) }
+      const parsed = parseTaskListFromArtifact(art)
+      expect(parsed).toEqual(list)
+    })
+  })
+
+  describe('updateTaskInPlanArtifact', () => {
+    it('正常路径：找到 task → 应用 patch → 返回新 req', () => {
+      const req = makeReqWithPlan()
+      const now = '2026-09-01T00:00:00.000Z'
+      const out = updateTaskInPlanArtifact(req, 'T-001', (task) => ({
+        ...task,
+        status: 'in_progress',
+      }), now)
+      expect(out).not.toBe(req)
+      expect(out.updatedAt).toBe(now)
+      // artifacts 中 plan-art-1 的 body 应已被更新
+      const newArt = out.artifacts['plan-art-1']
+      expect(newArt).toBeDefined()
+      const parsed = parseTaskListFromArtifact(newArt!)
+      expect(parsed?.tasks[0]?.status).toBe('in_progress')
+    })
+
+    it('找不到 taskId → 返回原 req 不变（引用相等）', () => {
+      const req = makeReqWithPlan()
+      const out = updateTaskInPlanArtifact(req, 'NON-EXIST', (task) => ({ ...task, status: 'done' }), '2026-09-01T00:00:00.000Z')
+      expect(out).toBe(req)
+    })
+
+    it('无 plan artifact → 返回原 req 不变', () => {
+      const req = makeReq({ artifacts: {} })
+      const out = updateTaskInPlanArtifact(req, 'T-001', (task) => ({ ...task, status: 'done' }), '2026-09-01T00:00:00.000Z')
+      expect(out).toBe(req)
+    })
+
+    it('plan artifact body 损坏 → 返回原 req 不变', () => {
+      const req = makeReq({
+        artifacts: {
+          'plan-art-1': { id: 'plan-art-1', kind: 'plan', title: 'p', createdAt: 't', body: '{broken' },
+        },
+      })
+      const out = updateTaskInPlanArtifact(req, 'T-001', (task) => ({ ...task, status: 'done' }), '2026-09-01T00:00:00.000Z')
+      expect(out).toBe(req)
+    })
+
+    it('patch 内可读 now 参数', () => {
+      const req = makeReqWithPlan()
+      const now = '2026-09-09T09:00:00.000Z'
+      const out = updateTaskInPlanArtifact(req, 'T-001', (_task, receivedNow) => {
+        expect(receivedNow).toBe(now)
+        return { ..._task, status: 'in_progress', enteredAt: receivedNow }
+      }, now)
+      const parsed = parseTaskListFromArtifact(out.artifacts['plan-art-1']!)
+      expect(parsed?.tasks[0]?.enteredAt).toBe(now)
+    })
+
+    it('只更新指定 task，其余 task 内容不变', () => {
+      const req = makeReqWithPlan({
+        tasks: [
+          { id: 'T-A', title: 'A', goal: 'goal-a', acceptance: [], dependencies: [], filesExpected: [], status: 'pending', subHistory: [], artifactRefs: ['ref-a'], retryCount: 1, lastDriftScore: 0.3, enteredAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'T-B', title: 'B', goal: 'goal-b', acceptance: [], dependencies: [], filesExpected: [], status: 'in_progress', subHistory: [], artifactRefs: ['ref-b'], retryCount: 5, lastDriftScore: 0.7, enteredAt: '2026-02-02T00:00:00.000Z' },
+        ],
+      })
+      const out = updateTaskInPlanArtifact(req, 'T-A', (task) => ({ ...task, status: 'in_progress' }), '2026-09-01T00:00:00.000Z')
+      const parsed = parseTaskListFromArtifact(out.artifacts['plan-art-1']!)
+      // T-A 被更新
+      expect(parsed?.tasks[0]?.status).toBe('in_progress')
+      // T-B 内容完全保留（包括 retryCount / lastDriftScore / artifactRefs）
+      expect(parsed?.tasks[1]?.title).toBe('B')
+      expect(parsed?.tasks[1]?.goal).toBe('goal-b')
+      expect(parsed?.tasks[1]?.status).toBe('in_progress') // 原始值
+      expect(parsed?.tasks[1]?.retryCount).toBe(5)
+      expect(parsed?.tasks[1]?.lastDriftScore).toBe(0.7)
+      expect(parsed?.tasks[1]?.artifactRefs).toEqual(['ref-b'])
+    })
+  })
+
+  describe('appendTaskTransition', () => {
+    it('status 改变 + subHistory 末尾追加 close(open entry) + 新 open entry', () => {
+      const task: RequirementTask = {
+        id: 'T-1',
+        title: 't',
+        goal: '',
+        acceptance: [],
+        dependencies: [],
+        filesExpected: [],
+        status: 'pending',
+        subHistory: [],
+        artifactRefs: [],
+        retryCount: 0,
+        enteredAt: '2026-09-01T10:00:00.000Z',
+      }
+      const now = '2026-09-01T10:05:00.000Z'
+      const out = appendTaskTransition(task, 'in_progress', now, 'manual')
+      expect(out.status).toBe('in_progress')
+      expect(out.enteredAt).toBe(now)
+      expect(out.subHistory).toHaveLength(2)
+      expect(out.subHistory[0]?.status).toBe('pending')
+      expect(out.subHistory[0]?.leftAt).toBe(now)
+      expect(out.subHistory[0]?.outcome).toBe('manual')
+      expect(out.subHistory[1]?.status).toBe('in_progress')
+      expect(out.subHistory[1]?.leftAt).toBeUndefined()
+    })
+
+    it('保留 retryCount 等其他字段不变', () => {
+      const task: RequirementTask = {
+        id: 'T-1', title: 't', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'failed',
+        subHistory: [{ status: 'in_progress', enteredAt: '2026-09-01T10:00:00.000Z', leftAt: '2026-09-01T10:30:00.000Z', outcome: 'errored' }],
+        artifactRefs: ['a1'],
+        retryCount: 2,
+        lastDriftScore: 0.3,
+        enteredAt: '2026-09-01T10:00:00.000Z',
+      }
+      const out = appendTaskTransition(task, 'in_progress', '2026-09-01T11:00:00.000Z', 'rolled-back')
+      expect(out.retryCount).toBe(2)
+      expect(out.lastDriftScore).toBe(0.3)
+      expect(out.artifactRefs).toEqual(['a1'])
+    })
+  })
+
+  describe('lastOpenSubHistoryEntry', () => {
+    it('返回最后一条 leftAt===undefined 的 entry', () => {
+      const task: RequirementTask = {
+        id: 'T-1', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'in_progress',
+        subHistory: [
+          { status: 'pending', enteredAt: 't1', leftAt: 't2', outcome: 'completed' },
+          { status: 'in_progress', enteredAt: 't2' }, // open
+        ],
+        artifactRefs: [], retryCount: 0, enteredAt: 't2',
+      }
+      const out = lastOpenSubHistoryEntry(task)
+      expect(out?.status).toBe('in_progress')
+      expect(out?.enteredAt).toBe('t2')
+    })
+
+    it('全部 entry 都关闭 → 返回 null', () => {
+      const task: RequirementTask = {
+        id: 'T-1', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'done',
+        subHistory: [
+          { status: 'in_progress', enteredAt: 't1', leftAt: 't2', outcome: 'completed' },
+          { status: 'done', enteredAt: 't2', leftAt: 't3', outcome: 'completed' },
+        ],
+        artifactRefs: [], retryCount: 0, enteredAt: 't1',
+      }
+      expect(lastOpenSubHistoryEntry(task)).toBeNull()
+    })
+
+    it('subHistory 为空 → 返回 null', () => {
+      const task: RequirementTask = {
+        id: 'T-1', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'pending',
+        subHistory: [],
+        artifactRefs: [], retryCount: 0, enteredAt: 't1',
+      }
+      expect(lastOpenSubHistoryEntry(task)).toBeNull()
+    })
+  })
+})
+
+describe('PR-B：startTask / acceptTask / redoTask / skipTask', () => {
+  /** taskActionImpl 的精确类型 —— 避免重复写 Parameters<>。 */
+  type TaskActionImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['taskActionImpl']
+
+  /** 同步成功 UploadHandle 的 impl 工厂 */
+  function okTaskAction(): TaskActionImpl {
+    return ({ action }) => ({
+      promise: Promise.resolve({ ok: true as const, action }),
+      abort: () => {},
+    })
+  }
+  /** 同步失败 UploadHandle 的 impl 工厂 */
+  function failTaskAction(code: 'internal-error' | 'task-not-found' | 'invalid-state' = 'internal-error'): TaskActionImpl {
+    return () => ({
+      promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+      abort: () => {},
+    })
+  }
+
+  it('startTask：pending → in_progress，subHistory 末尾追加 2 条', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: okTaskAction() })
+    await c.loadRequirements()
+    const before = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']
+    const beforeList = parseTaskListFromArtifact(before!)
+    expect(beforeList?.tasks[0]?.status).toBe('pending')
+
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+
+    const after = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']
+    const afterList = parseTaskListFromArtifact(after!)
+    expect(afterList?.tasks[0]?.status).toBe('in_progress')
+    expect(afterList?.tasks[0]?.subHistory).toHaveLength(2)
+    expect(afterList?.tasks[0]?.subHistory[0]?.status).toBe('pending')
+    expect(afterList?.tasks[0]?.subHistory[0]?.outcome).toBe('manual')
+    expect(afterList?.tasks[0]?.subHistory[1]?.status).toBe('in_progress')
+  })
+
+  it('startTask 成功且 impl 返回 item 时用 server record 覆盖整条 req', async () => {
+    const req = makeReqWithPlan()
+    const serverReq = makeReq({
+      id: req.id,
+      artifacts: {
+        ...req.artifacts,
+        'plan-art-1': {
+          ...req.artifacts['plan-art-1']!,
+          body: serializeTaskList({
+            tasks: [{
+              id: 'T-001', title: 't', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+              status: 'in_progress',
+              subHistory: [],
+              artifactRefs: [],
+              retryCount: 0,
+              enteredAt: '2026-09-09T00:00:00.000Z',
+            }],
+            producedAt: '2026-09-09T00:00:00.000Z',
+            producedAtStage: 'implement',
+          }),
+        },
+      },
+      title: 'server-returned',
+    })
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      taskActionImpl: () => ({
+        promise: Promise.resolve({ ok: true as const, item: serverReq }),
+        abort: () => {},
+      }),
+    })
+    await c.loadRequirements()
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+    // server record 覆盖 → title 应是 server 端的
+    expect(c.getSnapshot().requirements[0]?.title).toBe('server-returned')
+  })
+
+  it('acceptTask：in_progress → done', async () => {
+    const req = makeReqWithPlan({
+      tasks: [{
+        id: 'T-001', title: 't', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'in_progress',
+        subHistory: [],
+        artifactRefs: [],
+        retryCount: 0,
+        enteredAt: '2026-09-01T00:00:00.000Z',
+      }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: okTaskAction() })
+    await c.loadRequirements()
+    const r = await c.acceptTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+    const out = parseTaskListFromArtifact(c.getSnapshot().requirements[0]!.artifacts['plan-art-1']!)
+    expect(out?.tasks[0]?.status).toBe('done')
+    expect(out?.tasks[0]?.subHistory).toHaveLength(2)
+    expect(out?.tasks[0]?.subHistory[0]?.outcome).toBe('completed')
+  })
+
+  it('redoTask：failed → in_progress 且 retryCount +1', async () => {
+    const req = makeReqWithPlan({
+      tasks: [{
+        id: 'T-001', title: 't', goal: '', acceptance: [], dependencies: [], filesExpected: [],
+        status: 'failed',
+        subHistory: [],
+        artifactRefs: [],
+        retryCount: 2,
+        enteredAt: '2026-09-01T00:00:00.000Z',
+      }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: okTaskAction() })
+    await c.loadRequirements()
+    const r = await c.redoTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+    const out = parseTaskListFromArtifact(c.getSnapshot().requirements[0]!.artifacts['plan-art-1']!)
+    expect(out?.tasks[0]?.status).toBe('in_progress')
+    expect(out?.tasks[0]?.retryCount).toBe(3)
+  })
+
+  it('skipTask：pending → skipped', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: okTaskAction() })
+    await c.loadRequirements()
+    const r = await c.skipTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+    const out = parseTaskListFromArtifact(c.getSnapshot().requirements[0]!.artifacts['plan-art-1']!)
+    expect(out?.tasks[0]?.status).toBe('skipped')
+  })
+
+  it('impl 失败：snapshot.requirements 回滚到 mutation 前状态', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: failTaskAction('task-not-found') })
+    await c.loadRequirements()
+    const before = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(false)
+    // plan artifact body 字符串应与 mutation 前完全相同（深 rollback）
+    const after = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']
+    expect(after?.body).toBe(before?.body)
+  })
+
+  it('impl 失败：workspaces 不被冲掉（与物料 mutation 一致的回归保护）', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: failTaskAction() })
+    await c.loadRequirements()
+    c.setWorkspaces([{ id: 'ws-prb', title: 'Workspace PRB', path: '/path/ws-prb' }])
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(false)
+    expect(c.getSnapshot().workspaces).toHaveLength(1)
+    expect(c.getSnapshot().workspaces[0]?.id).toBe('ws-prb')
+  })
+
+  it('未注入 taskActionImpl → handle.promise 立即 resolve 为 ok:false', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) }) // 故意不传 taskActionImpl
+    await c.loadRequirements()
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error?.code).toBe('internal-error')
+  })
+
+  it('找不到 taskId → 乐观更新不发生（updateTaskInPlanArtifact 短路），impl 仍被调用', async () => {
+    const req = makeReqWithPlan()
+    const implSpy = vi.fn(okTaskAction())
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: implSpy })
+    await c.loadRequirements()
+    const before = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']?.body
+    const r = await c.startTask(req.id, 'NON-EXIST').promise
+    expect(r.ok).toBe(true)
+    expect(implSpy).toHaveBeenCalledOnce()
+    // plan artifact body 字符串未变（updateTaskInPlanArtifact 短路）
+    const after = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']?.body
+    expect(after).toBe(before)
+  })
+
+  it('缺少 plan artifact → 乐观更新 no-op，impl 仍被调用', async () => {
+    const req = makeReq({ artifacts: {} })
+    const implSpy = vi.fn(okTaskAction())
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: implSpy })
+    await c.loadRequirements()
+    const r = await c.startTask(req.id, 'T-001').promise
+    expect(r.ok).toBe(true)
+    expect(implSpy).toHaveBeenCalledOnce()
+    expect(c.getSnapshot().requirements[0]?.artifacts).toEqual({})
+  })
+
+  it('startTask / acceptTask / redoTask / skipTask 都触发 notify（乐观更新可见）', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), taskActionImpl: okTaskAction() })
+    await c.loadRequirements()
+    const l = makeListener()
+    c.subscribe(l.fn)
+    const baseline = l.getCalls()
+    await c.startTask(req.id, 'T-001').promise
+    const afterStart = l.getCalls()
+    expect(afterStart).toBeGreaterThan(baseline)
+    // 后续 action 每次乐观更新都会再触发
+    await c.acceptTask(req.id, 'T-001').promise
+    expect(l.getCalls()).toBeGreaterThan(afterStart)
+    await c.redoTask(req.id, 'T-001').promise
+    await c.skipTask(req.id, 'T-001').promise
+    expect(l.getCalls()).toBeGreaterThan(afterStart + 2)
+  })
+})

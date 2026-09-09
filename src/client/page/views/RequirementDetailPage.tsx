@@ -207,6 +207,7 @@ export function RequirementDetailPage({
                 t={t}
                 requirement={requirement}
                 taskList={mockTaskList}
+                controller={controller}
               />
             </section>
             <aside className={css.queue}>

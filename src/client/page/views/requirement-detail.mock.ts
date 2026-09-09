@@ -325,3 +325,60 @@ export function mockDriftSnapshot(stage: 'understand' | 'plan' | 'implement' | '
       return null
   }
 }
+
+/* ── Task action mock impl（PR-B 演示）── */
+
+import type {
+  RequirementEntry,
+  RequirementError,
+  UploadHandle,
+} from '../../controller/sky-axis-controller.ts'
+
+/** Task action impl 的函数签名（局部导出，避免从 controller.ts 二次导入）。
+ *  与 createSkyAxisController deps.taskActionImpl 完全一致。 */
+export type MockTaskActionImpl = (input: {
+  requirementId: string
+  taskId: string
+  action: 'start' | 'accept' | 'redo' | 'skip'
+}) => UploadHandle
+
+/** 创建一个 100% 成功的 mock task action impl（无延迟、ok=true）。 */
+export function mockTaskActionOk(): MockTaskActionImpl {
+  return ({ action, requirementId: _reqId, taskId: _taskId }) => ({
+    promise: Promise.resolve({ ok: true as const, action }),
+    abort: () => {},
+  })
+}
+
+/** 创建一个始终失败的 mock impl（用于演示失败回滚路径）。 */
+export function mockTaskActionFail(
+  code: 'internal-error' | 'task-not-found' | 'invalid-state' = 'internal-error',
+  detail = 'mock failure',
+): MockTaskActionImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+
+/** 创建一个可注入延迟 + 可编程响应的 mock impl（用于 e2e 演示「点击 → loading → 完成」）。 */
+export function mockTaskActionProgrammable(
+  responder: (input: { action: 'start' | 'accept' | 'redo' | 'skip'; requirementId: string; taskId: string }) =>
+    { ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError },
+  delayMs = 200,
+): MockTaskActionImpl {
+  return (input) => {
+    let aborted = false
+    const promise = new Promise<{ ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError }>((resolve) => {
+      setTimeout(() => {
+        if (aborted) return
+        resolve(responder(input))
+      }, delayMs)
+    })
+    const handle: UploadHandle = {
+      promise,
+      abort: () => { aborted = true },
+    }
+    return handle
+  }
+}

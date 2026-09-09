@@ -8,11 +8,12 @@
  *   - task list：每行 = 状态圆点 + 标题 + goal 摘要 + drift badge + 操作按钮
  *   - current task content：header + acceptance 清单 + diff box 占位 + 操作按钮
  *
- * Phase 1 限制：
- *   - 当前 task content 的 diff 区显示占位（待 Phase 3 接 artifact 系统）
- *   - 操作按钮均 disabled（接 controller 在 iteration 3 实现）
+ * PR-B（迭代 3）：操作按钮接 controller
+ *   - Start / Accept / Redo / Skip 4 个按钮按 task.status 启用
+ *   - Rewind 按钮留 PR-C（仍 disabled）
+ *   - 点击后乐观更新 UI；若 controller 未注入或 taskActionImpl 缺失，按钮 disabled
  *
- * 数据来源：受控 props。父组件传 t + requirement + taskList + onSelectTask。
+ * 数据来源：受控 props。父组件传 t + requirement + taskList + controller + onSelectTask。
  */
 import { useState, type JSX } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
@@ -21,6 +22,7 @@ import type {
   RequirementStage,
   RequirementTask,
   RequirementTaskList,
+  SkyAxisController,
   TaskStatus,
 } from '../../controller/sky-axis-controller.ts'
 import {
@@ -37,6 +39,9 @@ export interface StageWorkspacePaneProps {
   taskList?: RequirementTaskList | null
   /** 点击 task 行 → 通知父组件更新当前 task。 */
   onSelectTask?: (taskId: string) => void
+  /** 控制器：用于触发 task action mutation（start / accept / redo / skip）。
+   *  null/undefined → 操作按钮全部 disabled（Phase 1 早期 / 测试场景）。 */
+  controller?: SkyAxisController | null
 }
 
 const STAGE_ICONS: Record<RequirementStage, (p: { size?: number; className?: string }) => JSX.Element> = {
@@ -77,6 +82,19 @@ function taskDotClass(status: TaskStatus): string {
 /** Task 状态 → UI 标签 key。 */
 function taskStatusLabelKey(status: TaskStatus): string {
   return `requirement.detail.task.status.${status}`
+}
+
+/** 判断 4 个 task action 在当前 status 下是否可点。 */
+function taskActionEnabled(
+  status: TaskStatus,
+  action: 'start' | 'accept' | 'redo' | 'skip',
+): boolean {
+  switch (action) {
+    case 'start':  return status === 'pending'
+    case 'accept': return status === 'in_progress' || status === 'verifying' || status === 'failed'
+    case 'redo':   return status === 'failed' || status === 'rolled_back' || status === 'pending'
+    case 'skip':   return status === 'pending' || status === 'in_progress' || status === 'failed' || status === 'blocked'
+  }
 }
 
 /* ── 子组件：task list（顶部 30%）── */
@@ -172,13 +190,34 @@ interface CurrentTaskSectionProps {
   task: RequirementTask | null
   stage: RequirementStage
   stageHistory: RequirementEntry['stageHistory']
+  requirementId: string
+  controller: SkyAxisController | null
 }
 
 function CurrentTaskSection({
-  t, task, stage, stageHistory,
+  t, task, stage, stageHistory, requirementId, controller,
 }: CurrentTaskSectionProps): JSX.Element {
   const tAny = t as unknown as (k: string) => string
   const Icon = STAGE_ICONS[stage]
+
+  /** 单击 task action 按钮的统一入口。action 不在白名单时静默忽略。 */
+  const handleAction = (action: 'start' | 'accept' | 'redo' | 'skip'): void => {
+    if (task === null || controller === null) return
+    const handle = (() => {
+      switch (action) {
+        case 'start':  return controller.startTask(requirementId, task.id)
+        case 'accept': return controller.acceptTask(requirementId, task.id)
+        case 'redo':   return controller.redoTask(requirementId, task.id)
+        case 'skip':   return controller.skipTask(requirementId, task.id)
+      }
+    })()
+    // 异常兜底：controller 已返回 UploadHandle，正常不会 reject；这里仅用于 console 提示
+    handle.promise.catch((e: unknown) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[sky-axis] task ${action} rejected:`, e)
+    })
+  }
+
   return (
     <div className={css.currentSection}>
       {/* 阶段标题（保持原行为）*/}
@@ -233,18 +272,53 @@ function CurrentTaskSection({
             </div>
           </div>
 
-          {/* 当前 task 操作按钮（暂全部 disabled —— iteration 3 接 controller） */}
+          {/* 当前 task 操作按钮（PR-B：按 task.status 启用 + 接 controller） */}
           <div className={css.taskActions}>
-            <button type="button" className={css.primaryBtn} disabled>
+            {task.status === 'pending' && (
+              <button
+                type="button"
+                className={css.primaryBtn}
+                disabled={controller === null}
+                onClick={(): void => { handleAction('start') }}
+                title={tAny('requirement.detail.taskList.actionStartHint')}
+              >
+                {tAny('requirement.detail.taskList.actionStart')}
+              </button>
+            )}
+            <button
+              type="button"
+              className={css.primaryBtn}
+              disabled={controller === null || !taskActionEnabled(task.status, 'accept')}
+              onClick={(): void => { handleAction('accept') }}
+              title={tAny('requirement.detail.taskList.actionAcceptHint')}
+            >
               {tAny('requirement.detail.taskList.actionAccept')}
             </button>
-            <button type="button" className={css.secondaryBtn} disabled>
+            <button
+              type="button"
+              className={css.secondaryBtn}
+              disabled={controller === null || !taskActionEnabled(task.status, 'redo')}
+              onClick={(): void => { handleAction('redo') }}
+              title={tAny('requirement.detail.taskList.actionRedoHint')}
+            >
               {tAny('requirement.detail.taskList.actionRedo')}
             </button>
-            <button type="button" className={css.secondaryBtn} disabled>
+            <button
+              type="button"
+              className={css.secondaryBtn}
+              disabled
+              title={tAny('requirement.detail.taskList.actionRewindHint')}
+            >
               {tAny('requirement.detail.taskList.actionRewind')}
             </button>
-            <button type="button" className={css.secondaryBtn} disabled style={{ marginLeft: 'auto' }}>
+            <button
+              type="button"
+              className={css.secondaryBtn}
+              style={{ marginLeft: 'auto' }}
+              disabled={controller === null || !taskActionEnabled(task.status, 'skip')}
+              onClick={(): void => { handleAction('skip') }}
+              title={tAny('requirement.detail.taskList.actionSkipHint')}
+            >
               {tAny('requirement.detail.taskList.actionSkip')}
             </button>
           </div>
@@ -274,7 +348,7 @@ function CurrentTaskSection({
                 <span className={css.historyTime}>{formatTime(entry.enteredAt)}</span>
                 {entry.leftAt !== undefined && (
                   <span className={css.historyOutcome}>
-                    {tAny(`requirement.detail.history.outcome.${entry.outcome ?? 'completed'}`)}
+                    {tAny(`requirement.detail.history.outcome.${entry.outcome ?? 'errored'}`)}
                   </span>
                 )}
               </li>
@@ -289,7 +363,7 @@ function CurrentTaskSection({
 /* ── 主组件 ── */
 
 export function StageWorkspacePane({
-  t, requirement, taskList, onSelectTask,
+  t, requirement, taskList, onSelectTask, controller = null,
 }: StageWorkspacePaneProps): JSX.Element {
   // 默认选中第一个未 done / rolled_back / skipped 的 task
   const initialSelected = taskList?.tasks.find((tk) =>
@@ -326,6 +400,8 @@ export function StageWorkspacePane({
         task={selectedTask}
         stage={stage}
         stageHistory={requirement.stageHistory ?? []}
+        requirementId={requirement.id}
+        controller={controller}
       />
     </div>
   )

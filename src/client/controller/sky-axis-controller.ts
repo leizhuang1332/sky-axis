@@ -205,6 +205,106 @@ export function projectTaskList(list: {
   }
 }
 
+/* ── Task mutation helper（PR-B / 迭代 3）── */
+
+/** 找到 requirement 的 plan artifact（含 TaskList JSON）。无则返回 null。 */
+export function findPlanArtifact(req: RequirementEntry): RequirementArtifact | null {
+  for (const art of Object.values(req.artifacts)) {
+    if (art.kind === 'plan') return art
+  }
+  return null
+}
+
+/** 安全解析 plan artifact.body 为 TaskList。失败或缺字段则返回 null。 */
+export function parseTaskListFromArtifact(art: RequirementArtifact): RequirementTaskList | null {
+  if (art.kind !== 'plan') return null
+  try {
+    const raw = JSON.parse(art.body) as unknown
+    if (raw === null || typeof raw !== 'object') return null
+    const obj = raw as { tasks?: unknown; producedAt?: unknown; producedAtStage?: unknown }
+    if (!Array.isArray(obj.tasks)) return null
+    if (typeof obj.producedAt !== 'string') return null
+    if (typeof obj.producedAtStage !== 'string') return null
+    return {
+      tasks: obj.tasks as RequirementTask[],
+      producedAt: obj.producedAt,
+      producedAtStage: obj.producedAtStage as RequirementStage,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** 把 task list 序列化回 plan artifact.body 的稳定形式。 */
+export function serializeTaskList(list: RequirementTaskList): string {
+  return JSON.stringify(list)
+}
+
+/**
+ * 在 requirement 中找到 plan artifact + 目标 task + 应用 patch；
+ * 返回新 RequirementEntry（不可变更新）。taskId 找不到或 artifact 解析失败时返回原 req 不变。
+ *
+ * patch 返回的 task 会替换原 task；status / subHistory / retryCount 等字段由调用方决定。
+ */
+export function updateTaskInPlanArtifact(
+  req: RequirementEntry,
+  taskId: string,
+  patch: (task: RequirementTask, now: string) => RequirementTask,
+  now: string,
+): RequirementEntry {
+  const planArt = findPlanArtifact(req)
+  if (planArt === null) return req
+  const taskList = parseTaskListFromArtifact(planArt)
+  if (taskList === null) return req
+  const targetIdx = taskList.tasks.findIndex(t => t.id === taskId)
+  if (targetIdx === -1) return req
+  const target = taskList.tasks[targetIdx]
+  if (target === undefined) return req
+  const patched = patch(target, now)
+  const newTasks = taskList.tasks.slice()
+  newTasks[targetIdx] = patched
+  const newList: RequirementTaskList = { ...taskList, tasks: newTasks }
+  return {
+    ...req,
+    artifacts: {
+      ...req.artifacts,
+      [planArt.id]: { ...planArt, body: serializeTaskList(newList) },
+    },
+    updatedAt: now,
+  }
+}
+
+/** 把旧 task status 收尾 + 新 status 进入 history 拼成 2 条新 entry。
+ *  用于 task 状态跳转时确保 subHistory 完整反映迁移。 */
+export function appendTaskTransition(
+  task: RequirementTask,
+  newStatus: TaskStatus,
+  now: string,
+  prevOutcome: 'completed' | 'manual' | 'rolled-back' | 'errored',
+): RequirementTask {
+  const prevEnteredAt = task.enteredAt
+  return {
+    ...task,
+    status: newStatus,
+    enteredAt: now,
+    subHistory: [
+      ...task.subHistory,
+      { status: task.status, enteredAt: prevEnteredAt, leftAt: now, outcome: prevOutcome },
+      { status: newStatus, enteredAt: now },
+    ],
+  }
+}
+
+/** 在 task.subHistory 末尾查找最近一条「正在 live」的 entry（无 leftAt）并返回；不存在返回 null。
+ *  用于 PR-C 计算 stage progress（当前活跃 status + 累计停留时间）。 */
+export function lastOpenSubHistoryEntry(task: RequirementTask): TaskSubHistoryEntry | null {
+  for (let i = task.subHistory.length - 1; i >= 0; i -= 1) {
+    const e = task.subHistory[i]
+    if (e !== undefined && e.leftAt === undefined) return e
+  }
+  return null
+}
+
 /* ── 物料镜像 type（Phase 2.1）── */
 
 /** 物料基础原语镜像 —— 与 host schema 同字段子集。 */
@@ -456,6 +556,9 @@ export interface RequirementError {
     | 'migration-failed'
     /* ── Plan I 新增（path-1:1 强绑定：path 上已有 req）── */
     | 'requirement-already-exists-at-path'
+    /* ── PR-B 新增（task 状态机错误码：host 校验 taskId / 状态转换合法性失败）── */
+    | 'task-not-found'
+    | 'invalid-state'
   detail?: string
 }
 
@@ -612,6 +715,20 @@ export interface SkyAxisController {
 
   /** 删除一个物料项（任意 section）。同步返回 UploadHandle（abort 兜底为 noop）。 */
   removeMaterial(requirementId: string, section: RequirementMaterialSection, itemId: string): UploadHandle
+
+  /* ── PR-B / 迭代 3：任务级状态机 ── */
+
+  /** 开始一个 task：pending → in_progress。 */
+  startTask(requirementId: string, taskId: string): UploadHandle
+
+  /** 接受 task：in_progress/verifying/failed → done（手动接受，跳过 AI verify）。 */
+  acceptTask(requirementId: string, taskId: string): UploadHandle
+
+  /** 重做 task：failed/rolled_back/pending → in_progress；retryCount + 1。 */
+  redoTask(requirementId: string, taskId: string): UploadHandle
+
+  /** 跳过 task：pending/in_progress/failed/blocked → skipped。 */
+  skipTask(requirementId: string, taskId: string): UploadHandle
 }
 
 /**
@@ -663,6 +780,15 @@ export function createSkyAxisController(deps: {
   ) => UploadHandle
   /** DELETE 移除：6 section 共用。返回 UploadHandle（abort 兜底 noop）。 */
   removeMaterialImpl?: (requirementId: string, section: RequirementMaterialSection, itemId: string) => UploadHandle
+  /* ── PR-B / 迭代 3：任务级 mutation deps ── */
+  /** task action：start / accept / redo / skip 共用签名。
+   *  action 决定路由（host 端按 action 走不同状态机校验）。
+   *  返回 UploadHandle；item 字段（若 server 返回）会替换整条 requirement。 */
+  taskActionImpl?: (input: {
+    requirementId: string
+    taskId: string
+    action: 'start' | 'accept' | 'redo' | 'skip'
+  }) => UploadHandle
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
@@ -783,6 +909,85 @@ export function createSkyAxisController(deps: {
       rollback()
       // eslint-disable-next-line no-console
       console.warn('[sky-axis] material mutation rejected:', e)
+    })
+
+    return {
+      promise: handle.promise,
+      abort: () => {
+        aborted = true
+        handle.abort()
+      },
+    }
+  }
+
+  /**
+   * 任务 mutation 的共用骨架（PR-B / 迭代 3）：
+   *   1. 乐观更新 plan artifact 中的 task status + subHistory
+   *   2. 调用 impl（注入的 fetch 实现，统一返回 UploadHandle）
+   *   3. 成功：若 result.item 提供则替换整条 requirement
+   *   4. 失败（result.ok === false）：回滚整个 requirements 字段（保留 workspaces）
+   *   5. 异常（promise reject）：同上
+   *
+   * 与 runMaterialMutation 不同之处：
+   *   - patch 函数接受 (task, now) → 新 task（由调用方决定如何填 status / subHistory）
+   *   - 回滚粒度只覆 requirements（plan artifact 内）
+   *
+   * @param callImpl 返回 UploadHandle；abort 兜底为 noop
+   */
+  const runTaskMutation = (
+    requirementId: string,
+    taskId: string,
+    patch: (task: RequirementTask, now: string) => RequirementTask,
+    callImpl: () => UploadHandle,
+  ): UploadHandle => {
+    const beforeRequirements = snapshot.requirements
+    let aborted = false
+    const rollback = (): void => {
+      snapshot = { ...snapshot, requirements: beforeRequirements }
+      notify()
+    }
+    const now = new Date().toISOString()
+    // 乐观更新 plan artifact 中的 task
+    snapshot = {
+      ...snapshot,
+      requirements: snapshot.requirements.map(r =>
+        r.id === requirementId ? updateTaskInPlanArtifact(r, taskId, patch, now) : r,
+      ),
+    }
+    notify()
+
+    let handle: UploadHandle
+    try {
+      handle = callImpl()
+    } catch (e) {
+      rollback()
+      return {
+        promise: Promise.resolve({
+          ok: false as const,
+          error: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }),
+        abort: () => { aborted = true },
+      }
+    }
+
+    handle.promise.then((result) => {
+      if (aborted) return
+      if (result.ok) {
+        if (result.item !== undefined) {
+          snapshot = {
+            ...snapshot,
+            requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr),
+          }
+          notify()
+        }
+      } else {
+        rollback()
+      }
+    }).catch((e: unknown) => {
+      if (aborted) return
+      rollback()
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] task mutation rejected:', e)
     })
 
     return {
@@ -1310,6 +1515,78 @@ export function createSkyAxisController(deps: {
         promise: handle.promise,
         abort: () => { aborted = true; handle.abort() },
       }
+    },
+
+    /* ── PR-B / 迭代 3：task action mutation（start / accept / redo / skip）── */
+
+    /** 开始一个 task：pending → in_progress。前置：status 必须是 pending。 */
+    startTask(requirementId: string, taskId: string): UploadHandle {
+      if (deps.taskActionImpl === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'taskActionImpl not injected') }),
+          abort: () => {},
+        }
+      }
+      return runTaskMutation(
+        requirementId,
+        taskId,
+        (task, now) => appendTaskTransition(task, 'in_progress', now, 'manual'),
+        () => deps.taskActionImpl!({ requirementId, taskId, action: 'start' }),
+      )
+    },
+
+    /** 接受当前 task：in_progress/verifying/failed → done（手动接受，跳过 AI verify）。
+     *  前置：status 必须是 in_progress / verifying / failed。 */
+    acceptTask(requirementId: string, taskId: string): UploadHandle {
+      if (deps.taskActionImpl === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'taskActionImpl not injected') }),
+          abort: () => {},
+        }
+      }
+      return runTaskMutation(
+        requirementId,
+        taskId,
+        (task, now) => appendTaskTransition(task, 'done', now, 'completed'),
+        () => deps.taskActionImpl!({ requirementId, taskId, action: 'accept' }),
+      )
+    },
+
+    /** 重做 task：failed/rolled_back → in_progress；retryCount + 1。
+     *  前置：status 必须是 failed / rolled_back / pending（也可主动 redo pending 强制重启）。 */
+    redoTask(requirementId: string, taskId: string): UploadHandle {
+      if (deps.taskActionImpl === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'taskActionImpl not injected') }),
+          abort: () => {},
+        }
+      }
+      return runTaskMutation(
+        requirementId,
+        taskId,
+        (task, now) => ({
+          ...appendTaskTransition(task, 'in_progress', now, 'manual'),
+          retryCount: task.retryCount + 1,
+        }),
+        () => deps.taskActionImpl!({ requirementId, taskId, action: 'redo' }),
+      )
+    },
+
+    /** 跳过 task：pending/in_progress/failed → skipped。
+     *  前置：status 必须是 pending / in_progress / failed / blocked。 */
+    skipTask(requirementId: string, taskId: string): UploadHandle {
+      if (deps.taskActionImpl === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'taskActionImpl not injected') }),
+          abort: () => {},
+        }
+      }
+      return runTaskMutation(
+        requirementId,
+        taskId,
+        (task, now) => appendTaskTransition(task, 'skipped', now, 'manual'),
+        () => deps.taskActionImpl!({ requirementId, taskId, action: 'skip' }),
+      )
     },
   }
 }
