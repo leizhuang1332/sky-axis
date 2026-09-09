@@ -13,14 +13,15 @@
  *   - tab header：tab 切换器
  *   - body：按当前 tab 渲染
  *
- * Phase 1 范围：
- *   - 「AI 工作台」tab 保留原有 3 列布局 + Stepper
- *   - 「需求物料」tab 显示 MaterialsPane 占位（Phase 2.5 实现）
- *   - tab 状态完全由 controller 持有，父组件透传
+ * PR-C 迭代 4 + 5：
+ *   - 新增 rewind drawer state（trigger / taskId）
+ *   - 条件渲染 RightDrawer + RewindDrawer
+ *   - 把 drawer state 通过 callbacks 透传给 AiConductorPane + StageWorkspacePane
+ *   - Drift rerun callback：调 controller.rerunDriftDetection（mock 兜底，无 impl）
  *
  * 数据来源：完全受控 props（由 SkyAxisPage 从 controller 投影传入）。
  */
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon,
@@ -31,13 +32,18 @@ import type {
   RequirementOption,
   RequirementStage,
 } from '../../controller/sky-axis-controller.ts'
-import type { SkyAxisController } from '../../controller/sky-axis-controller.ts'
+import type {
+  SkyAxisController,
+  RewindRequest,
+} from '../../controller/sky-axis-controller.ts'
 import { Stepper, type StepperItem, type StepperStageMeta } from '../../ui/Stepper.tsx'
 import { countRequirementMaterials } from '../../controller/sky-axis-controller.ts'
 import { AiConductorPane } from '../sections/AiConductorPane.tsx'
 import { StageWorkspacePane } from '../sections/StageWorkspacePane.tsx'
 import { InterventionQueuePane } from '../sections/InterventionQueuePane.tsx'
 import { MaterialsPane } from '../sections/MaterialsPane.tsx'
+import { RightDrawer } from '../../ui/RightDrawer.tsx'
+import { RewindDrawer } from '../sections/RewindDrawer.tsx'
 import { allMockTaskLists, mockDriftSnapshot, pickMockTaskList, summarizeForStepper } from './requirement-detail.mock.ts'
 import css from './RequirementDetailPage.module.css'
 
@@ -63,6 +69,47 @@ export function RequirementDetailPage({
     () => workspaces.find(w => w.id === requirement.workspaceId),
     [workspaces, requirement.workspaceId],
   )
+
+  /* ── PR-C：rewind drawer state + callbacks ── */
+  type DrawerTrigger = 'stage-go-back' | 'task-rewind'
+  const [rewindDrawer, setRewindDrawer] = useState<{
+    open: boolean
+    trigger: DrawerTrigger | null
+    taskId: string | null
+  }>({ open: false, trigger: null, taskId: null })
+  const [rewindSubmitting, setRewindSubmitting] = useState<boolean>(false)
+  const [driftLoading, setDriftLoading] = useState<boolean>(false)
+
+  const handleOpenRewindStage = useCallback((_trigger: 'stage-go-back') => {
+    setRewindDrawer({ open: true, trigger: 'stage-go-back', taskId: null })
+  }, [])
+  const handleOpenRewindTask = useCallback((taskId: string) => {
+    setRewindDrawer({ open: true, trigger: 'task-rewind', taskId })
+  }, [])
+  const handleCloseRewind = useCallback(() => {
+    if (rewindSubmitting) return
+    setRewindDrawer({ open: false, trigger: null, taskId: null })
+  }, [rewindSubmitting])
+  const handleSubmitRewind = useCallback((request: RewindRequest) => {
+    setRewindSubmitting(true)
+    const handle = controller.rewind(requirement.id, request)
+    handle.promise.then((result) => {
+      setRewindSubmitting(false)
+      if (result.ok) {
+        setRewindDrawer({ open: false, trigger: null, taskId: null })
+      }
+      // 失败：保留 drawer 让用户看到 error；detail 由 toast 触发（Phase 2）
+    }).catch(() => {
+      setRewindSubmitting(false)
+    })
+  }, [controller, requirement.id])
+  const handleRerunDrift = useCallback(() => {
+    setDriftLoading(true)
+    const handle = controller.rerunDriftDetection(requirement.id, 'all')
+    handle.promise.finally(() => {
+      setDriftLoading(false)
+    })
+  }, [controller, requirement.id])
 
   // Stepper 配置：每个节点的 icon + label + desc
   const stepperItems: StepperItem[] = useMemo(() => ([
@@ -200,6 +247,9 @@ export function RequirementDetailPage({
                 requirement={requirement}
                 loading={detailLoading}
                 driftSnapshot={mockDrift}
+                onOpenRewind={handleOpenRewindStage}
+                onRerunDrrift={handleRerunDrift}
+                driftLoading={driftLoading}
               />
             </aside>
             <section className={css.workspace}>
@@ -208,6 +258,7 @@ export function RequirementDetailPage({
                 requirement={requirement}
                 taskList={mockTaskList}
                 controller={controller}
+                onOpenRewind={handleOpenRewindTask}
               />
             </section>
             <aside className={css.queue}>
@@ -215,6 +266,26 @@ export function RequirementDetailPage({
             </aside>
           </main>
         </>
+      )}
+
+      {/* PR-C 迭代 4：rewind RightDrawer —— 条件渲染 */}
+      {rewindDrawer.open && rewindDrawer.trigger !== null && (
+        <RightDrawer
+          title={t('requirement.detail.rewind.title')}
+          onClose={handleCloseRewind}
+          loading={rewindSubmitting}
+        >
+          <RewindDrawer
+            t={t}
+            currentStage={requirement.stage ?? 'understand'}
+            trigger={rewindDrawer.trigger}
+            preselectedTaskId={rewindDrawer.taskId ?? undefined}
+            availableTasks={mockTaskList?.tasks.map((tk) => ({ id: tk.id, title: tk.title, status: tk.status }))}
+            onSubmit={handleSubmitRewind}
+            onCancel={handleCloseRewind}
+            submitting={rewindSubmitting}
+          />
+        </RightDrawer>
       )}
     </div>
   )

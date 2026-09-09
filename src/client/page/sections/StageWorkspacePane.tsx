@@ -42,6 +42,9 @@ export interface StageWorkspacePaneProps {
   /** 控制器：用于触发 task action mutation（start / accept / redo / skip）。
    *  null/undefined → 操作按钮全部 disabled（Phase 1 早期 / 测试场景）。 */
   controller?: SkyAxisController | null
+  /** PR-C 迭代 4：per-task Rewind 按钮触发 —— parent 打开 RightDrawer。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onOpenRewind?: (taskId: string) => void
 }
 
 const STAGE_ICONS: Record<RequirementStage, (p: { size?: number; className?: string }) => JSX.Element> = {
@@ -192,10 +195,12 @@ interface CurrentTaskSectionProps {
   stageHistory: RequirementEntry['stageHistory']
   requirementId: string
   controller: SkyAxisController | null
+  /** PR-C：per-task Rewind 按钮触发回调。 */
+  onOpenRewind?: (taskId: string) => void
 }
 
 function CurrentTaskSection({
-  t, task, stage, stageHistory, requirementId, controller,
+  t, task, stage, stageHistory, requirementId, controller, onOpenRewind,
 }: CurrentTaskSectionProps): JSX.Element {
   const tAny = t as unknown as (k: string) => string
   const Icon = STAGE_ICONS[stage]
@@ -306,8 +311,13 @@ function CurrentTaskSection({
             <button
               type="button"
               className={css.secondaryBtn}
-              disabled
-              title={tAny('requirement.detail.taskList.actionRewindHint')}
+              disabled={onOpenRewind === undefined}
+              onClick={(): void => {
+                if (onOpenRewind !== undefined && task !== null) onOpenRewind(task.id)
+              }}
+              title={onOpenRewind === undefined
+                ? tAny('requirement.detail.taskList.actionRewindHint')
+                : tAny('requirement.detail.taskList.actionRewind')}
             >
               {tAny('requirement.detail.taskList.actionRewind')}
             </button>
@@ -363,7 +373,7 @@ function CurrentTaskSection({
 /* ── 主组件 ── */
 
 export function StageWorkspacePane({
-  t, requirement, taskList, onSelectTask, controller = null,
+  t, requirement, taskList, onSelectTask, controller = null, onOpenRewind,
 }: StageWorkspacePaneProps): JSX.Element {
   // 默认选中第一个未 done / rolled_back / skipped 的 task
   const initialSelected = taskList?.tasks.find((tk) =>
@@ -402,6 +412,7 @@ export function StageWorkspacePane({
         stageHistory={requirement.stageHistory ?? []}
         requirementId={requirement.id}
         controller={controller}
+        onOpenRewind={onOpenRewind}
       />
     </div>
   )

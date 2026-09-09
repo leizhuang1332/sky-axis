@@ -455,14 +455,152 @@ export type AiState = z.infer<typeof AiStateSchema>
  *   - manual：用户手动「暂回上阶段」标记为 manual
  *   - rolled-back：上一阶段被回退到此阶段（保留审计链）
  *   - errored：该阶段异常退出
+ * - reason：回退/异常的 free-text 原因（PR-C 新增，rewind 时由用户填的详情）。
+ *   仅在 outcome 为 'rolled-back' 或 'errored' 时填。max 500 字。
  */
 export const StageHistoryEntrySchema = z.object({
   stage: StageSchema,
   enteredAt: z.string().datetime(),
   leftAt: z.string().datetime().optional(),
   outcome: z.enum(['completed', 'manual', 'rolled-back', 'errored']).optional(),
+  reason: z.string().max(500).optional(),
 })
 export type StageHistoryEntry = z.infer<typeof StageHistoryEntrySchema>
+
+/* ── PR-C：rewind UI + drift 三层（迭代 4 + 5）── */
+
+/**
+ * Rewind 目标字面量 —— 决定 rewind 后落到哪个 stage / task。
+ * - 'current-stage'：留在当前 stage（粒度 A，等价 task redo）
+ * - 'task'：回退到指定 task（粒度 A，targetTaskId 必填）
+ * - 'stage-prev'：回退到上一阶段（粒度 A）
+ * - 'stage-{name}'：回退到指定 stage（粒度 A/B/C 决定回退多远）
+ */
+export const RewindTargetSchema = z.enum([
+  'current-stage',
+  'task',
+  'stage-prev',
+  'stage-understand',
+  'stage-plan',
+  'stage-implement',
+  'stage-verify',
+  'stage-deliver',
+])
+export type RewindTarget = z.infer<typeof RewindTargetSchema>
+
+/**
+ * Rewind 原因字面量 —— design §2.2 三类触发器 + 5 种 reason。
+ * - verify-failed：自动触发（CI 测试失败）
+ * - plan-drift：半自动触发（drift 语义层超阈值）
+ * - goal-misaligned：手动 / 半自动（方向错了）
+ * - human-request：手动（用户主动）
+ * - auto-detected-issue：自动（drift 静态 / 动态层检测）
+ */
+export const RewindReasonSchema = z.enum([
+  'verify-failed',
+  'plan-drift',
+  'goal-misaligned',
+  'human-request',
+  'auto-detected-issue',
+])
+export type RewindReason = z.infer<typeof RewindReasonSchema>
+
+/**
+ * Rewind 粒度字面量 —— design §5.5 三档粒度。
+ * - A：单任务重做 / 当前 stage 内回退 —— 保留其它 task / stage 产物
+ * - B：当前 task 回退到 plan stage —— 当前 stage 内其它 task 可选保留
+ * - C：整个 requirement 回退到 understand stage —— 所有 stage 产物清空，保留 materials
+ */
+export const RewindGranularitySchema = z.enum(['A', 'B', 'C'])
+export type RewindGranularity = z.infer<typeof RewindGranularitySchema>
+
+/**
+ * Rewind 请求（POST /requirements/rewind 入参）—— discriminated union by target。
+ * - target='task'：必须传 targetTaskId
+ * - target='stage-*'：可选 granularity（A=只回退该 stage / B=回退到 plan / C=回退到 understand）
+ *   注意：granularity 与 target 不完全独立 —— host 端按组合解读；client UI 默认
+ *   granularity 由 trigger 预填（stage-go-back → A / task-rewind → A）
+ */
+export const RewindRequestSchema = z.discriminatedUnion('target', [
+  z.object({
+    target: z.literal('current-stage'),
+    reason: RewindReasonSchema,
+    reasonDetail: z.string().max(500).optional(),
+    granularity: RewindGranularitySchema.default('A'),
+    options: z.object({
+      preserveDownstream: z.boolean().default(false),
+      draftNewPlan: z.boolean().default(false),
+    }).default(() => ({ preserveDownstream: false, draftNewPlan: false })),
+  }),
+  z.object({
+    target: z.literal('task'),
+    targetTaskId: z.string().min(1).max(64),
+    reason: RewindReasonSchema,
+    reasonDetail: z.string().max(500).optional(),
+    granularity: RewindGranularitySchema.default('A'),
+    options: z.object({
+      preserveDownstream: z.boolean().default(false),
+      draftNewPlan: z.boolean().default(false),
+    }).default(() => ({ preserveDownstream: false, draftNewPlan: false })),
+  }),
+  z.object({
+    target: z.enum(['stage-prev', 'stage-understand', 'stage-plan', 'stage-implement', 'stage-verify', 'stage-deliver']),
+    reason: RewindReasonSchema,
+    reasonDetail: z.string().max(500).optional(),
+    granularity: RewindGranularitySchema.default('A'),
+    options: z.object({
+      preserveDownstream: z.boolean().default(false),
+      draftNewPlan: z.boolean().default(false),
+    }).default(() => ({ preserveDownstream: false, draftNewPlan: false })),
+  }),
+])
+export type RewindRequest = z.infer<typeof RewindRequestSchema>
+
+/**
+ * Drift 检测层字面量 —— design §5.3 三层检测。
+ * - static：触动文件是否在 task.filesExpected 内
+ * - dynamic：测试 / 类型 / lint 是否过
+ * - semantic：LLM-as-judge 对比 patch 与 goal
+ */
+export const DriftLayerSchema = z.enum(['static', 'dynamic', 'semantic'])
+export type DriftLayer = z.infer<typeof DriftLayerSchema>
+
+/**
+ * Drift 检测结果（per-layer / per-task / per-stage 共用此 schema）。
+ * - layer：哪一层
+ * - score：0-1 综合分
+ * - detectedAt：检测时刻
+ * - sourceTaskId：触发 drift 的 task id（可选 —— stage 级快照可能不含）
+ * - note：一行说明（mock 用，LLM 真接入后为 judge 评语）
+ */
+export const DriftScoreSchema = z.object({
+  layer: DriftLayerSchema,
+  score: z.number().min(0).max(1),
+  detectedAt: z.string().datetime(),
+  sourceTaskId: z.string().min(1).max(64).optional(),
+  note: z.string().max(200).optional(),
+})
+export type DriftScore = z.infer<typeof DriftScoreSchema>
+
+/**
+ * Drift 检测请求（POST /requirements/drift/detect 入参）—— host 端按 layer 跑检测，
+ * 可指定 taskId 限定只检测某 task。layer='all' 时 host 内部逐 layer 调用并合并。
+ */
+export const DriftDetectRequestSchema = z.object({
+  layer: z.enum(['static', 'dynamic', 'semantic', 'all']).default('all'),
+  taskId: z.string().min(1).max(64).optional(),
+})
+export type DriftDetectRequest = z.infer<typeof DriftDetectRequestSchema>
+
+/** Drift 检测响应 —— 返回一组 per-layer 分数。 */
+export const DriftDetectResponseSchema = z.object({
+  requirementId: RequirementIdSchema,
+  scores: z.array(DriftScoreSchema).min(1).max(8),
+  /** 整 stage 综合分（max of 3 layer）；client 渲染 DriftCard 用。 */
+  overall: z.number().min(0).max(1),
+  detectedAt: z.string().datetime(),
+})
+export type DriftDetectResponse = z.infer<typeof DriftDetectResponseSchema>
 
 /**
  * 介入队列项 —— AI 等待人类介入的事件。

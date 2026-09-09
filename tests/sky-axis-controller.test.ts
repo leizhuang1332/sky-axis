@@ -1416,3 +1416,402 @@ describe('PR-B：startTask / acceptTask / redoTask / skipTask', () => {
     expect(l.getCalls()).toBeGreaterThan(afterStart + 2)
   })
 })
+
+/* ── PR-C / 迭代 4 + 5：rewind + drift detect ── */
+
+import type {
+  RewindRequest,
+  DriftLayer,
+  DriftScore,
+} from '../src/client/controller/sky-axis-controller.ts'
+
+type RewindImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['rewindImpl']
+type DriftDetectImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['driftDetectImpl']
+
+function okRewindImpl(): RewindImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failRewindImpl(code: 'rewind-target-invalid' | 'rewind-granularity-conflict' = 'rewind-target-invalid'): RewindImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+function okDriftDetectImpl(): DriftDetectImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failDriftDetectImpl(code: 'drift-detector-unavailable' | 'drift-no-source-task' = 'drift-detector-unavailable'): DriftDetectImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+
+describe('PR-C：rewind mutation（迭代 4）', () => {
+  it('当前阶段 → current-stage：追加 rewind entry，stage 保持，reason 写入', async () => {
+    const req = makeReq({
+      stage: 'plan',
+      stageHistory: [{ stage: 'plan', enteredAt: '2026-08-30T12:00:00.000Z' }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'current-stage',
+      reason: 'verify-failed',
+      reasonDetail: 'lint failed',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    // stage 仍是 plan（current-stage 不变）
+    expect(after.stage).toBe('plan')
+    // stageHistory 收尾 + 新 entry
+    expect(after.stageHistory).toHaveLength(2)
+    expect(after.stageHistory[0]?.leftAt).toBeDefined()
+    expect(after.stageHistory[0]?.outcome).toBe('rolled-back')
+    expect(after.stageHistory[0]?.reason).toBe('lint failed')
+    expect(after.stageHistory[1]?.stage).toBe('plan')
+    expect(after.stageHistory[1]?.reason).toBe('lint failed')
+  })
+
+  it('stage-prev：plan → understand，stage 改变', async () => {
+    const req = makeReq({
+      stage: 'plan',
+      stageHistory: [{ stage: 'plan', enteredAt: '2026-08-30T12:00:00.000Z' }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'stage-prev',
+      reason: 'plan-drift',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(true)
+    expect(c.getSnapshot().requirements[0]?.stage).toBe('understand')
+  })
+
+  it('stage-prev 在 understand 阶段 → fail loud（rewind-target-invalid）', async () => {
+    const req = makeReq({
+      stage: 'understand',
+      stageHistory: [{ stage: 'understand', enteredAt: '2026-08-30T12:00:00.000Z' }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'stage-prev',
+      reason: 'human-request',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('rewind-target-invalid')
+  })
+
+  it('target=task 但缺 targetTaskId → fail loud', async () => {
+    const req = makeReq({ stage: 'implement', stageHistory: [{ stage: 'implement', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    // target=task 时 RewindRequest 强制要求 targetTaskId —— 测试 fail loud 需要绕过类型检查
+    const req_ = {
+      target: 'task' as const,
+      reason: 'plan-drift' as const,
+      granularity: 'A' as const,
+      options: { preserveDownstream: false, draftNewPlan: false },
+    } as unknown as RewindRequest
+    const r = await c.rewind(req.id, req_).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('rewind-target-invalid')
+  })
+
+  it('target=task + granularity=C → fail loud（rewind-granularity-conflict）', async () => {
+    const req = makeReq({ stage: 'implement', stageHistory: [{ stage: 'implement', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'task',
+      targetTaskId: 'T-001',
+      reason: 'plan-drift',
+      granularity: 'C',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('rewind-granularity-conflict')
+  })
+
+  it('granularity=C + toStage=understand → 清空 plan artifact 中的 task list', async () => {
+    // 当前 stage=plan，有 plan artifact。rewind 到 understand + granularity=C → 清空 plan
+    const req = makeReq({
+      stage: 'understand',
+      stageHistory: [
+        { stage: 'understand', enteredAt: 't' },
+        { stage: 'plan', enteredAt: 't2', leftAt: 't3', outcome: 'completed' },
+      ],
+      artifacts: { 'plan-art-1': makePlanArtifact() },
+    })
+    // makeReq 默认 stageHistory 只有 understand entry；上面已经覆盖了
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'stage-understand',
+      reason: 'goal-misaligned',
+      granularity: 'C',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    expect(after.stage).toBe('understand')
+    // plan artifact 应被清空 tasks
+    const planArt = after.artifacts['plan-art-1']
+    const list = parseTaskListFromArtifact(planArt!)
+    expect(list?.tasks).toEqual([])
+  })
+
+  it('rewind 失败时 requirements 回滚，workspaces 不变', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: failRewindImpl() })
+    await c.loadRequirements()
+    // 先把 workspaces 注入
+    c.setWorkspaces([{ id: 'ws-x', title: 'ws', path: '/tmp/x' }])
+    const wsBefore = c.getSnapshot().workspaces
+    const stageBefore = c.getSnapshot().requirements[0]?.stage
+    const r = await c.rewind(req.id, {
+      target: 'current-stage',
+      reason: 'verify-failed',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(false)
+    // 乐观更新被回滚
+    expect(c.getSnapshot().requirements[0]?.stage).toBe(stageBefore)
+    // workspaces 仍在
+    expect(c.getSnapshot().workspaces).toEqual(wsBefore)
+  })
+
+  it('未注入 rewindImpl → 走 mock 兜底：乐观更新即最终结果', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) })
+    await c.loadRequirements()
+    const r = await c.rewind(req.id, {
+      target: 'current-stage',
+      reason: 'human-request',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(true)
+    // 乐观更新保留（兜底 impl 返回 ok=true）
+    expect(c.getSnapshot().requirements[0]?.stage).toBe('plan')
+    expect(c.getSnapshot().requirements[0]?.stageHistory.length).toBeGreaterThan(1)
+  })
+
+  it('rewind 缺失 requirement → fail loud', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) })
+    await c.loadRequirements()
+    const r = await c.rewind('NON-EXIST', {
+      target: 'current-stage',
+      reason: 'human-request',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('rewind 触发 notify（乐观更新可见）', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), rewindImpl: okRewindImpl() })
+    await c.loadRequirements()
+    const l = makeListener()
+    c.subscribe(l.fn)
+    const baseline = l.getCalls()
+    await c.rewind(req.id, {
+      target: 'current-stage',
+      reason: 'verify-failed',
+      granularity: 'A',
+      options: { preserveDownstream: false, draftNewPlan: false },
+    }).promise
+    expect(l.getCalls()).toBeGreaterThan(baseline)
+  })
+})
+
+describe('PR-C：rerunDriftDetection（迭代 5）', () => {
+  it('默认 layer=all → 追加 drift snapshot artifact 含 3 层分数', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), driftDetectImpl: okDriftDetectImpl() })
+    await c.loadRequirements()
+    const r = await c.rerunDriftDetection(req.id, 'all').promise
+    expect(r.ok).toBe(true)
+    // 应新增一个 kind=note artifact（drift snapshot）
+    const after = c.getSnapshot().requirements[0]!
+    const driftArts = Object.values(after.artifacts).filter(a => a.kind === 'note' && a.title === 'Drift snapshot')
+    expect(driftArts.length).toBeGreaterThanOrEqual(1)
+    const body = JSON.parse(driftArts[driftArts.length - 1]!.body) as { scores: DriftScore[]; overall: number }
+    expect(body.scores).toHaveLength(3)
+    expect(body.overall).toBeGreaterThanOrEqual(0)
+  })
+
+  it('单 layer mode → 只追加该 layer 的分数', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), driftDetectImpl: okDriftDetectImpl() })
+    await c.loadRequirements()
+    const r = await c.rerunDriftDetection(req.id, 'static').promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    const driftArts = Object.values(after.artifacts).filter(a => a.title === 'Drift snapshot')
+    const body = JSON.parse(driftArts[driftArts.length - 1]!.body) as { scores: DriftScore[] }
+    expect(body.scores).toHaveLength(1)
+    expect(body.scores[0]?.layer).toBe('static')
+  })
+
+  it('未注入 driftDetectImpl → 走 mock 兜底：乐观更新即最终结果', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) })
+    await c.loadRequirements()
+    const r = await c.rerunDriftDetection(req.id, 'all').promise
+    expect(r.ok).toBe(true)
+    // 至少有一个 drift snapshot artifact
+    const after = c.getSnapshot().requirements[0]!
+    const driftArts = Object.values(after.artifacts).filter(a => a.title === 'Drift snapshot')
+    expect(driftArts.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('drift detect 失败时 requirements 回滚，workspaces 不变', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), driftDetectImpl: failDriftDetectImpl() })
+    await c.loadRequirements()
+    c.setWorkspaces([{ id: 'ws-x', title: 'ws', path: '/tmp/x' }])
+    const wsBefore = c.getSnapshot().workspaces
+    const artifactsBefore = c.getSnapshot().requirements[0]?.artifacts
+    const r = await c.rerunDriftDetection(req.id, 'all').promise
+    expect(r.ok).toBe(false)
+    // 乐观 artifact 被回滚
+    expect(c.getSnapshot().requirements[0]?.artifacts).toEqual(artifactsBefore)
+    // workspaces 保留
+    expect(c.getSnapshot().workspaces).toEqual(wsBefore)
+  })
+
+  it('rerunDriftDetection 缺失 requirement → fail loud', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) })
+    await c.loadRequirements()
+    const r = await c.rerunDriftDetection('NON-EXIST').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('rerunDriftDetection 触发 notify（乐观更新可见）', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), driftDetectImpl: okDriftDetectImpl() })
+    await c.loadRequirements()
+    const l = makeListener()
+    c.subscribe(l.fn)
+    const baseline = l.getCalls()
+    await c.rerunDriftDetection(req.id).promise
+    expect(l.getCalls()).toBeGreaterThan(baseline)
+  })
+
+  it('summarizeDriftFromTaskList：3 层逻辑分别派生分数', () => {
+    const tasks: Parameters<typeof summarizeDriftFromTaskList>[0] = [
+      { id: 'T1', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: [], status: 'failed', subHistory: [], artifactRefs: [], retryCount: 0, lastDriftScore: 0.5, enteredAt: 't' },
+      { id: 'T2', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: ['a.ts'], status: 'done', subHistory: [], artifactRefs: [], retryCount: 0, enteredAt: 't' },
+      { id: 'T3', title: '', goal: '', acceptance: [], dependencies: [], filesExpected: ['b.ts'], status: 'done', subHistory: [], artifactRefs: [], retryCount: 0, lastDriftScore: 0.3, enteredAt: 't' },
+    ]
+    const staticScore = summarizeDriftFromTaskList(tasks, 'static', 't')
+    const dynamicScore = summarizeDriftFromTaskList(tasks, 'dynamic', 't')
+    const semanticScore = summarizeDriftFromTaskList(tasks, 'semantic', 't')
+    expect(staticScore.layer).toBe('static')
+    expect(dynamicScore.layer).toBe('dynamic')
+    expect(semanticScore.layer).toBe('semantic')
+    // 1/3 task 没 filesExpected → static score 应 > 0
+    expect(staticScore.score).toBeGreaterThan(0)
+    // 1/3 task failed → dynamic score 应 > 0
+    expect(dynamicScore.score).toBeGreaterThan(0)
+    // max(0.5, 0.3) + 0.05 jitter = 0.55
+    expect(semanticScore.score).toBeCloseTo(0.55, 1)
+  })
+
+  it('summarizeDriftFromTaskList：空 taskList → 全部返回 0', () => {
+    const scores = (['static', 'dynamic', 'semantic'] as DriftLayer[]).map(l =>
+      summarizeDriftFromTaskList([], l, 't'),
+    )
+    for (const s of scores) expect(s.score).toBe(0)
+  })
+})
+
+// ── rewind helper 的直接测试 ──
+
+import {
+  resolveRewindTarget,
+  appendRewindEntry,
+  clearTaskListOnRewindToUnderstand,
+  summarizeDriftFromTaskList,
+} from '../src/client/controller/sky-axis-controller.ts'
+
+describe('PR-C：resolveRewindTarget helper', () => {
+  it('current-stage / task → 返回当前 stage', () => {
+    const req = makeReq({ stage: 'implement' })
+    expect(resolveRewindTarget(req, 'current-stage')).toBe('implement')
+    expect(resolveRewindTarget(req, 'task')).toBe('implement')
+  })
+  it('stage-prev 在 implement → plan', () => {
+    expect(resolveRewindTarget(makeReq({ stage: 'implement' }), 'stage-prev')).toBe('plan')
+  })
+  it('stage-prev 在 understand → null', () => {
+    expect(resolveRewindTarget(makeReq({ stage: 'understand' }), 'stage-prev')).toBeNull()
+  })
+  it('stage-* 强制返回对应 stage', () => {
+    const req = makeReq({ stage: 'plan' })
+    expect(resolveRewindTarget(req, 'stage-understand')).toBe('understand')
+    expect(resolveRewindTarget(req, 'stage-plan')).toBe('plan')
+    expect(resolveRewindTarget(req, 'stage-implement')).toBe('implement')
+    expect(resolveRewindTarget(req, 'stage-verify')).toBe('verify')
+    expect(resolveRewindTarget(req, 'stage-deliver')).toBe('deliver')
+  })
+})
+
+describe('PR-C：appendRewindEntry helper', () => {
+  it('收尾 open entry + 追加新 entry', () => {
+    const req = makeReq({
+      stage: 'plan',
+      stageHistory: [{ stage: 'plan', enteredAt: 't' }],
+    })
+    const out = appendRewindEntry(req, 'plan', 'plan', 'verify-failed', 'lint failed', 't2')
+    expect(out.stage).toBe('plan')
+    expect(out.stageHistory).toHaveLength(2)
+    expect(out.stageHistory[0]?.leftAt).toBe('t2')
+    expect(out.stageHistory[0]?.outcome).toBe('rolled-back')
+    expect(out.stageHistory[1]?.stage).toBe('plan')
+    expect(out.stageHistory[1]?.reason).toBe('lint failed')
+  })
+  it('没有 open entry 时不收尾，直接追加', () => {
+    const req = makeReq({
+      stage: 'plan',
+      stageHistory: [{ stage: 'plan', enteredAt: 't', leftAt: 't1', outcome: 'completed' }],
+    })
+    const out = appendRewindEntry(req, 'plan', 'plan', 'verify-failed', undefined, 't2')
+    expect(out.stageHistory).toHaveLength(2)
+    expect(out.stageHistory[0]?.leftAt).toBe('t1') // 原 entry 不动
+    expect(out.stageHistory[1]?.reason).toBe('verify-failed')
+  })
+})
+
+describe('PR-C：clearTaskListOnRewindToUnderstand helper', () => {
+  it('有 plan artifact → 清空 tasks', () => {
+    const req = makeReqWithPlan()
+    const out = clearTaskListOnRewindToUnderstand(req, 't')
+    const planArt = out.artifacts['plan-art-1']
+    const list = parseTaskListFromArtifact(planArt!)
+    expect(list?.tasks).toEqual([])
+    expect(list?.producedAtStage).toBe('understand')
+  })
+  it('无 plan artifact → 原 req 不变', () => {
+    const req = makeReq({ artifacts: {} })
+    const out = clearTaskListOnRewindToUnderstand(req, 't')
+    expect(out).toBe(req)
+  })
+})
+
+// 抑制 unused（RewindRequest 在 import 时声明但 describe 不直接引用 —— vitest 静态分析会忽略）
+void (null as unknown as RewindRequest)

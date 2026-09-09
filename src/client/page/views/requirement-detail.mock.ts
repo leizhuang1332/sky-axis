@@ -382,3 +382,87 @@ export function mockTaskActionProgrammable(
     return handle
   }
 }
+
+/* ── Rewind mock impl（PR-C / 迭代 4）── */
+
+import type {
+  RewindRequest,
+} from '../../controller/sky-axis-controller.ts'
+
+/** Rewind impl 的函数签名（局部导出，避免从 controller.ts 二次导入）。
+ *  与 createSkyAxisController deps.rewindImpl 完全一致。 */
+export type MockRewindImpl = (input: {
+  requirementId: string
+  request: RewindRequest
+}) => UploadHandle
+
+/** 创建一个 100% 成功的 mock rewind impl（无延迟、ok=true）。 */
+export function mockRewindOk(): MockRewindImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+
+/** 创建一个始终失败的 mock rewind impl。 */
+export function mockRewindFail(
+  code: 'rewind-target-invalid' | 'rewind-granularity-conflict' | 'internal-error' = 'internal-error',
+  detail = 'mock rewind failure',
+): MockRewindImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+
+/** 创建一个可注入延迟 + 可编程响应的 mock rewind impl。 */
+export function mockRewindProgrammable(
+  responder: (input: { requirementId: string; request: RewindRequest }) =>
+    { ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError },
+  delayMs = 200,
+): MockRewindImpl {
+  return (input) => {
+    let aborted = false
+    const promise = new Promise<{ ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError }>((resolve) => {
+      setTimeout(() => {
+        if (aborted) return
+        resolve(responder(input))
+      }, delayMs)
+    })
+    const handle: UploadHandle = {
+      promise,
+      abort: () => { aborted = true },
+    }
+    return handle
+  }
+}
+
+/* ── Drift detect mock impl（PR-C / 迭代 5）── */
+
+import type { DriftLayer } from '../../controller/sky-axis-controller.ts'
+
+/** Drift detect impl 的函数签名（局部导出）。 */
+export type MockDriftDetectImpl = (input: {
+  requirementId: string
+  layer: DriftLayer | 'all'
+  taskId?: string
+}) => UploadHandle
+
+/** 创建一个 100% 成功的 mock drift detect impl。 */
+export function mockDriftDetectOk(): MockDriftDetectImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+
+/** 创建一个始终失败的 mock drift detect impl。 */
+export function mockDriftDetectFail(
+  code: 'drift-detector-unavailable' | 'drift-no-source-task' | 'internal-error' = 'internal-error',
+  detail = 'mock drift failure',
+): MockDriftDetectImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}

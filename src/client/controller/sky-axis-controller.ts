@@ -131,6 +131,8 @@ export interface RequirementStageHistoryEntry {
   enteredAt: string
   leftAt?: string
   outcome?: 'completed' | 'manual' | 'rolled-back' | 'errored'
+  /* PR-C 新增：rewind 时由用户填的 free-text 原因 */
+  reason?: string
 }
 
 /* ── Task / TaskList 镜像 type（Phase 1.0 任务列表）── */
@@ -303,6 +305,243 @@ export function lastOpenSubHistoryEntry(task: RequirementTask): TaskSubHistoryEn
     if (e !== undefined && e.leftAt === undefined) return e
   }
   return null
+}
+
+/* ── PR-C：rewind + drift 镜像 type（迭代 4 + 5）── */
+
+/** Rewind 目标字面量（mirror protocol.ts RewindTargetSchema）。 */
+export type RewindTarget =
+  | 'current-stage'
+  | 'task'
+  | 'stage-prev'
+  | 'stage-understand'
+  | 'stage-plan'
+  | 'stage-implement'
+  | 'stage-verify'
+  | 'stage-deliver'
+
+/** Rewind 原因字面量（mirror protocol.ts RewindReasonSchema）。 */
+export type RewindReason =
+  | 'verify-failed'
+  | 'plan-drift'
+  | 'goal-misaligned'
+  | 'human-request'
+  | 'auto-detected-issue'
+
+/** Rewind 粒度字面量（mirror protocol.ts RewindGranularitySchema）。 */
+export type RewindGranularity = 'A' | 'B' | 'C'
+
+/** Rewind 请求 —— client mirror，与 protocol RewindRequestSchema 字段一一对应。
+ *  discriminated union by target —— UI / controller 都按 target 分支处理。
+ *  target='task' 时 targetTaskId 必填。 */
+export type RewindRequest =
+  | {
+      target: 'current-stage'
+      reason: RewindReason
+      reasonDetail?: string
+      granularity?: RewindGranularity
+      options?: { preserveDownstream?: boolean; draftNewPlan?: boolean }
+    }
+  | {
+      target: 'task'
+      targetTaskId: string
+      reason: RewindReason
+      reasonDetail?: string
+      granularity?: RewindGranularity
+      options?: { preserveDownstream?: boolean; draftNewPlan?: boolean }
+    }
+  | {
+      target: 'stage-prev' | 'stage-understand' | 'stage-plan' | 'stage-implement' | 'stage-verify' | 'stage-deliver'
+      reason: RewindReason
+      reasonDetail?: string
+      granularity?: RewindGranularity
+      options?: { preserveDownstream?: boolean; draftNewPlan?: boolean }
+    }
+
+/** Drift 检测层字面量（mirror protocol.ts DriftLayerSchema）。 */
+export type DriftLayer = 'static' | 'dynamic' | 'semantic'
+
+/** Drift 检测结果镜像。 */
+export interface DriftScore {
+  layer: DriftLayer
+  score: number
+  detectedAt: string
+  sourceTaskId?: string
+  note?: string
+}
+
+/** Drift 完整检测响应镜像（含 overall + scores[]）。 */
+export interface DriftDetectResult {
+  requirementId: string
+  scores: DriftScore[]
+  overall: number
+  detectedAt: string
+}
+
+/* ── PR-C：rewind helper（pure function）── */
+
+/** 5 阶段顺序（PR-C / 迭代 4 用）—— 用于 stage-prev 计算。 */
+const STAGE_ORDER: readonly RequirementStage[] = ['understand', 'plan', 'implement', 'verify', 'deliver']
+
+/** 把 RewindTarget 解析成实际 stage key。target='task' 时返回当前 stage（task 粒度由
+ *  调用方用 targetTaskId 处理）；target 无效时返回 null（controller 兜底报错）。
+ *
+ *  target='stage-prev' 在 currentStage='understand' 时返回 null（没有更早阶段），
+ *  UI 应该禁掉这种组合（drawer 渲染时按需屏蔽）。
+ */
+export function resolveRewindTarget(
+  req: RequirementEntry,
+  target: RewindTarget,
+): RequirementStage | null {
+  const current = req.stage
+  switch (target) {
+    case 'current-stage':
+    case 'task':
+      return current
+    case 'stage-prev': {
+      const idx = STAGE_ORDER.indexOf(current)
+      if (idx <= 0) return null
+      const prev = STAGE_ORDER[idx - 1]
+      return prev ?? null
+    }
+    case 'stage-understand': return 'understand'
+    case 'stage-plan':       return 'plan'
+    case 'stage-implement':  return 'implement'
+    case 'stage-verify':     return 'verify'
+    case 'stage-deliver':    return 'deliver'
+  }
+}
+
+/** 在 req.stageHistory 末尾追加 rewind entry + 收尾旧 entry（如果旧 entry 还 open）。
+ *  返回新 RequirementEntry；不动其它字段。
+ *
+ *  行为：
+ *   1. 找到最后一个 stage=fromStage 且 leftAt===undefined 的 entry → 加 leftAt=now + outcome=rolled-back + reason
+ *   2. 在末尾追加新 entry（stage=toStage + enteredAt=now）
+ *   3. req.stage 改为 toStage；req.updatedAt = now
+ *
+ *  reason / reasonDetail 为 null 时跳过 reason 字段写入。
+ *  granularity=C 时调用方需额外清空 plan artifact —— 此函数不处理。
+ */
+export function appendRewindEntry(
+  req: RequirementEntry,
+  fromStage: RequirementStage,
+  toStage: RequirementStage,
+  reason: RewindReason,
+  reasonDetail: string | undefined,
+  now: string,
+): RequirementEntry {
+  const lastIdx = (() => {
+    for (let i = req.stageHistory.length - 1; i >= 0; i -= 1) {
+      const e = req.stageHistory[i]
+      if (e?.stage === fromStage && e.leftAt === undefined) return i
+    }
+    return -1
+  })()
+
+  const newHistory = req.stageHistory.slice()
+  if (lastIdx >= 0) {
+    const prev = newHistory[lastIdx]
+    if (prev !== undefined) {
+      newHistory[lastIdx] = {
+        ...prev,
+        leftAt: now,
+        outcome: 'rolled-back',
+        reason: reasonDetail ?? reason,
+      }
+    }
+  }
+  newHistory.push({
+    stage: toStage,
+    enteredAt: now,
+    reason: reasonDetail ?? reason,
+  })
+
+  return {
+    ...req,
+    stage: toStage,
+    stageHistory: newHistory,
+    updatedAt: now,
+  }
+}
+
+/** Granularity=C 时清空 plan artifact 中的 task list（保留其它 artifact）。
+ *  plan artifact 缺失或解析失败时返回原 req 不变。 */
+export function clearTaskListOnRewindToUnderstand(
+  req: RequirementEntry,
+  now: string,
+): RequirementEntry {
+  const planArt = findPlanArtifact(req)
+  if (planArt === null) return req
+  const list = parseTaskListFromArtifact(planArt)
+  if (list === null) return req
+  const cleared: RequirementTaskList = {
+    tasks: [],
+    producedAt: now,
+    producedAtStage: 'understand',
+  }
+  return {
+    ...req,
+    artifacts: {
+      ...req.artifacts,
+      [planArt.id]: { ...planArt, body: serializeTaskList(cleared) },
+    },
+    updatedAt: now,
+  }
+}
+
+/* ── PR-C：drift 默认 mock 实现（迭代 5，LLM-as-judge 占位）── */
+
+/**
+ * 从 taskList 派生 drift 分数（mock 默认实现，Phase 1 / Phase 3 都用）。
+ * 真实 LLM-as-judge 接入后由 controller deps.driftDetectImpl 提供；
+ * 这里是「LLM 还没选型」期间的兜底：
+ *   - static：触动 filesExpected 越界的 task 比例
+ *   - dynamic：failed / blocked 的 task 比例
+ *   - semantic：max(task.lastDriftScore) + 0.05 随机扰动（mock 不可预测性）
+ *
+ * 返回单 layer 的 DriftScore；调用方负责生成 detectedAt 时间戳。
+ */
+export function summarizeDriftFromTaskList(
+  taskList: RequirementTask[],
+  layer: DriftLayer,
+  detectedAt: string,
+): DriftScore {
+  if (taskList.length === 0) {
+    return { layer, score: 0, detectedAt, note: 'no tasks yet' }
+  }
+  let score = 0
+  let note: string | undefined
+  switch (layer) {
+    case 'static': {
+      // mock：所有 task 都没有 filesExpected 时假定 0.3（placeholder）
+      const empty = taskList.filter(t => t.filesExpected.length === 0).length
+      score = Math.min(1, empty / taskList.length * 0.5)
+      note = `${empty}/${taskList.length} task(s) 未声明 filesExpected`
+      break
+    }
+    case 'dynamic': {
+      const bad = taskList.filter(t => t.status === 'failed' || t.status === 'blocked').length
+      score = bad / taskList.length
+      note = `${bad}/${taskList.length} task(s) failed/blocked`
+      break
+    }
+    case 'semantic': {
+      const scores = taskList
+        .map(t => t.lastDriftScore)
+        .filter((s): s is number => s !== undefined)
+      if (scores.length === 0) {
+        score = 0.15
+        note = 'no lastDriftScore yet (mock)'
+      } else {
+        // mock 语义层加一点扰动，演示可视化变化
+        score = Math.min(1, Math.max(...scores) + 0.05)
+        note = `max(task.lastDriftScore)=${Math.max(...scores).toFixed(2)} + 0.05 mock jitter`
+      }
+      break
+    }
+  }
+  return { layer, score, detectedAt, note }
 }
 
 /* ── 物料镜像 type（Phase 2.1）── */
@@ -559,6 +798,12 @@ export interface RequirementError {
     /* ── PR-B 新增（task 状态机错误码：host 校验 taskId / 状态转换合法性失败）── */
     | 'task-not-found'
     | 'invalid-state'
+    /* ── PR-C 新增（rewind 错误码：target / granularity 校验失败）── */
+    | 'rewind-target-invalid'
+    | 'rewind-granularity-conflict'
+    /* ── PR-C 新增（drift 检测错误码：impl 未注入 / 缺 taskId）── */
+    | 'drift-detector-unavailable'
+    | 'drift-no-source-task'
   detail?: string
 }
 
@@ -729,6 +974,33 @@ export interface SkyAxisController {
 
   /** 跳过 task：pending/in_progress/failed/blocked → skipped。 */
   skipTask(requirementId: string, taskId: string): UploadHandle
+
+  /* ── PR-C / 迭代 4：阶段级 rewind ── */
+
+  /** 回退一个需求到指定 stage / task（design §2.2 rewind(target, reason, options)）。
+   *
+   * 行为：
+   *   - 校验 request.target 与 targetTaskId 一致性（target='task' 时必填）
+   *   - resolveRewindTarget(req, target) → toStage
+   *   - 当前 stage entry 收尾（outcome=rolled-back + reason），新 stage entry 入栈
+   *   - granularity='C' 时额外清空 plan artifact 中的 task list（design §5.5 粒度 C）
+   *   - 失败回滚：snapshot.requirements 恢复，workspaces 不被冲掉
+   */
+  rewind(requirementId: string, request: RewindRequest): UploadHandle
+
+  /* ── PR-C / 迭代 5：drift 检测 ── */
+
+  /** 重跑 drift 检测（design §5.3 三层）。
+   *  - layer='all'：逐 layer 串行调用 impl（mock 默认用 summarizeDriftFromTaskList 兜底）
+   *  - layer='static' | 'dynamic' | 'semantic'：单层检测
+   *  - taskId 限定时只更新该 task 的 lastDriftScore（impl 决定如何处理；client mock 不带 taskId）
+   *
+   *  写入：artifact (kind='note' + title='Drift snapshot' + meta.layer) + per-task lastDriftScore（如果 impl 返回）。
+   *  失败回滚：snapshot.requirements 恢复，workspaces 不被冲掉。 */
+  rerunDriftDetection(
+    requirementId: string,
+    layer?: DriftLayer | 'all',
+  ): UploadHandle
 }
 
 /**
@@ -788,6 +1060,23 @@ export function createSkyAxisController(deps: {
     requirementId: string
     taskId: string
     action: 'start' | 'accept' | 'redo' | 'skip'
+  }) => UploadHandle
+  /* ── PR-C / 迭代 4：rewind mutation deps ── */
+  /** rewind：单条需求回退到指定 stage / task。
+   *  host 端按 request.target 走不同路由 + 校验 targetTaskId / granularity / options 合法性。
+   *  返回 UploadHandle；item 字段（若 server 返回）会替换整条 requirement（含新的 stageHistory）。 */
+  rewindImpl?: (input: {
+    requirementId: string
+    request: RewindRequest
+  }) => UploadHandle
+  /* ── PR-C / 迭代 5：drift 检测 deps ── */
+  /** drift 检测：按 layer 跑静态 / 动态 / 语义三层；layer='all' 时 host 内部合并。
+   *  taskId 限定时只检测该 task；不传 = 整 stage 综合分。
+   *  返回 UploadHandle；item 字段（若 server 返回）会替换整条 requirement（含新的 drift snapshot artifact）。 */
+  driftDetectImpl?: (input: {
+    requirementId: string
+    layer: DriftLayer | 'all'
+    taskId?: string
   }) => UploadHandle
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
@@ -988,6 +1277,157 @@ export function createSkyAxisController(deps: {
       rollback()
       // eslint-disable-next-line no-console
       console.warn('[sky-axis] task mutation rejected:', e)
+    })
+
+    return {
+      promise: handle.promise,
+      abort: () => {
+        aborted = true
+        handle.abort()
+      },
+    }
+  }
+
+  /**
+   * Rewind mutation 的共用骨架（PR-C / 迭代 4）：
+   *   1. 快照 requirements 字段
+   *   2. 调用 optimistic(req, now) → 新 requirement（applyRewindStageEntry 的结果）
+   *   3. 调用 impl（注入的 fetch 实现）
+   *   4. 成功：若 result.item 提供则替换整条 requirement
+   *   5. 失败：回滚 requirements 字段（保留 workspaces 等）
+   *
+   * 与 runTaskMutation 的差别：patch 直接接受 req + now，不走 task 粒度。
+   * granularity=C 时 optimistic 内部应已调 clearTaskListOnRewindToUnderstand。
+   *
+   * @param applyRewindStageEntry 由调用方决定怎么改 req（rewind() 内部已知道 targetStage）
+   */
+  const runRewindMutation = (
+    requirementId: string,
+    applyRewindStageEntry: (req: RequirementEntry, now: string) => RequirementEntry,
+    callImpl: () => UploadHandle,
+  ): UploadHandle => {
+    const beforeRequirements = snapshot.requirements
+    let aborted = false
+    const rollback = (): void => {
+      snapshot = { ...snapshot, requirements: beforeRequirements }
+      notify()
+    }
+    const now = new Date().toISOString()
+    // 乐观更新
+    snapshot = {
+      ...snapshot,
+      requirements: snapshot.requirements.map(r =>
+        r.id === requirementId ? applyRewindStageEntry(r, now) : r,
+      ),
+    }
+    notify()
+
+    let handle: UploadHandle
+    try {
+      handle = callImpl()
+    } catch (e) {
+      rollback()
+      return {
+        promise: Promise.resolve({
+          ok: false as const,
+          error: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }),
+        abort: () => { aborted = true },
+      }
+    }
+
+    handle.promise.then((result) => {
+      if (aborted) return
+      if (result.ok) {
+        if (result.item !== undefined) {
+          snapshot = {
+            ...snapshot,
+            requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr),
+          }
+          notify()
+        }
+      } else {
+        rollback()
+      }
+    }).catch((e: unknown) => {
+      if (aborted) return
+      rollback()
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] rewind mutation rejected:', e)
+    })
+
+    return {
+      promise: handle.promise,
+      abort: () => {
+        aborted = true
+        handle.abort()
+      },
+    }
+  }
+
+  /**
+   * Drift detect mutation 的共用骨架（PR-C / 迭代 5）：
+   *   1. 快照 requirements 字段
+   *   2. 调用 optimistic(req, now) → 新 requirement（drift snapshot artifact 写入）
+   *   3. 调用 impl（注入的 fetch 实现；mock 时可不传 impl，调用方用 summarizeDriftFromTaskList）
+   *   4. 成功：若 result.item 提供则替换整条 requirement
+   *   5. 失败：回滚 requirements 字段
+   *
+   * 与 runRewindMutation 几乎一致，但语义上 drift 检测是「追加 artifact」而非「修改 stage」，
+   * 失败代价较低（drift 快照不对 AI 主流程造成破坏）。
+   */
+  const runDriftDetectMutation = (
+    requirementId: string,
+    applyDriftSnapshot: (req: RequirementEntry, now: string) => RequirementEntry,
+    callImpl: () => UploadHandle,
+  ): UploadHandle => {
+    const beforeRequirements = snapshot.requirements
+    let aborted = false
+    const rollback = (): void => {
+      snapshot = { ...snapshot, requirements: beforeRequirements }
+      notify()
+    }
+    const now = new Date().toISOString()
+    snapshot = {
+      ...snapshot,
+      requirements: snapshot.requirements.map(r =>
+        r.id === requirementId ? applyDriftSnapshot(r, now) : r,
+      ),
+    }
+    notify()
+
+    let handle: UploadHandle
+    try {
+      handle = callImpl()
+    } catch (e) {
+      rollback()
+      return {
+        promise: Promise.resolve({
+          ok: false as const,
+          error: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }),
+        abort: () => { aborted = true },
+      }
+    }
+
+    handle.promise.then((result) => {
+      if (aborted) return
+      if (result.ok) {
+        if (result.item !== undefined) {
+          snapshot = {
+            ...snapshot,
+            requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr),
+          }
+          notify()
+        }
+      } else {
+        rollback()
+      }
+    }).catch((e: unknown) => {
+      if (aborted) return
+      rollback()
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] drift detect mutation rejected:', e)
     })
 
     return {
@@ -1587,6 +2027,172 @@ export function createSkyAxisController(deps: {
         (task, now) => appendTaskTransition(task, 'skipped', now, 'manual'),
         () => deps.taskActionImpl!({ requirementId, taskId, action: 'skip' }),
       )
+    },
+
+    /* ── PR-C / 迭代 4：阶段级 rewind ── */
+
+    /** 回退一个需求到指定 stage / task（design §2.2 rewind(target, reason, options)）。
+     *
+     *  行为：
+     *   - 校验 request.target / targetTaskId / granularity 一致性
+     *   - resolveRewindTarget(req, request.target) → toStage（null 即失败）
+     *   - 当前 stage entry 收尾（outcome=rolled-back + reason）+ 新 entry 入栈
+     *   - granularity='C' 时额外清空 plan artifact 中的 task list（design §5.5 粒度 C）
+     *   - 调 deps.rewindImpl（mock 时未注入 → 走 noop impl，乐观更新即最终结果）
+     *   - 失败回滚：snapshot.requirements 恢复，workspaces 不被冲掉
+     */
+    rewind(requirementId: string, request: RewindRequest): UploadHandle {
+      /* 1. 找 requirement；找不到 → fail loud（不写 snapshot） */
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+
+      /* 2. target='task' 时必填 targetTaskId；granularity 与 target 组合校验 */
+      if (request.target === 'task') {
+        if (request.targetTaskId === undefined || request.targetTaskId === '') {
+          return {
+            promise: Promise.resolve({ ok: false as const, error: projectError('rewind-target-invalid', 'target=task requires targetTaskId') }),
+            abort: () => {},
+          }
+        }
+        // task 粒度不允许 granularity=C（粒度 C 必然清空 plan，task 行无意义）
+        if (request.granularity === 'C') {
+          return {
+            promise: Promise.resolve({ ok: false as const, error: projectError('rewind-granularity-conflict', 'target=task does not support granularity=C') }),
+            abort: () => {},
+          }
+        }
+      }
+
+      /* 3. 解析 target → toStage */
+      const toStage = resolveRewindTarget(req, request.target)
+      if (toStage === null) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('rewind-target-invalid', `cannot resolve target ${request.target} from current stage ${req.stage}`) }),
+          abort: () => {},
+        }
+      }
+
+      /* 4. 乐观更新入口 */
+      const fromStage = req.stage
+      const granularity = request.granularity ?? 'A'
+      const reasonDetail = request.reasonDetail
+      const apply = (r: RequirementEntry, now: string): RequirementEntry => {
+        // 先 stageHistory 收尾 + 新 entry 追加
+        const withHistory = appendRewindEntry(r, fromStage, toStage, request.reason, reasonDetail, now)
+        // granularity=C 且 toStage=understand 时清空 task list
+        if (granularity === 'C' && toStage === 'understand') {
+          return clearTaskListOnRewindToUnderstand(withHistory, now)
+        }
+        return withHistory
+      }
+
+      /* 5. rewindImpl 未注入 → noop impl（mock 演示用，乐观更新即最终态） */
+      const callImpl = (): UploadHandle => {
+        if (deps.rewindImpl === undefined) {
+          return {
+            promise: Promise.resolve({ ok: true as const }),
+            abort: () => {},
+          }
+        }
+        return deps.rewindImpl({ requirementId, request })
+      }
+
+      return runRewindMutation(requirementId, apply, callImpl)
+    },
+
+    /* ── PR-C / 迭代 5：drift 检测 ── */
+
+    /** 重跑 drift 检测（design §5.3 三层）。
+     *  - layer='all'：逐 layer 串行调用 impl（mock 默认用 summarizeDriftFromTaskList 兜底）
+     *  - layer='static' | 'dynamic' | 'semantic'：单层检测
+     *  - taskId 限定时只更新该 task 的 lastDriftScore（impl 决定如何处理；client mock 不带 taskId）
+     *
+     *  写入：artifact (kind='note' + title='Drift snapshot' + meta.layer) + per-task lastDriftScore（如果 impl 返回）。
+     *  失败回滚：snapshot.requirements 恢复，workspaces 不被冲掉。
+     */
+    rerunDriftDetection(
+      requirementId: string,
+      layer: DriftLayer | 'all' = 'all',
+    ): UploadHandle {
+      /* 1. 找 requirement；找不到 → fail loud */
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+
+      /* 2. 解析要跑的 layer 列表 */
+      const layersToRun: DriftLayer[] = layer === 'all'
+        ? ['static', 'dynamic', 'semantic']
+        : [layer]
+
+      /* 3. 乐观更新 + impl 调用
+       *    - impl 已注入 → 调 impl（impl 内部可能批量调用，也可能单次调用；我们这里走单次单 layer）
+       *    - impl 未注入 → 用 summarizeDriftFromTaskList 兜底，每 layer 一次 mutation
+       *    - taskId 限定时把 taskId 透传给 impl
+       */
+      const taskIdForImpl: string | undefined = undefined  // PR-C Phase 1 不区分 task 粒度
+
+      const applyDriftSnapshot = (r: RequirementEntry, now: string): RequirementEntry => {
+        // 从 plan artifact 拿 taskList（拿不到就空数组）
+        const planArt = findPlanArtifact(r)
+        const taskList = planArt !== null ? parseTaskListFromArtifact(planArt) : null
+        const tasks = taskList?.tasks ?? []
+
+        // 用 summarizeDriftFromTaskList 计算每 layer 分数
+        const scores: DriftScore[] = layersToRun.map(l =>
+          summarizeDriftFromTaskList(tasks, l, now),
+        )
+        const overall = scores.length > 0
+          ? Math.min(1, Math.max(...scores.map(s => s.score)))
+          : 0
+
+        // 写 artifact（kind='note' + title='Drift snapshot'）
+        const artifactId = `drift-${now.replace(/[:.]/g, '-')}`
+        const newArtifact: RequirementArtifact = {
+          id: artifactId,
+          kind: 'note',
+          title: 'Drift snapshot',
+          createdAt: now,
+          body: JSON.stringify({
+            requirementId,
+            scores,
+            overall,
+            detectedAt: now,
+          }),
+          meta: { layer: layersToRun.join('+'), sourceTaskId: null },
+        }
+
+        return {
+          ...r,
+          artifacts: {
+            ...r.artifacts,
+            [artifactId]: newArtifact,
+          },
+          updatedAt: now,
+        }
+      }
+
+      const callImpl = (): UploadHandle => {
+        if (deps.driftDetectImpl === undefined) {
+          // mock 兜底：直接成功（乐观更新即最终结果）
+          return {
+            promise: Promise.resolve({ ok: true as const }),
+            abort: () => {},
+          }
+        }
+        // impl 已注入：单次调用合并所有 layers（host 端自己合并）
+        return deps.driftDetectImpl({ requirementId, layer, taskId: taskIdForImpl })
+      }
+
+      return runDriftDetectMutation(requirementId, applyDriftSnapshot, callImpl)
     },
   }
 }

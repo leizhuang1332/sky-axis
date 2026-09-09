@@ -34,6 +34,14 @@ export interface AiConductorPaneProps {
   loading: boolean
   /** 当前阶段的 drift 快照。null → 不渲染 DriftCard。Phase 1 由 mock 驱动。 */
   driftSnapshot?: DriftSnapshot | null
+  /** PR-C 迭代 4：「暂回上阶段」按钮触发 —— parent 打开 RightDrawer。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onOpenRewind?: (trigger: 'stage-go-back') => void
+  /** PR-C 迭代 5：DriftCard 重跑按钮触发 —— parent 调 controller.rerunDriftDetection。
+   *  未传时 DriftCard 按钮 disabled。 */
+  onRerunDrrift?: () => void
+  /** PR-C 迭代 5：drift 检测进行中（用于 DriftCard 显示「正在检测…」+ 禁用按钮）。 */
+  driftLoading?: boolean
 }
 
 /** AI 状态 → i18n 文案 key + 图标。
@@ -73,7 +81,16 @@ function formatRelative(iso: string | null | undefined, t: (k: string) => string
   return new Date(iso).toISOString().slice(0, 10)
 }
 
-export function AiConductorPane({ t, requirement, loading, driftSnapshot = null }: AiConductorPaneProps): JSX.Element {
+export function AiConductorPane(props: AiConductorPaneProps): JSX.Element {
+  const {
+    t,
+    requirement,
+    loading,
+    driftSnapshot = null,
+    onOpenRewind,
+    onRerunDrrift,
+    driftLoading,
+  } = props
   // 把 LocaleKeysOf 强转为 (k: string) => string —— labelKey/hintKey 是动态字符串，
   // 编译期 SkyAxisKey 联合不允许直接传 string，但运行时 locale 系统会兜底。
   const tAny = t as unknown as (k: string) => string
@@ -92,8 +109,13 @@ export function AiConductorPane({ t, requirement, loading, driftSnapshot = null 
         <p className={css.subtitle}>{t('requirement.detail.conductor.subtitle')}</p>
       </header>
 
-      {/* Drift 占位卡 —— 默认折叠；Phase 3 接真实检测器 */}
-      <DriftCard t={t} driftSnapshot={driftSnapshot} />
+      {/* Drift 占位卡 —— 默认折叠；PR-C 迭代 5：父级注入 onRerunDrrift + driftLoading */}
+      <DriftCard
+        t={t}
+        driftSnapshot={driftSnapshot}
+        onRerunDrift={onRerunDrrift}
+        loading={driftLoading}
+      />
 
       {/* AI 状态卡 */}
       <section className={css.statusCard} data-level={meta.level}>
@@ -180,8 +202,13 @@ export function AiConductorPane({ t, requirement, loading, driftSnapshot = null 
           <button
             type="button"
             className={css.secondaryButton}
-            disabled
-            title={t('requirement.detail.action.goBackHint')}
+            disabled={onOpenRewind === undefined}
+            onClick={(): void => {
+              if (onOpenRewind !== undefined) onOpenRewind('stage-go-back')
+            }}
+            title={onOpenRewind === undefined
+              ? t('requirement.detail.action.goBackHint')
+              : t('requirement.detail.action.goBack')}
           >
             <span>{t('requirement.detail.action.goBack')}</span>
           </button>

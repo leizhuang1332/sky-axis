@@ -3,12 +3,13 @@
  *
  * 视觉契约：
  *   - 折叠态（默认）：一行紧凑 chip = 「Drift 检测 0.72 ⚠」 + 右侧 chevron
- *   - 展开态：3 行 layer（静态 / 动态 / 语义）+ 每行 score + 描述 + 重跑按钮（disabled）
+ *   - 展开态：3 行 layer（静态 / 动态 / 语义）+ 每行 score + 描述 + 重跑按钮
  *   - severity：<0.3 ok（绿） / 0.3-0.6 warn（黄） / ≥0.6 bad（红）
  *
- * Phase 1 限制：
- *   - 数据由 parent 传 driftSnapshot（通常来自 controller mock / artifact 解析）
- *   - 重跑按钮 disabled（drift 检测器在 Phase 3）
+ * PR-C 迭代 5：
+ *   - 重跑按钮可点击（onRerunDrift 回调）
+ *   - loading=true 时显示「正在检测…」+ 按钮 disabled + 隐藏 phase1Hint
+ *   - 数据由 parent 传 driftSnapshot + onRerunDrift + loading
  *   - 当 driftSnapshot 为 null 时整卡不渲染（无意义）
  *
  * 数据来源：受控 props。父组件传 t + driftSnapshot。
@@ -23,6 +24,11 @@ export interface DriftCardProps {
   t: PropsLocale<'sky-axis'>['t']
   /** null → 不渲染整张卡。 */
   driftSnapshot: DriftSnapshot | null
+  /** 重跑按钮回调（PR-C：父级注入 controller.rerunDriftDetection）。
+   *  未注入时按钮 disabled 并显示原 phase1Hint。 */
+  onRerunDrift?: () => void
+  /** 重跑进行中：按钮 disabled + 文案切换为「正在检测…」+ 隐藏 phase1Hint。 */
+  loading?: boolean
 }
 
 type Severity = 'ok' | 'warn' | 'bad'
@@ -38,7 +44,7 @@ function fmtScore(score: number): string {
   return score.toFixed(2)
 }
 
-export function DriftCard({ t, driftSnapshot }: DriftCardProps): JSX.Element | null {
+export function DriftCard({ t, driftSnapshot, onRerunDrift, loading }: DriftCardProps): JSX.Element | null {
   // 默认折叠（不让卡占太多左列空间；用户可点开看详情）
   const [expanded, setExpanded] = useState(false)
   if (driftSnapshot === null) return null
@@ -47,6 +53,7 @@ export function DriftCard({ t, driftSnapshot }: DriftCardProps): JSX.Element | n
   const overall = driftSnapshot.overall
   const overallSev = severityOf(overall)
   const ChevronIcon = expanded ? ChevronDownIcon : ChevronRightIcon
+  const rerunDisabled = onRerunDrift === undefined || loading === true
 
   return (
     <section className={`${css.card} ${css[`sev_${overallSev}` as 'sev_ok']}`}>
@@ -98,13 +105,24 @@ export function DriftCard({ t, driftSnapshot }: DriftCardProps): JSX.Element | n
           <button
             type="button"
             className={css.rerunBtn}
-            disabled
-            title={tAny('requirement.detail.drift.action.rerunHint')}
+            disabled={rerunDisabled}
+            onClick={(): void => {
+              if (!rerunDisabled) onRerunDrift!()
+            }}
+            title={rerunDisabled
+              ? tAny('requirement.detail.drift.action.rerunHint')
+              : tAny('requirement.detail.drift.action.rerun')}
           >
             <RefreshIcon size={11} className={css.rerunIcon} />
-            <span>{tAny('requirement.detail.drift.action.rerun')}</span>
+            <span>
+              {loading === true
+                ? tAny('requirement.detail.drift.detecting')
+                : tAny('requirement.detail.drift.action.rerun')}
+            </span>
           </button>
-          <p className={css.phase1Hint}>{tAny('requirement.detail.drift.phase1Hint')}</p>
+          {loading !== true && onRerunDrift === undefined && (
+            <p className={css.phase1Hint}>{tAny('requirement.detail.drift.phase1Hint')}</p>
+          )}
         </div>
       )}
     </section>
