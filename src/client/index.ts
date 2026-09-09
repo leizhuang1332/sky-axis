@@ -113,68 +113,43 @@ function wrapPromise(p: Promise<unknown>, abort?: () => void): UploadHandle {
 /**
  * 构造 sky-axis 给 UI 用的 WorkspaceOps 桥接。
  *
- * 0.1.2:workspace **数据**改由全局 `useWorkspaces()` hook 订阅(sky-axis 走 cordis effect
- * 路径,理由见 `inject` 注释)。这里只负责桥接两个**平台能力**:
- *   - `pickDirectory` → `ctx.uiWorkspace.pickDirectory()`(UiWorkspace service,
- *     自动处理取消返回 null)
- *   - `createWorkspace` → `ctx.remote.workspace.create({ path })`(Typert
- *     Remote,流订阅自动推送 upsert 给 `ctx.workspaces.list`)
+ * 0.1.2 hotfix:**workspace 创建能力整段从 sky-axis 移除**。
  *
- * 失败映射:Typert Remote 返回 `RemoteResult<T>` 形态(`{ ok: true, value }`
- * / `{ ok: false, error }`),sky-axis 沿用 0.1.1 的 `{ code: 'workspace-create-failed' }`
- * 错误形态 —— modal 不需要改。
+ * 背景(详见 DSH 0.1.2-rc.1 实测):
+ *   原方案走 `ctx.uiWorkspace.pickDirectory()`(DSH 原生目录选择 bridge)
+ *   + `ctx.remote.workspace.create({ path })`(Typert Remote)创建新 workspace。
+ *   实测发现当前部署的 DSH 0.1.2-rc.1 host 半区**未注册** `dsh-host-directory-picker`
+ *   native capability backend —— `ctx.uiWorkspace.pickDirectory()` 调用后
+ *   bridge 永久 hang。`ctx.remote` 同样由 host 半区 dsh-api-gateway 注册,
+ *   也未就绪,访问会被 cordis 4 Proxy trap 抛 "cannot get property 'remote.workspace'
+ *   without inject",sky-axis apply 期间触发会让整个 DSH boot 崩。
  *
- * 实现细节 —— **lazy 桥接**(关键):
- *   不在 buildWorkspaceOps 内部立即访问 `ctx.uiWorkspace` / `ctx.remote`,
- *   而是闭包持有 ctx,在 modal 真的调 pickDirectory / createWorkspace 时才取。
- *   这样即使 cordis effect 启动顺序把 sky-axis apply 排在 ui-workspace / dsh-api-remotes
- *   之前 —— 或者 `ctx.uiWorkspace` 暂时为 undefined(例如 cordis service 还没注册)
- *   —— 也不会在启动期抛 "cannot get property 'X' without inject"。
- *   真正调用时取,那时 service 已就绪。inject 数组里仍保留 `'uiWorkspace'` / `'remote'`
- *   让 cordis 启动时按依赖排序,确保这两个 service 优先注册。
+ * 正确做法:DSH 原生 sidebar 本身就有「+ 添加工作区」按钮,走 DSH 自己的
+ * native capability(`@deepseek-ai/dsh-client-ui-workspace` 的 sidebar 组件)。
+ * 那个按钮由 DSH framework 自己的 cordis effect 链保活,host 半区是否就绪
+ * 跟我们无关。新创建的 workspace 通过 `ctx.workspaces.list` 状态流自动推给
+ * sky-axis 的 select(见 effect 6)—— 0 用户感知延迟。
+ *
+ * 因此 sky-axis 这边:
+ *   - 移除「+ 创建工作区」UI 入口(NewRequirementModal 改显示提示文案)
+ *   - WorkspaceOps 接口保留(stub),以防其他组件误调时给出 actionable 错误
+ *     而不是 cordis trap 让用户摸不着头脑
+ *   - inject 数组不再声明 `'uiWorkspace'`,也不再读 `ctx.remote`
  */
-function buildWorkspaceOps(ctx: Context): WorkspaceOps {
-  // 窄类型:`ctx.uiWorkspace` 与 `ctx.remote` 都是各 ui-* / typert 包
-  // augment 出来的,这里只挑需要的两个方法,避免静态拉全套 Remote 类型。
-  const getUiWorkspace = (): { pickDirectory(): Promise<string | null> } => (
-    ctx as unknown as { uiWorkspace: { pickDirectory(): Promise<string | null> } }
-  ).uiWorkspace
-  const getRemoteWorkspace = (): {
-    create(input: { path: string }): Promise<
-      | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
-      | { ok: false; error: { code?: string; message?: string } }
-    >
-  } => (
-    ctx as unknown as {
-      remote: {
-        workspace: {
-          create(input: { path: string }): Promise<
-            | { ok: true; value: { workspace: { workspaceId: string; title: string }; created: boolean } }
-            | { ok: false; error: { code?: string; message?: string } }
-          >
-        }
-      }
-    }
-  ).remote.workspace
+function buildWorkspaceOps(_ctx: Context): WorkspaceOps {
+  /** 0.1.2 hotfix:WorkspaceOps 整组接口已停用,任何调用都立即抛 actionable 错误。
+   *  实现成 async 抛 Promise.reject —— React 组件里就是 try/await,跟旧契约一致;
+   *  不会让整个 React 树 unmount,只是当前调用方收到明确报错。 */
+  const actionable = async (method: string): Promise<never> => {
+    throw new Error(
+      `[sky-axis] WorkspaceOps.${method}() 在 0.1.2 hotfix 后已停用。`
+      + 'workspace 创建请用 DSH 原生 sidebar 的 + 按钮 —— sky-axis 的 select 会'
+      + '通过 ctx.workspaces.list 自动同步新建的工作区。',
+    )
+  }
   return {
-    pickDirectory: () => getUiWorkspace().pickDirectory(),
-    createWorkspace: async (input) => {
-      const result = await getRemoteWorkspace().create(input)
-      if (result.ok) {
-        return {
-          ok: true,
-          id: result.value.workspace.workspaceId as unknown as string,
-          title: result.value.workspace.title,
-        }
-      }
-      return {
-        ok: false,
-        error: {
-          code: 'workspace-create-failed',
-          detail: result.error.message ?? result.error.code,
-        },
-      }
-    },
+    pickDirectory: () => actionable('pickDirectory'),
+    createWorkspace: () => actionable('createWorkspace'),
   }
 }
 
@@ -187,15 +162,13 @@ function buildWorkspaceOps(ctx: Context): WorkspaceOps {
  *                  sky-axis 在 cordis effect 内订阅 → push 给 controller。
  *                  React `useWorkspaces()` 全局 hook 只能在 slot 组件里用,
  *                  独立 createRoot 树拿不到,故走 cordis 路径。
- * - 'uiWorkspace'  0.1.2:`ctx.uiWorkspace: UiWorkspace`(由 `dsh-client-ui-workspace/client` 注册),
- *                  `pickDirectory()` 在 modal 里被调 —— 必须 inject,否则 cordis 抛
- *                  "cannot get property 'uiWorkspace' without inject"。
- * - 'remote'       0.1.2:`ctx.remote.workspace.create()` 走 Typert Remote,
- *                  Remote 由 `dsh-api-remotes` apply 注册到 `ctx.remote` —— 必须 inject,
- *                  否则 cordis 同样抛 "cannot get property 'remote' without inject"。
+ * - 0.1.2 hotfix:不再 inject `'uiWorkspace'` / `'remote'`。workspace 创建已
+ *                  完全交给 DSH 原生 sidebar UI,sdk 端不再触碰这两个 service,
+ *                  也就不会被 host 半区缺 native backend / Typert bridge hang
+ *                  / cordis trap 误伤。详见 buildWorkspaceOps 注释。
  * - 不 inject sessions —— 新仪表板不订阅会话数据。
  */
-export const inject = ['locale', 'slots', 'workspaces', 'uiWorkspace', 'remote']
+export const inject = ['locale', 'slots', 'workspaces']
 
 /**
  * 挂载 sidebar entry + 主列 page + 装配 requirement 控制器。
@@ -205,6 +178,10 @@ export const inject = ['locale', 'slots', 'workspaces', 'uiWorkspace', 'remote']
  * 第三方插件不应把 GUI 拉下水。
  */
 export function apply(ctx: ClientContext): void {
+  // 0. (移除早期 ctx.remote 探测 —— 类型 cast 不会绕过 cordis Proxy trap,
+  //    早期 .workspace 访问反而让 DSH boot 失败。改为由 handleCreateWorkspace
+  //    的 try/catch 兜底 trap 错误,红色错误条明确告诉用户原因。)
+
   // 1. 注册 zh / en 字典（effect 等待 locale 服务就绪）。
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'sky-axis: dictionaries')
 

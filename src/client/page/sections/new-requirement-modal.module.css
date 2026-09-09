@@ -108,6 +108,28 @@
   cursor: not-allowed;
 }
 
+/* Plan I-hotfix:「+ 创建工作区」inline form —— 路径输入框 + 创建/取消按钮组 */
+.inlineCreate {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.inlineCreateActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* 0.1.2 hotfix:workspace select 下方的引导文案 —— 不抢主表单视觉,
+   字号 12px + 弱化色,告诉用户去 DSH 原生 sidebar 建 workspace。 */
+.createHint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #5b6470);
+}
+
 .cancelButton,
 .submitButton {
   padding: 7px 16px;

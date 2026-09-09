@@ -23,18 +23,27 @@ import { createContext, useContext, type ReactNode } from 'react'
 
 /**
  * DSH 平台 workspace 创建能力透传 —— NewRequirementModal 的
- * 「+ 创建工作区」按钮消费。
+ * 「+ 创建工作区」入口历史消费方。
  *
- * 与 0.1.1 接口完全一致,modal 内部逻辑(乐观选中 / 错误捕获)不需要改:
- *   - `pickDirectory()` 用户取消 → resolve `null`,modal 静默 return
+ * 0.1.2 hotfix:`pickDirectory` / `createWorkspace` **整组停用**,
+ * 由 `buildWorkspaceOps` 实现成 async stub,任何调用立即 reject 一个
+ * actionable Error,告诉用户改用 DSH 原生 sidebar 的 + 按钮。**类型仍保留**
+ * 是为了(1)mountSkyAxisPage 的 workspaceOps 参数契约稳定,(2)历史代码
+ * 误调时拿到清晰报错而不是 cordis trap。**接口签名不删**,因为后续 DSH
+ * 升级后(若 host 半区补齐 dsh-host-directory-picker / dsh-api-gateway)
+ * 也许会再启用 —— 那时换掉 stub 实现即可。
+ *
+ * 旧契约存档(已停用):
+ *   - `pickDirectory()` 弹原生目录选择框,用户取消 → resolve `null`,
+ *     modal 静默 return;选中目录 → resolve 目录绝对路径字符串
  *   - `createWorkspace({ path })` 失败 → resolve `{ ok: false, error }`,
  *     modal 把 error 写到 form
  *
- * 平台契约:
- *   - pickDirectory 走 `ctx.uiWorkspace.pickDirectory()`(UiWorkspace service)
- *   - createWorkspace 走 `ctx.remote.workspace.create({ path })`(Typert
- *     Remote),流订阅会自动通过 `useWorkspaces()` 推送新增 workspace,
- *     本接口**不**需要手动回调通知 UI
+ * 历史平台契约 + 降级链(已停用,存档供未来查阅 —— 详见 src/client/index.ts):
+ *   - 主路径:`pickDirectory` 走 `ctx.uiWorkspace.pickDirectory()`
+ *     (UiWorkspace service)
+ *   - 降级:DSH bridge 不可用时自动降级到 webkitdirectory input
+ *   - `createWorkspace` 走 `ctx.remote.workspace.create({ path })`(Typert Remote)
  */
 export interface WorkspaceOps {
   pickDirectory: () => Promise<string | null>

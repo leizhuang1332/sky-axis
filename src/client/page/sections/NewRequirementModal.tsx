@@ -39,7 +39,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RequirementEntry, RequirementError, RequirementOption } from '../../controller/sky-axis-controller.ts'
-import { useWorkspaceOps } from '../../shared/workspace-context.tsx'
 import { Modal } from '../../ui/Modal.tsx'
 import { Field } from '../../ui/Field.tsx'
 import css from './new-requirement-modal.module.css'
@@ -104,9 +103,6 @@ function firstAvailable(
 
 export function NewRequirementModal(props: NewRequirementModalProps): JSX.Element {
   const { t, workspaces, defaultWorkspaceId, takenByWorkspaceId, submitError, submitting, onSubmit, onImport, onClose } = props
-  /* 0.1.2:从 Context 拿 WorkspaceOps —— Provider 没 mount 时 useWorkspaceOps() 会
-   *   throw,直接连根组件都渲染不出来,所以这里不需要 `=== undefined` 守卫。 */
-  const workspaceOps = useWorkspaceOps()
   // 默认空 map —— 早期 mount / controller 还没注入 takenByWorkspaceId 时按"无占用"处理
   const taken: ReadonlyMap<string, RequirementEntry> = takenByWorkspaceId ?? EMPTY_TAKEN
 
@@ -122,9 +118,6 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   const [description, setDescription] = useState<string>('')
   const [priority, setPriority] = useState<Priority>('normal')
   const [tagsInput, setTagsInput] = useState<string>('')
-  const [creatingWorkspace, setCreatingWorkspace] = useState<boolean>(false)
-  /** modal 本地的 workspace 创建错误 —— 不污染 props.submitError（后者仅承载创建需求的错误）。 */
-  const [workspaceError, setWorkspaceError] = useState<RequirementError | null>(null)
   /** Plan I:导入模式开关。一旦打开就保持 —— 用户在 import 模式下改不了 workspaceId,
    *  表单全 disabled,只能点「导入」或「取消」。 */
   const [importMode, setImportMode] = useState<boolean>(false)
@@ -158,7 +151,7 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   const workspaceTaken = workspaceId !== '' && taken.has(workspaceId)
   /** Plan I:import 模式下表单全 disabled（即便用户能切也改不动）。 */
   const formDisabled = importMode
-  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !creatingWorkspace && !workspaceTaken && !formDisabled
+  const canSubmit = !noWorkspaces && workspaceId !== '' && !titleInvalid && !submitting && !workspaceTaken && !formDisabled
 
   const handleTagsChange = (raw: string): void => {
     setTagsInput(raw)
@@ -189,34 +182,6 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
   /** Plan I:import 模式下展示给用户的「已有需求」摘要(从 taken map 取,可能 undefined
    *  —— 例如兜底模式下 submitError 触发,但 takenByWorkspaceId 没数据)。 */
   const existingEntry = workspaceId !== '' ? taken.get(workspaceId) : undefined
-
-  /**
-   * 「+ 创建工作区」链接回调 —— 调 DSH 平台能力：
-   *   1. pickDirectory 弹原生目录选择器（用户取消 → null，静默返回）
-   *   2. createWorkspace 用选中路径创建
-   *   3. 失败 → 错误塞 submitError；成功 → 依赖 ctx.workspaces.list 推送
-   *      自动让 controller.setWorkspaces 注入新项，select 多出一项。
-   *      React rerender 后我们 fallback 显式 setWorkspaceId，避免用户看到
-   *      「刚建好但 select 还没刷新」的一瞬歧义。
-   */
-  const handleCreateWorkspace = async (): Promise<void> => {
-    if (creatingWorkspace) return
-    setCreatingWorkspace(true)
-    try {
-      const path = await workspaceOps.pickDirectory()
-      if (path === null) return
-      const result = await workspaceOps.createWorkspace({ path })
-      if (result.ok && result.id !== undefined) {
-        // 乐观选中新建 workspace，等 ctx.workspaces.list 推送会再次校准。
-        setWorkspaceId(result.id)
-        setWorkspaceError(null)
-      } else if (!result.ok && result.error !== undefined) {
-        setWorkspaceError(result.error as RequirementError)
-      }
-    } finally {
-      setCreatingWorkspace(false)
-    }
-  }
 
   return (
     <Modal
@@ -266,14 +231,6 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
           </div>
         )}
 
-        {workspaceError !== null && (
-          <div className={css.errorBar} role="alert">
-            <strong>{t('requirement.new.errorPrefix')}</strong>
-            <span>{t(`requirement.error.${workspaceError.code}` as never)}</span>
-            {workspaceError.detail !== undefined && <code className={css.errorDetail}>{workspaceError.detail}</code>}
-          </div>
-        )}
-
         {noWorkspaces && (
           <div className={css.warningBar}>
             {t('requirement.new.noWorkspace')}
@@ -316,19 +273,14 @@ export function NewRequirementModal(props: NewRequirementModalProps): JSX.Elemen
               )
             })}
           </select>
-          {/* DSH 平台 workspace 创建入口 —— 复用 ctx.uiWorkspace.pickDirectory +
-              ctx.remote.workspace.create。Provider 必然 mount,所以按钮总是显示。 */}
-          <button
-            type="button"
-            className={css.linkButton}
-            onClick={() => { void handleCreateWorkspace() }}
-            disabled={creatingWorkspace || formDisabled}
-            title={t('requirement.new.createWorkspaceHint')}
-          >
-            {creatingWorkspace
-              ? t('requirement.new.creatingWorkspace')
-              : `+ ${t('requirement.new.createWorkspace')}`}
-          </button>
+          {/* 0.1.2 hotfix:不再提供「+ 创建工作区」入口。
+              原 picker 走 ctx.uiWorkspace.pickDirectory() 依赖 host 半区
+              dsh-host-directory-picker 的 native capability backend —— 当前 DSH
+              0.1.2-rc.1 部署未提供该 backend,bridge 永久 hang。
+              替代方案:请用户去 DSH 原生 sidebar workspace 列表区域点 + 按钮创建,
+              新 workspace 会通过 ctx.workspaces.list 状态流自动推给本 select。
+              DSH 原生流程就是干这个的,sky-axis 不抢这个活。 */}
+          <div className={css.createHint}>{t('requirement.new.createWorkspaceHintInNativeUi')}</div>
         </Field>
 
         <Field label={t('requirement.new.titleLabel')} hint={t('requirement.new.titleHint')}>

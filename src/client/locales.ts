@@ -350,6 +350,7 @@ export const zh = {
   'requirement.new.noWorkspace': '当前 DSH 没有可用工作区。请先在 DSH 工作区管理创建一个工作区。',
   'requirement.new.createWorkspace': '创建工作区',
   'requirement.new.createWorkspaceHint': '在主机文件系统创建一个新的工作区目录',
+  'requirement.new.createWorkspaceHintInNativeUi': '如需创建新工作区,请在 DSH 原生 sidebar 工作区列表区域点 + 按钮。sky-axis 通过 ctx.workspaces.list 自动同步,新建工作区会立即出现在上方下拉框中。',
   'requirement.new.creatingWorkspace': '创建中…',
   /* 1:1 workspace-requirement 不变量：workspace 在 select 里已被占用时的标签 */
   'requirement.new.workspaceTaken': '已占用',
@@ -764,6 +765,7 @@ export const en: Record<SkyAxisKey, string> = {
   'requirement.new.noWorkspace': 'No DSH workspace available. Please create one in DSH workspace manager first.',
   'requirement.new.createWorkspace': 'Create workspace',
   'requirement.new.createWorkspaceHint': 'Create a new workspace directory in the host filesystem',
+  'requirement.new.createWorkspaceHintInNativeUi': 'To create a new workspace, click the + button in the DSH native sidebar workspace list. sky-axis syncs via ctx.workspaces.list — newly created workspaces appear in the dropdown above automatically.',
   'requirement.new.creatingWorkspace': 'Creating…',
   /* 1:1 workspace-requirement invariant: workspace already bound label */
   'requirement.new.workspaceTaken': 'occupied',
