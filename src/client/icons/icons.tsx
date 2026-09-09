@@ -64,6 +64,28 @@ export function ChevronDownIcon({ size = 12, className }: IconProps): JSX.Elemen
   )
 }
 
+/** Chevron right —— DriftCard「收起态」chevron（与 ChevronDownIcon 配对表示 expand/collapse）。
+    不用 CSS rotate —— 让 chevron 真正换方向以增强视觉语义。 */
+export function ChevronRightIcon({ size = 12, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <polyline points="6 3 11 8 6 13" />
+    </svg>
+  )
+}
+
+/** 圆形循环箭头 —— DriftCard「重跑 drift 检测」按钮。 */
+export function RefreshIcon({ size = 12, className }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M13 8a5 5 0 0 1-9 3" />
+      <path d="M4 13.5V11H6.5" />
+      <path d="M3 8a5 5 0 0 1 9-3" />
+      <path d="M12 2.5V5H9.5" />
+    </svg>
+  )
+}
+
 /** 文档 + 勾号 —— sidebar 二级菜单「需求列表」专用。
     与 PersonalIcon 区分（个人 = 单人头像；需求列表 = 列表文档）。 */
 export function RequirementIcon({ size = 14, className }: IconProps): JSX.Element {

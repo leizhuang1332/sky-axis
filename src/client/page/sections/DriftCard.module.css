@@ -1,0 +1,245 @@
+/* DriftCard —— AI 协奏面板顶部的 drift 占位卡。
+   颜色全部 --dsw-alias-* 令牌。
+   severity 调色板：ok=绿（业务成功）/ warn=黄（业务警告）/ bad=红（业务危险）。 */
+
+/* ── 容器 ── */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  transition: border-color 140ms ease, background-color 140ms ease;
+  min-width: 0;
+}
+
+/* severity 决定边框色（轻量提示，不抢戏）*/
+.sev_ok {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-success, #22c55e) 35%, transparent);
+}
+.sev_warn {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 45%, transparent);
+}
+.sev_bad {
+  border-color: color-mix(in srgb, #ef4444 55%, transparent);
+  background: color-mix(in srgb, #ef4444 4%, var(--dsw-alias-bg-layer-2));
+}
+
+/* ── 折叠态 header ── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  min-width: 0;
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.headerIcon {
+  display: inline-flex;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sev_warn .headerIcon { color: var(--dsw-alias-state-business-warning, #f59e0b); }
+.sev_bad  .headerIcon { color: #ef4444; }
+.sev_ok   .headerIcon { color: var(--dsw-alias-state-business-success, #22c55e); }
+
+.headerTitle {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.scorePill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.scorePill_ok {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-success, #22c55e) 18%, transparent);
+  color: var(--dsw-alias-state-business-success, #22c55e);
+}
+.scorePill_warn {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 22%, transparent);
+  color: var(--dsw-alias-state-business-warning, #f59e0b);
+}
+.scorePill_bad {
+  background: color-mix(in srgb, #ef4444 22%, transparent);
+  color: #ef4444;
+}
+
+.sevLabel {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sevLabel_ok   { color: var(--dsw-alias-state-business-success, #22c55e); }
+.sevLabel_warn { color: var(--dsw-alias-state-business-warning, #f59e0b); }
+.sevLabel_bad  { color: #ef4444; }
+
+.chevron {
+  display: inline-flex;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── 副标题 ── */
+
+.subtitle {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 1.4;
+}
+
+/* ── 展开体 ── */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-separator-secondary);
+}
+
+.layerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  min-width: 0;
+}
+
+.layerRow_bad {
+  border-color: color-mix(in srgb, #ef4444 45%, transparent);
+}
+
+.layerMain {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.layerLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layerDesc {
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.layerRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.layerSource {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ── 重跑按钮 + Phase 1 hint ── */
+
+.rerunBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.rerunBtn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rerunBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rerunIcon {
+  display: inline-flex;
+}
+
+.phase1Hint {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-state-business-warning, #f59e0b) 28%, transparent);
+  border-radius: 5px;
+  line-height: 1.5;
+}

@@ -815,3 +815,118 @@ describe('Step 4：物料 mutation 失败回滚只覆 requirements（保留 work
     expect(c.getSnapshot().workspaces).toHaveLength(1)
   })
 })
+
+/* ── Phase 1.0：projectTaskList（host schema → client mirror）── */
+
+import {
+  type RequirementTask,
+  type RequirementTaskList,
+  projectTaskList,
+} from '../src/client/controller/sky-axis-controller.ts'
+
+describe('projectTaskList（Plan 阶段产物 → client mirror）', () => {
+  /** 一条最小合法的 task 输入（host 端 zod parse 后的形态）。 */
+  function makeInputTask(overrides: Partial<RequirementTask> = {}): RequirementTask {
+    return {
+      id: 'T-implement-001',
+      title: 'OAuth 回调',
+      goal: '接收 GitHub OAuth code',
+      acceptance: ['校验 code'],
+      dependencies: [],
+      filesExpected: ['src/server/auth/oauth-callback.ts'],
+      status: 'in_progress',
+      subHistory: [],
+      artifactRefs: [],
+      retryCount: 0,
+      enteredAt: '2026-08-30T12:00:00.000Z',
+      ...overrides,
+    }
+  }
+
+  it('空 tasks 列表往返保持空', () => {
+    const out: RequirementTaskList = projectTaskList({
+      tasks: [],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'plan',
+    })
+    expect(out.tasks).toEqual([])
+    expect(out.producedAt).toBe('2026-08-30T12:00:00.000Z')
+    expect(out.producedAtStage).toBe('plan')
+  })
+
+  it('多条 task 往返字段完全保留', () => {
+    const inList: RequirementTaskList = {
+      tasks: [
+        makeInputTask({ id: 'T-1', status: 'done' }),
+        makeInputTask({ id: 'T-2', status: 'rolled_back', retryCount: 3 }),
+        makeInputTask({ id: 'T-3', status: 'pending' }),
+      ],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'implement',
+    }
+    const out = projectTaskList(inList)
+    expect(out.tasks).toHaveLength(3)
+    expect(out.tasks[0]?.id).toBe('T-1')
+    expect(out.tasks[0]?.status).toBe('done')
+    expect(out.tasks[1]?.status).toBe('rolled_back')
+    expect(out.tasks[1]?.retryCount).toBe(3)
+    expect(out.tasks[2]?.status).toBe('pending')
+  })
+
+  it('lastDriftScore undefined 保留为 undefined（不丢失可选字段语义）', () => {
+    const out = projectTaskList({
+      tasks: [makeInputTask()],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'plan',
+    })
+    expect(out.tasks[0]?.lastDriftScore).toBeUndefined()
+    expect('lastDriftScore' in (out.tasks[0] ?? {})).toBe(true) // key 存在但值为 undefined
+  })
+
+  it('lastDriftScore 有值时原样保留', () => {
+    const out = projectTaskList({
+      tasks: [makeInputTask({ lastDriftScore: 0.72 })],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'implement',
+    })
+    expect(out.tasks[0]?.lastDriftScore).toBe(0.72)
+  })
+
+  it('subHistory 数组引用稳定（不深拷贝，但也不丢失）', () => {
+    const subHistory = [
+      { status: 'in_progress' as const, enteredAt: '2026-08-30T12:00:00.000Z' },
+      { status: 'done' as const, enteredAt: '2026-08-30T12:05:00.000Z' },
+    ]
+    const out = projectTaskList({
+      tasks: [makeInputTask({ subHistory })],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'plan',
+    })
+    expect(out.tasks[0]?.subHistory).toHaveLength(2)
+    expect(out.tasks[0]?.subHistory[0]?.status).toBe('in_progress')
+    expect(out.tasks[0]?.subHistory[1]?.status).toBe('done')
+  })
+
+  it('输入与输出对象不共享顶层引用（projection 始终返回新对象）', () => {
+    const inList: RequirementTaskList = {
+      tasks: [makeInputTask()],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'plan',
+    }
+    const out = projectTaskList(inList)
+    expect(out).not.toBe(inList)
+    expect(out.tasks).not.toBe(inList.tasks)
+    expect(out.tasks[0]).not.toBe(inList.tasks[0])
+  })
+
+  it('5 个 producedAtStage 全部合法', () => {
+    for (const s of ['understand', 'plan', 'implement', 'verify', 'deliver'] as const) {
+      const out = projectTaskList({
+        tasks: [makeInputTask()],
+        producedAt: '2026-08-30T12:00:00.000Z',
+        producedAtStage: s,
+      })
+      expect(out.producedAtStage).toBe(s)
+    }
+  })
+})

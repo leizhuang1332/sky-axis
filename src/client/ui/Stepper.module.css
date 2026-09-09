@@ -172,3 +172,55 @@
     padding: 8px 10px;
   }
 }
+
+/* ── 阶段 meta（Phase 1.0 增量）── */
+
+.stepMeta {
+  flex: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding-left: 8px;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  margin-left: 4px;
+}
+
+.stepMetaCurrent {
+  border-left-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent);
+}
+
+.stepProgress {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.stepCurrent .stepProgress {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.stepDone .stepProgress {
+  color: var(--dsw-alias-state-business-success, #22c55e);
+}
+
+.rewindDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 6px;
+}
+
+.rewindDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-warning, #f59e0b);
+}
+
+.rewindDotRolled {
+  background: color-mix(in srgb, #ef4444 80%, transparent);
+}

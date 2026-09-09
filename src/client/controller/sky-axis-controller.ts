@@ -133,6 +133,78 @@ export interface RequirementStageHistoryEntry {
   outcome?: 'completed' | 'manual' | 'rolled-back' | 'errored'
 }
 
+/* ── Task / TaskList 镜像 type（Phase 1.0 任务列表）── */
+
+/** Task 状态 8 态 —— 与 protocol.ts TaskStatusSchema 同名字面量。 */
+export type TaskStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'verifying'
+  | 'done'
+  | 'failed'
+  | 'rolled_back'
+  | 'blocked'
+  | 'skipped'
+
+/** Task 子历史条目镜像。 */
+export interface TaskSubHistoryEntry {
+  status: TaskStatus
+  enteredAt: string
+  leftAt?: string
+  outcome?: 'completed' | 'manual' | 'rolled-back' | 'errored'
+}
+
+/** Task 镜像 —— 与 protocol.ts TaskSchema 同字段子集。 */
+export interface RequirementTask {
+  id: string
+  title: string
+  goal: string
+  acceptance: string[]
+  dependencies: string[]
+  filesExpected: string[]
+  status: TaskStatus
+  subHistory: TaskSubHistoryEntry[]
+  artifactRefs: string[]
+  retryCount: number
+  lastDriftScore?: number
+  enteredAt: string
+}
+
+/** TaskList 镜像 —— Plan 阶段产物的容器。 */
+export interface RequirementTaskList {
+  tasks: RequirementTask[]
+  producedAt: string
+  producedAtStage: RequirementStage
+}
+
+/** 把 host 端 schema 解析后的 Task / TaskList 投影到 client mirror。
+ *  此处重定义而非直接 import 是为了 client bundle 不依赖 protocol.ts zod schema。 */
+function projectTask(task: {
+  id: string; title: string; goal: string;
+  acceptance: string[]; dependencies: string[];
+  filesExpected: string[]; status: TaskStatus;
+  subHistory: TaskSubHistoryEntry[];
+  artifactRefs: string[]; retryCount: number;
+  lastDriftScore?: number; enteredAt: string;
+}): RequirementTask {
+  return {
+    ...task,
+    lastDriftScore: task.lastDriftScore,
+  }
+}
+
+export function projectTaskList(list: {
+  tasks: RequirementTask[]
+  producedAt: string
+  producedAtStage: RequirementStage
+}): RequirementTaskList {
+  return {
+    tasks: list.tasks.map(projectTask),
+    producedAt: list.producedAt,
+    producedAtStage: list.producedAtStage,
+  }
+}
+
 /* ── 物料镜像 type（Phase 2.1）── */
 
 /** 物料基础原语镜像 —— 与 host schema 同字段子集。 */

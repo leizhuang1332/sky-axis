@@ -23,6 +23,8 @@ import type {
   RequirementEntry,
   RequirementAiState,
 } from '../../controller/sky-axis-controller.ts'
+import type { DriftSnapshot } from '../views/requirement-detail.mock.ts'
+import { DriftCard } from './DriftCard.tsx'
 import css from './AiConductorPane.module.css'
 
 export interface AiConductorPaneProps {
@@ -30,6 +32,8 @@ export interface AiConductorPaneProps {
   requirement: RequirementEntry
   /** 详情加载中（host 端 GET 进行中）—— 用于按钮 disabled 视觉。 */
   loading: boolean
+  /** 当前阶段的 drift 快照。null → 不渲染 DriftCard。Phase 1 由 mock 驱动。 */
+  driftSnapshot?: DriftSnapshot | null
 }
 
 /** AI 状态 → i18n 文案 key + 图标。
@@ -69,7 +73,7 @@ function formatRelative(iso: string | null | undefined, t: (k: string) => string
   return new Date(iso).toISOString().slice(0, 10)
 }
 
-export function AiConductorPane({ t, requirement, loading }: AiConductorPaneProps): JSX.Element {
+export function AiConductorPane({ t, requirement, loading, driftSnapshot = null }: AiConductorPaneProps): JSX.Element {
   // 把 LocaleKeysOf 强转为 (k: string) => string —— labelKey/hintKey 是动态字符串，
   // 编译期 SkyAxisKey 联合不允许直接传 string，但运行时 locale 系统会兜底。
   const tAny = t as unknown as (k: string) => string
@@ -87,6 +91,9 @@ export function AiConductorPane({ t, requirement, loading }: AiConductorPaneProp
         <h3 className={css.title}>{t('requirement.detail.conductor.title')}</h3>
         <p className={css.subtitle}>{t('requirement.detail.conductor.subtitle')}</p>
       </header>
+
+      {/* Drift 占位卡 —— 默认折叠；Phase 3 接真实检测器 */}
+      <DriftCard t={t} driftSnapshot={driftSnapshot} />
 
       {/* AI 状态卡 */}
       <section className={css.statusCard} data-level={meta.level}>

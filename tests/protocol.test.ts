@@ -31,6 +31,10 @@ import {
   RequirementsListResponseSchema,
   SourceRepoSchema,
   SourceRepoUrlSchema,
+  TaskListSchema,
+  TaskSchema,
+  TaskStatusSchema,
+  TaskSubHistoryEntrySchema,
   UrlSchema,
   UserIdSchema,
   WorkspacesListResponseSchema,
@@ -604,5 +608,214 @@ describe('MaterialsSchema（需求物料）', () => {
   it('UserIdSchema 空字符串合法（系统/未知）', () => {
     expect(UserIdSchema.safeParse('').success).toBe(true)
     expect(UserIdSchema.safeParse('user-1').success).toBe(true)
+  })
+})
+
+/* ── Phase 1.0：Task / TaskList schema（Plan 阶段产物）── */
+
+describe('TaskStatusSchema（task 状态 8 态）', () => {
+  it.each([
+    'pending', 'in_progress', 'verifying', 'done',
+    'failed', 'rolled_back', 'blocked', 'skipped',
+  ] as const)('接受: %s', (s) => {
+    expect(TaskStatusSchema.parse(s)).toBe(s)
+  })
+
+  it('拒绝未知状态', () => {
+    expect(() => TaskStatusSchema.parse('archived')).toThrow()
+    expect(() => TaskStatusSchema.parse('todo')).toThrow()
+    // 与 RequirementStatusSchema 不共享 —— rolled_back ≠ cancelled
+    expect(() => TaskStatusSchema.parse('cancelled')).toThrow()
+  })
+})
+
+describe('TaskSubHistoryEntrySchema', () => {
+  it('最小合法：仅 status + enteredAt', () => {
+    const e = TaskSubHistoryEntrySchema.parse({
+      status: 'pending',
+      enteredAt: '2026-08-30T12:00:00.000Z',
+    })
+    expect(e.leftAt).toBeUndefined()
+    expect(e.outcome).toBeUndefined()
+  })
+
+  it('完整合法：含 leftAt + outcome', () => {
+    const e = TaskSubHistoryEntrySchema.parse({
+      status: 'in_progress',
+      enteredAt: '2026-08-30T12:00:00.000Z',
+      leftAt: '2026-08-30T12:05:00.000Z',
+      outcome: 'completed',
+    })
+    expect(e.outcome).toBe('completed')
+  })
+
+  it('outcome 枚举仅 4 个值', () => {
+    for (const o of ['completed', 'manual', 'rolled-back', 'errored'] as const) {
+      expect(() => TaskSubHistoryEntrySchema.parse({
+        status: 'in_progress',
+        enteredAt: '2026-08-30T12:00:00.000Z',
+        outcome: o,
+      })).not.toThrow()
+    }
+    expect(() => TaskSubHistoryEntrySchema.parse({
+      status: 'in_progress',
+      enteredAt: '2026-08-30T12:00:00.000Z',
+      outcome: 'success',
+    })).toThrow()
+  })
+
+  it('enteredAt 非 ISO datetime 即拒绝', () => {
+    expect(() => TaskSubHistoryEntrySchema.parse({
+      status: 'pending',
+      enteredAt: 'yesterday',
+    })).toThrow()
+  })
+})
+
+describe('TaskSchema', () => {
+  /** 一个最小合法的 task —— 所有 required 字段填齐。 */
+  function makeTask(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'T-implement-001',
+      title: 'OAuth 回调处理器',
+      goal: '接收 GitHub OAuth code',
+      acceptance: ['校验 code', '换取 token'],
+      dependencies: [],
+      filesExpected: ['src/server/auth/oauth-callback.ts'],
+      status: 'in_progress' as const,
+      subHistory: [],
+      artifactRefs: [],
+      retryCount: 0,
+      enteredAt: '2026-08-30T12:00:00.000Z',
+      ...overrides,
+    }
+  }
+
+  it('最小合法 task 通过 parse', () => {
+    expect(() => TaskSchema.parse(makeTask())).not.toThrow()
+  })
+
+  it('id 长度上限 64', () => {
+    expect(() => TaskSchema.parse(makeTask({ id: 'a'.repeat(64) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ id: 'a'.repeat(65) }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ id: '' }))).toThrow()
+  })
+
+  it('title 长度上限 200', () => {
+    expect(() => TaskSchema.parse(makeTask({ title: 'a'.repeat(200) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ title: 'a'.repeat(201) }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ title: '' }))).toThrow()
+  })
+
+  it('goal 可空字符串，但上限 500', () => {
+    expect(() => TaskSchema.parse(makeTask({ goal: '' }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ goal: 'a'.repeat(500) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ goal: 'a'.repeat(501) }))).toThrow()
+  })
+
+  it('acceptance 数组上限 20 项 + 单项长度上限 500', () => {
+    expect(() => TaskSchema.parse(makeTask({ acceptance: Array.from({ length: 20 }, () => 'x') }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ acceptance: Array.from({ length: 21 }, () => 'x') }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ acceptance: [''] }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ acceptance: ['a'.repeat(500)] }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ acceptance: ['a'.repeat(501)] }))).toThrow()
+  })
+
+  it('dependencies + filesExpected 数组上限分别为 20 + 50', () => {
+    expect(() => TaskSchema.parse(makeTask({ dependencies: Array.from({ length: 20 }, (_, i) => `T-${i}`) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ dependencies: Array.from({ length: 21 }, (_, i) => `T-${i}`) }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ filesExpected: Array.from({ length: 50 }, (_, i) => `f${i}.ts`) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ filesExpected: Array.from({ length: 51 }, (_, i) => `f${i}.ts`) }))).toThrow()
+  })
+
+  it('artifactRefs 上限 20 + 单项长度上限 64', () => {
+    expect(() => TaskSchema.parse(makeTask({ artifactRefs: Array.from({ length: 20 }, (_, i) => `art-${i}`) }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ artifactRefs: Array.from({ length: 21 }, (_, i) => `art-${i}`) }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ artifactRefs: ['a'.repeat(64)] }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ artifactRefs: ['a'.repeat(65)] }))).toThrow()
+  })
+
+  it('retryCount 必须 0..99 整数', () => {
+    expect(() => TaskSchema.parse(makeTask({ retryCount: 0 }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ retryCount: 99 }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ retryCount: -1 }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ retryCount: 100 }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ retryCount: 1.5 }))).toThrow()
+  })
+
+  it('lastDriftScore 可选 + 0..1 闭区间', () => {
+    expect(() => TaskSchema.parse(makeTask({ lastDriftScore: 0 }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ lastDriftScore: 1 }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ lastDriftScore: 0.72 }))).not.toThrow()
+    expect(() => TaskSchema.parse(makeTask({ lastDriftScore: -0.1 }))).toThrow()
+    expect(() => TaskSchema.parse(makeTask({ lastDriftScore: 1.1 }))).toThrow()
+  })
+
+  it('rolled_back 状态示例合法（含 subHistory）', () => {
+    const t = TaskSchema.parse(makeTask({
+      status: 'rolled_back',
+      subHistory: [
+        { status: 'in_progress', enteredAt: '2026-08-30T12:00:00.000Z', leftAt: '2026-08-30T12:10:00.000Z', outcome: 'rolled-back' },
+        { status: 'rolled_back', enteredAt: '2026-08-30T12:10:00.000Z', outcome: 'rolled-back' },
+      ],
+      retryCount: 2,
+      lastDriftScore: 0.72,
+    }))
+    expect(t.subHistory).toHaveLength(2)
+    expect(t.retryCount).toBe(2)
+  })
+})
+
+describe('TaskListSchema（Plan 阶段产物容器）', () => {
+  function makeList(overrides: Record<string, unknown> = {}) {
+    return {
+      tasks: [{
+        id: 'T-1',
+        title: 'task 1',
+        goal: 'g',
+        acceptance: ['x'],
+        dependencies: [],
+        filesExpected: [],
+        status: 'pending' as const,
+        subHistory: [],
+        artifactRefs: [],
+        retryCount: 0,
+        enteredAt: '2026-08-30T12:00:00.000Z',
+      }],
+      producedAt: '2026-08-30T12:00:00.000Z',
+      producedAtStage: 'plan' as const,
+      ...overrides,
+    }
+  }
+
+  it('空 tasks 数组合法', () => {
+    expect(() => TaskListSchema.parse(makeList({ tasks: [] }))).not.toThrow()
+  })
+
+  it('多条 task 合法', () => {
+    expect(() => TaskListSchema.parse(makeList({
+      tasks: [
+        makeList().tasks[0],
+        { ...makeList().tasks[0], id: 'T-2' },
+        { ...makeList().tasks[0], id: 'T-3', status: 'done' as const },
+      ],
+    }))).not.toThrow()
+  })
+
+  it('producedAtStage 必须是 5 个 stage 之一', () => {
+    for (const s of ['understand', 'plan', 'implement', 'verify', 'deliver'] as const) {
+      expect(() => TaskListSchema.parse(makeList({ producedAtStage: s }))).not.toThrow()
+    }
+    expect(() => TaskListSchema.parse(makeList({ producedAtStage: 'unknown' as never }))).toThrow()
+  })
+
+  it('producedAt 非 ISO datetime 拒绝', () => {
+    expect(() => TaskListSchema.parse(makeList({ producedAt: 'yesterday' }))).toThrow()
+  })
+
+  it('tasks 内单条非法即拒绝', () => {
+    expect(() => TaskListSchema.parse(makeList({
+      tasks: [{ ...makeList().tasks[0], status: 'unknown' as never }],
+    }))).toThrow()
   })
 })

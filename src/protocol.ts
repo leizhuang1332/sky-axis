@@ -532,6 +532,97 @@ export const WriteArtifactResponseSchema = z.object({
 })
 export type WriteArtifactResponse = z.infer<typeof WriteArtifactResponseSchema>
 
+/* ── 任务列表（Phase 1.0：5 阶段意图工作台改造）── */
+
+/**
+ * 单个 task 的状态机 —— 8 态，覆盖 implement/verify 阶段的子循环。
+ *
+ * - pending       已规划未执行
+ * - in_progress   AI 正在生成 patch
+ * - verifying     跑测试 / 类型检查 / lint
+ * - done          verify 通过，写入产物
+ * - failed        verify 不通过，未达重做上限
+ * - rolled_back   任务级回退触发
+ * - blocked       等人类介入
+ * - skipped       用户决定跳过
+ *
+ * 设计要点：
+ *   - 8 态正交完备，UI 只需做 status → dotClass  /  → rowAction 的映射
+ *   - 与阶段 outcome 语义不重叠（阶段 outcome 在 stageHistory；task status 在 task.subHistory）
+ *   - 字段名刻意避免歧义："rolled_back"（蛇形，下划线）+ "in_progress"（蛇形）保持
+ *     与 DSH host / controller 现有命名（status / aiState / priority）一致
+ */
+export const TaskStatusSchema = z.enum([
+  'pending',
+  'in_progress',
+  'verifying',
+  'done',
+  'failed',
+  'rolled_back',
+  'blocked',
+  'skipped',
+])
+export type TaskStatus = z.infer<typeof TaskStatusSchema>
+
+/** task 级 mini history 条目 —— 类比 stageHistory，但粒度是单任务。 */
+export const TaskSubHistoryEntrySchema = z.object({
+  status: TaskStatusSchema,
+  enteredAt: z.string().datetime(),
+  leftAt: z.string().datetime().optional(),
+  outcome: z.enum(['completed', 'manual', 'rolled-back', 'errored']).optional(),
+})
+export type TaskSubHistoryEntry = z.infer<typeof TaskSubHistoryEntrySchema>
+
+/**
+ * 单个 task —— Plan 阶段产物 tasks.json 的元素。
+ *
+ * 字段语义：
+ *   - id            任务 id（client 用 `crypto.randomUUID()` 生成；host 端保证同 requirement 内唯一）
+ *   - title         一句话标题（列表行主标题）
+ *   - goal          一句话目标（列表行副标题，max 500 字）
+ *   - acceptance    验收标准列表（UI 复选框；drift 静态层会逐项 check）
+ *   - dependencies  依赖其它 task id（UI 灰显未满足依赖的 task）
+ *   - filesExpected 预期触碰的文件路径（drift 静态层比对实际 diff）
+ *   - status        当前状态（见 TaskStatusSchema）
+ *   - subHistory    状态流转审计链（task 级 outcome）
+ *   - artifactRefs  关联的产物 id 列表（指向 requirement.artifacts 中的条目）
+ *   - retryCount    重做计数（auto-rewind 阈值用：连续 N 次仍失败 → 弹人工介入）
+ *   - lastDriftScore 上次偏差分数（0-1，语义层 LLM-as-judge 输出；超 0.6 触发人类介入）
+ *   - enteredAt     该任务首次进入 pending 的时间
+ */
+export const TaskSchema = z.object({
+  id: z.string().min(1).max(64),
+  title: z.string().min(1).max(200),
+  goal: z.string().max(500),
+  acceptance: z.array(z.string().min(1).max(500)).max(20),
+  dependencies: z.array(z.string().min(1).max(64)).max(20),
+  filesExpected: z.array(z.string().min(1).max(512)).max(50),
+  status: TaskStatusSchema,
+  subHistory: z.array(TaskSubHistoryEntrySchema),
+  artifactRefs: z.array(z.string().min(1).max(64)).max(20),
+  retryCount: z.number().int().nonnegative().max(99),
+  lastDriftScore: z.number().min(0).max(1).optional(),
+  enteredAt: z.string().datetime(),
+})
+export type Task = z.infer<typeof TaskSchema>
+
+/**
+ * TaskList —— Plan 阶段产物的容器，由 host 端序列化后写入 requirement.artifacts
+ * （kind='plan' + meta.isTaskList=true）。
+ *
+ * 当前 Phase 1（UI 骨架重构）暂未由 host 端落盘，由 client 在 StageWorkspacePane 用
+ * mock 数据展示。Phase 3 真实接入时，host 在 Plan stage 完成时生成 tasks.json，
+ * 通过 put artifact 推给 client。
+ */
+export const TaskListSchema = z.object({
+  tasks: z.array(TaskSchema),
+  /** Plan 阶段产物的生成时间。 */
+  producedAt: z.string().datetime(),
+  /** Plan 阶段对应的 stage（便于审计：哪个 stage 产生的 task list）。 */
+  producedAtStage: StageSchema,
+})
+export type TaskList = z.infer<typeof TaskListSchema>
+
 /**
  * AI 操作请求（POST /ai/action 入参）—— discriminated union by action。
  * - pause / resume / cancel：session 控制

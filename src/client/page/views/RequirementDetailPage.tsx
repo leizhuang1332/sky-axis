@@ -32,12 +32,13 @@ import type {
   RequirementStage,
 } from '../../controller/sky-axis-controller.ts'
 import type { SkyAxisController } from '../../controller/sky-axis-controller.ts'
-import { Stepper, type StepperItem } from '../../ui/Stepper.tsx'
+import { Stepper, type StepperItem, type StepperStageMeta } from '../../ui/Stepper.tsx'
 import { countRequirementMaterials } from '../../controller/sky-axis-controller.ts'
 import { AiConductorPane } from '../sections/AiConductorPane.tsx'
 import { StageWorkspacePane } from '../sections/StageWorkspacePane.tsx'
 import { InterventionQueuePane } from '../sections/InterventionQueuePane.tsx'
 import { MaterialsPane } from '../sections/MaterialsPane.tsx'
+import { allMockTaskLists, mockDriftSnapshot, pickMockTaskList, summarizeForStepper } from './requirement-detail.mock.ts'
 import css from './RequirementDetailPage.module.css'
 
 export interface RequirementDetailPageProps {
@@ -71,6 +72,37 @@ export function RequirementDetailPage({
     { stage: 'verify',     Icon: PlayIcon,     label: t('requirement.detail.stage.verify.label'),     desc: t('requirement.detail.stage.verify.desc') },
     { stage: 'deliver',    Icon: PauseIcon,    label: t('requirement.detail.stage.deliver.label'),    desc: t('requirement.detail.stage.deliver.desc') },
   ]), [t])
+
+  // Phase 1.0 mock：当前 stage 的 task list（驱动中列上下分 30/70 的 task list 区）。
+  // Phase 3 接 artifact 系统后改为 controller 投影。固定传同一份 mock 以保证 demo 稳定。
+  const mockTaskList = useMemo(() => {
+    void allMockTaskLists // 防止 lint 误报「导入但未使用」
+    return pickMockTaskList(requirement.stage ?? 'understand')
+  }, [requirement.stage])
+
+  // Stepper stageMeta：每个 stage 节点下挂 taskProgress + rewind dots。
+  // Phase 1 没有真实数据，演示时从 mock 数据汇总；空 stage（verify/deliver）跳过即可（Stepper 行为）。
+  const stageMeta = useMemo<Partial<Record<RequirementStage, StepperStageMeta>>>(() => {
+    const lists = allMockTaskLists()
+    const map: Partial<Record<RequirementStage, StepperStageMeta>> = {}
+    for (const [stage, list] of Object.entries(lists) as [RequirementStage, ReturnType<typeof pickMockTaskList>][]) {
+      const summary = summarizeForStepper(list)
+      if (summary.taskTotal === 0 && summary.rewindCount === 0 && summary.rolledBackCount === 0) continue
+      map[stage] = {
+        taskDone: summary.taskDone,
+        taskTotal: summary.taskTotal,
+        rewindCount: summary.rewindCount,
+        rolledBackCount: summary.rolledBackCount,
+      }
+    }
+    return map
+  }, [])
+
+  // Drift 快照 mock —— 当前 stage 的 drift。Phase 3 接真实检测器。
+  const mockDrift = useMemo(
+    () => mockDriftSnapshot(requirement.stage ?? 'understand'),
+    [requirement.stage],
+  )
 
   return (
     <div className={css.page}>
@@ -157,6 +189,7 @@ export function RequirementDetailPage({
           <Stepper
             items={stepperItems}
             current={requirement.stage ?? 'understand'}
+            stageMeta={stageMeta}
           />
 
           {/* 主体三列 */}
@@ -166,12 +199,14 @@ export function RequirementDetailPage({
                 t={t}
                 requirement={requirement}
                 loading={detailLoading}
+                driftSnapshot={mockDrift}
               />
             </aside>
             <section className={css.workspace}>
               <StageWorkspacePane
                 t={t}
                 requirement={requirement}
+                taskList={mockTaskList}
               />
             </section>
             <aside className={css.queue}>
