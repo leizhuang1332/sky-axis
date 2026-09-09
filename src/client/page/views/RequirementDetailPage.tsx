@@ -19,6 +19,12 @@
  *   - 把 drawer state 通过 callbacks 透传给 AiConductorPane + StageWorkspacePane
  *   - Drift rerun callback：调 controller.rerunDriftDetection（mock 兜底，无 impl）
  *
+ * PR-D 迭代 6（5 个介入点 UI 化）：
+ *   - 4 个 modal/drawer：AdjustTaskListDrawer (#1) / InterventionRespondDrawer (#3) /
+ *     FailedTaskResolveModal (#4) / StageGateModal (#5)
+ *   - 1 个 Sticky bar：SteerBar (#2) — 详情页底部（workbench tab 时显示）
+ *   - 状态全部在 RequirementDetailPage 集中管理（与 PR-C rewind drawer 一致）
+ *
  * 数据来源：完全受控 props（由 SkyAxisPage 从 controller 投影传入）。
  */
 import { useCallback, useMemo, useState } from 'react'
@@ -27,10 +33,13 @@ import {
   ClockIcon, FlagIcon, WorkflowIcon, PlayIcon, PauseIcon,
 } from '../../icons/icons.tsx'
 import type {
+  AdjustTaskListPatch,
   DetailTabKey,
+  FailedTaskResolveDecision,
   RequirementEntry,
   RequirementOption,
   RequirementStage,
+  RequirementTask,
 } from '../../controller/sky-axis-controller.ts'
 import type {
   SkyAxisController,
@@ -44,8 +53,19 @@ import { InterventionQueuePane } from '../sections/InterventionQueuePane.tsx'
 import { MaterialsPane } from '../sections/MaterialsPane.tsx'
 import { RightDrawer } from '../../ui/RightDrawer.tsx'
 import { RewindDrawer } from '../sections/RewindDrawer.tsx'
+import { AdjustTaskListDrawer } from '../sections/AdjustTaskListDrawer.tsx'
+import { InterventionRespondDrawer } from '../sections/InterventionRespondDrawer.tsx'
+import { FailedTaskResolveModal } from '../sections/FailedTaskResolveModal.tsx'
+import { StageGateModal, type StageGateSummary } from '../sections/StageGateModal.tsx'
+import { SteerBar, type SteerSendRecord } from '../sections/SteerBar.tsx'
+import { Modal } from '../../ui/Modal.tsx'
 import { allMockTaskLists, mockDriftSnapshot, pickMockTaskList, summarizeForStepper } from './requirement-detail.mock.ts'
 import css from './RequirementDetailPage.module.css'
+
+/** PR-D 迭代 6 #5：阶段推进顺序（用于 StageGate 计算 toStage）。 */
+const STAGE_ORDER_FOR_ADVANCE: readonly RequirementStage[] = [
+  'understand', 'plan', 'implement', 'verify', 'deliver',
+] as const
 
 export interface RequirementDetailPageProps {
   t: PropsLocale<'sky-axis'>['t']
@@ -80,6 +100,35 @@ export function RequirementDetailPage({
   const [rewindSubmitting, setRewindSubmitting] = useState<boolean>(false)
   const [driftLoading, setDriftLoading] = useState<boolean>(false)
 
+  /* ── PR-D：4 个 modal/drawer 状态 + 1 个 sticky bar 状态 ── */
+  const [adjustDrawerOpen, setAdjustDrawerOpen] = useState<boolean>(false)
+  const [adjustSubmitting, setAdjustSubmitting] = useState<boolean>(false)
+
+  const [respondDrawer, setRespondDrawer] = useState<{
+    open: boolean
+    rpcId: string | null
+  }>({ open: false, rpcId: null })
+  const [respondSubmitting, setRespondSubmitting] = useState<boolean>(false)
+
+  const [failedTaskModal, setFailedTaskModal] = useState<{
+    open: boolean
+    taskId: string | null
+    taskTitle: string
+    failedCount: number
+  }>({ open: false, taskId: null, taskTitle: '', failedCount: 0 })
+  const [failedTaskSubmitting, setFailedTaskSubmitting] = useState<boolean>(false)
+
+  const [stageGateModal, setStageGateModal] = useState<{
+    open: boolean
+    toStage: RequirementStage | null
+    summary: StageGateSummary | null
+  }>({ open: false, toStage: null, summary: null })
+  const [stageGateSubmitting, setStageGateSubmitting] = useState<boolean>(false)
+
+  const [steerText, setSteerText] = useState<string>('')
+  const [steerSubmitting, setSteerSubmitting] = useState<boolean>(false)
+  const [steerRecent, setSteerRecent] = useState<readonly SteerSendRecord[]>([])
+
   const handleOpenRewindStage = useCallback((_trigger: 'stage-go-back') => {
     setRewindDrawer({ open: true, trigger: 'stage-go-back', taskId: null })
   }, [])
@@ -110,6 +159,143 @@ export function RequirementDetailPage({
       setDriftLoading(false)
     })
   }, [controller, requirement.id])
+
+  /* ── PR-D：#1 AdjustTaskListDrawer 回调 ── */
+  const handleOpenAdjustTaskList = useCallback(() => {
+    setAdjustDrawerOpen(true)
+  }, [])
+  const handleCloseAdjustTaskList = useCallback(() => {
+    if (adjustSubmitting) return
+    setAdjustDrawerOpen(false)
+  }, [adjustSubmitting])
+  const handleSubmitAdjustTaskList = useCallback((patch: AdjustTaskListPatch) => {
+    setAdjustSubmitting(true)
+    const handle = controller.adjustTaskList(requirement.id, patch)
+    handle.promise.then((result) => {
+      setAdjustSubmitting(false)
+      if (result.ok) {
+        setAdjustDrawerOpen(false)
+      }
+    }).catch(() => {
+      setAdjustSubmitting(false)
+    })
+  }, [controller, requirement.id])
+
+  /* ── PR-D：#3 InterventionRespondDrawer 回调 ── */
+  const handleOpenRespond = useCallback((rpcId: string) => {
+    setRespondDrawer({ open: true, rpcId })
+  }, [])
+  const handleCloseRespond = useCallback(() => {
+    if (respondSubmitting) return
+    setRespondDrawer({ open: false, rpcId: null })
+  }, [respondSubmitting])
+  const handleSubmitRespond = useCallback((answer: unknown) => {
+    if (respondDrawer.rpcId === null) return
+    setRespondSubmitting(true)
+    const rpcId = respondDrawer.rpcId
+    const handle = controller.respondIntervention(requirement.id, rpcId, answer)
+    handle.promise.then((result) => {
+      setRespondSubmitting(false)
+      if (result.ok) {
+        setRespondDrawer({ open: false, rpcId: null })
+      }
+    }).catch(() => {
+      setRespondSubmitting(false)
+    })
+  }, [controller, requirement.id, respondDrawer.rpcId])
+
+  /* ── PR-D：#4 FailedTaskResolveModal 回调 ── */
+  // 注入测试入口（phase 1 演示）—— 调用方可以从 console 触发：
+  //   window.__sky_axis.openFailedTask('T-implement-002', '权限中间件', 3)
+  // Phase 3：改为 SSE 推 'taskFailed' 事件自动触发。
+  ;(globalThis as unknown as { __sky_axis?: {
+    openFailedTask: (taskId: string, title: string, n: number) => void
+  } }).__sky_axis = {
+    openFailedTask: (taskId: string, title: string, n: number) => {
+      setFailedTaskModal({ open: true, taskId, taskTitle: title, failedCount: n })
+    },
+  }
+  const handleCloseFailedTask = useCallback(() => {
+    if (failedTaskSubmitting) return
+    setFailedTaskModal({ open: false, taskId: null, taskTitle: '', failedCount: 0 })
+  }, [failedTaskSubmitting])
+  const handleSubmitFailedTask = useCallback((decision: FailedTaskResolveDecision, _reason: string) => {
+    if (failedTaskModal.taskId === null) return
+    const taskId = failedTaskModal.taskId
+    setFailedTaskSubmitting(true)
+    const handle = controller.resolveFailedTask(requirement.id, taskId, decision)
+    handle.promise.then((result) => {
+      setFailedTaskSubmitting(false)
+      if (result.ok) {
+        setFailedTaskModal({ open: false, taskId: null, taskTitle: '', failedCount: 0 })
+      }
+    }).catch(() => {
+      setFailedTaskSubmitting(false)
+    })
+  }, [controller, requirement.id, failedTaskModal.taskId])
+
+  /* ── PR-D：#5 StageGateModal 回调 ── */
+  const handleOpenStageGate = useCallback(() => {
+    const current = requirement.stage ?? 'understand'
+    const idx = STAGE_ORDER_FOR_ADVANCE.indexOf(current)
+    const toStage = idx >= 0 && idx < STAGE_ORDER_FOR_ADVANCE.length - 1
+      ? STAGE_ORDER_FOR_ADVANCE[idx + 1] ?? null
+      : null
+    if (toStage === null) return
+    // 汇总下阶段 task + drift + rewind 计数（mock 兜底）
+    const taskList = pickMockTaskList(toStage)
+    const taskTotal = taskList?.tasks.length ?? 0
+    const taskDone = taskList?.tasks.filter(t => t.status === 'done').length ?? 0
+    const driftSnap = mockDriftSnapshot(toStage)
+    const rewindCount = (requirement.stageHistory ?? [])
+      .filter(he => he.outcome === 'rolled-back').length
+      + (taskList?.tasks.filter(t => t.subHistory.some(sh => sh.outcome === 'rolled-back')).length ?? 0)
+    const summary: StageGateSummary = {
+      taskTotal,
+      taskDone,
+      driftOverall: driftSnap?.overall ?? null,
+      rewindCount,
+    }
+    setStageGateModal({ open: true, toStage, summary })
+  }, [requirement.stage, requirement.stageHistory])
+  const handleAdvanceStage = useCallback(() => {
+    if (stageGateModal.toStage === null) return
+    const toStage = stageGateModal.toStage
+    setStageGateSubmitting(true)
+    const handle = controller.advanceStage(requirement.id, toStage)
+    handle.promise.then((result) => {
+      setStageGateSubmitting(false)
+      if (result.ok) {
+        setStageGateModal({ open: false, toStage: null, summary: null })
+      }
+    }).catch(() => {
+      setStageGateSubmitting(false)
+    })
+  }, [controller, requirement.id, stageGateModal.toStage])
+  const handleStayStage = useCallback(() => {
+    setStageGateModal({ open: false, toStage: null, summary: null })
+  }, [])
+
+  /* ── PR-D：#2 SteerBar 回调 ── */
+  const handleSteerSend = useCallback((text: string) => {
+    setSteerSubmitting(true)
+    const handle = controller.steerSession(requirement.id, text)
+    handle.promise.then((result) => {
+      setSteerSubmitting(false)
+      if (result.ok) {
+        setSteerText('')
+        setSteerRecent(prev => [{ sentAt: new Date().toISOString(), text }, ...prev].slice(0, 3))
+      }
+    }).catch(() => {
+      setSteerSubmitting(false)
+    })
+  }, [controller, requirement.id])
+
+  /* ── PR-D：派生：当前正在应答的 InterventionItem（respondDrawer.rpcId 找出来）── */
+  const respondingItem = useMemo(() => {
+    if (!respondDrawer.open || respondDrawer.rpcId === null) return null
+    return (requirement.interventionQueue ?? []).find(it => it.rpcId === respondDrawer.rpcId) ?? null
+  }, [respondDrawer.open, respondDrawer.rpcId, requirement.interventionQueue])
 
   // Stepper 配置：每个节点的 icon + label + desc
   const stepperItems: StepperItem[] = useMemo(() => ([
@@ -250,6 +436,7 @@ export function RequirementDetailPage({
                 onOpenRewind={handleOpenRewindStage}
                 onRerunDrrift={handleRerunDrift}
                 driftLoading={driftLoading}
+                onAdvanceStage={handleOpenStageGate}
               />
             </aside>
             <section className={css.workspace}>
@@ -259,11 +446,27 @@ export function RequirementDetailPage({
                 taskList={mockTaskList}
                 controller={controller}
                 onOpenRewind={handleOpenRewindTask}
+                onOpenAdjustTaskList={handleOpenAdjustTaskList}
               />
             </section>
             <aside className={css.queue}>
-              <InterventionQueuePane t={t} items={requirement.interventionQueue ?? []} />
+              <InterventionQueuePane
+                t={t}
+                items={requirement.interventionQueue ?? []}
+                onRespond={handleOpenRespond}
+              />
             </aside>
+
+            {/* PR-D 迭代 6 #2：底部 Sticky SteerBar —— 仅 workbench tab 显示 */}
+            <SteerBar
+              t={t}
+              text={steerText}
+              onChange={setSteerText}
+              onSend={handleSteerSend}
+              submitting={steerSubmitting}
+              recentSends={steerRecent}
+              disabled={detailLoading}
+            />
           </main>
         </>
       )}
@@ -286,6 +489,76 @@ export function RequirementDetailPage({
             submitting={rewindSubmitting}
           />
         </RightDrawer>
+      )}
+
+      {/* PR-D 迭代 6 #1：AdjustTaskListDrawer —— 条件渲染 */}
+      {adjustDrawerOpen && mockTaskList !== null && (
+        <RightDrawer
+          title={t('requirement.detail.adjustTaskList.title')}
+          onClose={handleCloseAdjustTaskList}
+          loading={adjustSubmitting}
+        >
+          <AdjustTaskListDrawer
+            t={t}
+            currentStage={requirement.stage ?? 'understand'}
+            taskList={mockTaskList}
+            onSubmit={handleSubmitAdjustTaskList}
+            onCancel={handleCloseAdjustTaskList}
+            submitting={adjustSubmitting}
+          />
+        </RightDrawer>
+      )}
+
+      {/* PR-D 迭代 6 #3：InterventionRespondDrawer —— 条件渲染 */}
+      {respondDrawer.open && respondDrawer.rpcId !== null && respondingItem !== null && (
+        <RightDrawer
+          title={t('requirement.detail.queue.respond.title')}
+          onClose={handleCloseRespond}
+          loading={respondSubmitting}
+        >
+          <InterventionRespondDrawer
+            t={t}
+            item={respondingItem}
+            onSubmit={handleSubmitRespond}
+            onCancel={handleCloseRespond}
+            submitting={respondSubmitting}
+          />
+        </RightDrawer>
+      )}
+
+      {/* PR-D 迭代 6 #4：FailedTaskResolveModal —— 居中 Modal 条件渲染 */}
+      {failedTaskModal.open && failedTaskModal.taskId !== null && (
+        <Modal
+          title={t('requirement.detail.failedTask.title')}
+          onClose={handleCloseFailedTask}
+        >
+          <FailedTaskResolveModal
+            t={t}
+            taskTitle={failedTaskModal.taskTitle}
+            failedCount={failedTaskModal.failedCount}
+            onSubmit={handleSubmitFailedTask}
+            onCancel={handleCloseFailedTask}
+            submitting={failedTaskSubmitting}
+          />
+        </Modal>
+      )}
+
+      {/* PR-D 迭代 6 #5：StageGateModal —— 居中 Modal 条件渲染 */}
+      {stageGateModal.open && stageGateModal.toStage !== null && stageGateModal.summary !== null && (
+        <Modal
+          title={t('requirement.detail.stageGate.title')}
+          onClose={handleStayStage}
+        >
+          <StageGateModal
+            t={t}
+            fromStage={requirement.stage ?? 'understand'}
+            toStage={stageGateModal.toStage}
+            summary={stageGateModal.summary}
+            onAdvance={handleAdvanceStage}
+            onStay={handleStayStage}
+            submitting={stageGateSubmitting}
+          />
+        </Modal>
       )}
     </div>
   )

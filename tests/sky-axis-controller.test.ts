@@ -22,6 +22,7 @@ import {
   type RequirementEntry,
   type RequirementError,
 } from '../src/client/controller/sky-axis-controller.ts'
+import { mockTaskActionOk } from '../src/client/page/views/requirement-detail.mock.ts'
 
 /** 一条最小可用的 requirement fixture。
  *  Phase 2.1 完美主义：所有字段 required（含 materials）—— fixture 必须 100% 完整。
@@ -1815,3 +1816,410 @@ describe('PR-C：clearTaskListOnRewindToUnderstand helper', () => {
 
 // 抑制 unused（RewindRequest 在 import 时声明但 describe 不直接引用 —— vitest 静态分析会忽略）
 void (null as unknown as RewindRequest)
+
+/* ── PR-D / 迭代 6：5 个介入点 controller 测试 ── */
+
+import type {
+  AdjustTaskListPatch,
+  FailedTaskResolveDecision,
+  RequirementInterventionItem,
+  RequirementStage,
+} from '../src/client/controller/sky-axis-controller.ts'
+
+type RespondImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['respondInterventionImpl']
+type SteerImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['steerSessionImpl']
+type AdvanceImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['advanceStageImpl']
+type AdjustImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['adjustTaskListImpl']
+type ResolveImpl = NonNullable<Parameters<typeof createSkyAxisController>[0]>['resolveFailedTaskImpl']
+
+function okRespondImpl(): RespondImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failRespondImpl(
+  code: 'intervention-not-found' | 'intervention-already-resolved' | 'internal-error' = 'internal-error',
+): RespondImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+function okSteerImpl(): SteerImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failSteerImpl(code: 'steer-text-empty' | 'internal-error' = 'internal-error'): SteerImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+function okAdvanceImpl(): AdvanceImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failAdvanceImpl(code: 'stage-advance-invalid' | 'internal-error' = 'stage-advance-invalid'): AdvanceImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+function okAdjustImpl(): AdjustImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failAdjustImpl(code: 'internal-error' = 'internal-error'): AdjustImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+function okResolveImpl(): ResolveImpl {
+  return () => ({ promise: Promise.resolve({ ok: true as const }), abort: () => {} })
+}
+function failResolveImpl(code: 'task-not-resolvable' | 'internal-error' = 'task-not-resolvable'): ResolveImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail: 'simulated' } }),
+    abort: () => {},
+  })
+}
+
+/** 构造一个带 interventionQueue 的 requirement（1 个未 resolved 项）。 */
+function makeReqWithQueue(): RequirementEntry {
+  const item: RequirementInterventionItem = {
+    id: 'ii-1',
+    kind: 'approval',
+    rpcId: 'rpc-1',
+    summary: '需要审批',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    payload: { toolCall: 'createFile' },
+  }
+  return makeReq({ interventionQueue: [item] })
+}
+
+/** 构造一个 stage=implement + 含 failed task 的 requirement（resolveFailedTask 测试用）。 */
+function makeReqWithFailedTask(): RequirementEntry {
+  const failedTask: RequirementTask = {
+    id: 'T-fail-1',
+    title: 'failed task',
+    goal: '',
+    acceptance: [],
+    dependencies: [],
+    filesExpected: [],
+    status: 'failed',
+    subHistory: [{ status: 'failed', enteredAt: 't' }],
+    artifactRefs: [],
+    retryCount: 3,
+    enteredAt: 't',
+  }
+  const planBody = JSON.stringify({
+    tasks: [failedTask],
+    producedAt: 't',
+    producedAtStage: 'plan',
+  })
+  const planArt: RequirementArtifact = {
+    id: 'plan-art-1',
+    kind: 'plan',
+    title: 'plan',
+    createdAt: 't',
+    body: planBody,
+  }
+  return makeReq({
+    stage: 'implement',
+    stageHistory: [{ stage: 'implement', enteredAt: 't' }],
+    artifacts: { 'plan-art-1': planArt },
+  })
+}
+
+describe('PR-D：respondIntervention（迭代 6 #3）', () => {
+  it('成功：从 interventionQueue 中移除 rpcId 对应项', async () => {
+    const req = makeReqWithQueue()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), respondInterventionImpl: okRespondImpl() })
+    await c.loadRequirements()
+    const r = await c.respondIntervention(req.id, 'rpc-1', { decision: 'approve' }).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    expect(after.interventionQueue.find(it => it.rpcId === 'rpc-1')).toBeUndefined()
+    expect(after.interventionQueue).toHaveLength(0)
+  })
+
+  it('缺 requirement → fail loud（requirement-not-found）', async () => {
+    const req = makeReqWithQueue()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), respondInterventionImpl: okRespondImpl() })
+    await c.loadRequirements()
+    const r = await c.respondIntervention('NON-EXIST', 'rpc-1', null).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('rpcId 不在 queue → fail loud（intervention-not-found）', async () => {
+    const req = makeReqWithQueue()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), respondInterventionImpl: okRespondImpl() })
+    await c.loadRequirements()
+    const r = await c.respondIntervention(req.id, 'rpc-MISSING', null).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('intervention-not-found')
+  })
+
+  it('item 已 resolved=true → fail loud（intervention-already-resolved）', async () => {
+    const item: RequirementInterventionItem = {
+      id: 'ii-1', kind: 'approval', rpcId: 'rpc-1', summary: 'x',
+      createdAt: 't', payload: {}, resolved: true,
+    }
+    const req = makeReq({ interventionQueue: [item] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), respondInterventionImpl: okRespondImpl() })
+    await c.loadRequirements()
+    const r = await c.respondIntervention(req.id, 'rpc-1', null).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('intervention-already-resolved')
+  })
+
+  it('impl 失败 → requirements 回滚（rpcId 仍在 queue）', async () => {
+    const req = makeReqWithQueue()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), respondInterventionImpl: failRespondImpl() })
+    await c.loadRequirements()
+    const r = await c.respondIntervention(req.id, 'rpc-1', null).promise
+    expect(r.ok).toBe(false)
+    const after = c.getSnapshot().requirements[0]!
+    expect(after.interventionQueue.find(it => it.rpcId === 'rpc-1')).toBeDefined()
+  })
+})
+
+describe('PR-D：steerSession（迭代 6 #2）', () => {
+  it('成功：追加 kind=note / title="Steer note" / meta.source=steer 的 artifact', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), steerSessionImpl: okSteerImpl() })
+    await c.loadRequirements()
+    const artsBefore = Object.keys(c.getSnapshot().requirements[0]!.artifacts).length
+    const r = await c.steerSession(req.id, '用 ESM 不用 CJS').promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    expect(Object.keys(after.artifacts).length).toBe(artsBefore + 1)
+    const steerArts = Object.values(after.artifacts).filter(a => a.title === 'Steer note')
+    expect(steerArts.length).toBe(1)
+    const sa = steerArts[0]!
+    expect(sa.kind).toBe('note')
+    expect(sa.body).toBe('用 ESM 不用 CJS')
+    expect(sa.meta).toEqual({ source: 'steer', length: '用 ESM 不用 CJS'.length })
+  })
+
+  it('text 为空 → fail loud（steer-text-empty）', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), steerSessionImpl: okSteerImpl() })
+    await c.loadRequirements()
+    const r = await c.steerSession(req.id, '   ').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('steer-text-empty')
+  })
+
+  it('text 自动 trim 后写入', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), steerSessionImpl: okSteerImpl() })
+    await c.loadRequirements()
+    await c.steerSession(req.id, '  hello  ').promise
+    const after = c.getSnapshot().requirements[0]!
+    const steerArt = Object.values(after.artifacts).find(a => a.title === 'Steer note')
+    expect(steerArt?.body).toBe('hello')
+  })
+
+  it('缺 requirement → fail loud（requirement-not-found）', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), steerSessionImpl: okSteerImpl() })
+    await c.loadRequirements()
+    const r = await c.steerSession('NON-EXIST', 'x').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('impl 失败 → artifacts 回滚（steer note 不残留）', async () => {
+    const req = makeReq()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), steerSessionImpl: failSteerImpl() })
+    await c.loadRequirements()
+    const artsBefore = Object.keys(c.getSnapshot().requirements[0]!.artifacts).length
+    const r = await c.steerSession(req.id, 'x').promise
+    expect(r.ok).toBe(false)
+    expect(Object.keys(c.getSnapshot().requirements[0]!.artifacts).length).toBe(artsBefore)
+  })
+})
+
+describe('PR-D：advanceStage（迭代 6 #5）', () => {
+  it('成功：plan → implement，stage 改变 + stageHistory 收尾 + 新 entry（outcome=completed）', async () => {
+    const req = makeReq({
+      stage: 'plan',
+      stageHistory: [{ stage: 'plan', enteredAt: 't' }],
+    })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), advanceStageImpl: okAdvanceImpl() })
+    await c.loadRequirements()
+    const r = await c.advanceStage(req.id, 'implement' satisfies RequirementStage).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    expect(after.stage).toBe('implement')
+    expect(after.stageHistory.length).toBe(2)
+    expect(after.stageHistory[0]?.outcome).toBe('completed')
+    expect(after.stageHistory[1]?.stage).toBe('implement')
+  })
+
+  it('跳跃式推进（plan → verify）→ fail loud（stage-advance-invalid）', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), advanceStageImpl: okAdvanceImpl() })
+    await c.loadRequirements()
+    const r = await c.advanceStage(req.id, 'verify').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('stage-advance-invalid')
+  })
+
+  it('倒退推进（plan → understand）→ fail loud（stage-advance-invalid）', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), advanceStageImpl: okAdvanceImpl() })
+    await c.loadRequirements()
+    const r = await c.advanceStage(req.id, 'understand').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('stage-advance-invalid')
+  })
+
+  it('缺 requirement → fail loud（requirement-not-found）', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), advanceStageImpl: okAdvanceImpl() })
+    await c.loadRequirements()
+    const r = await c.advanceStage('NON-EXIST', 'implement').promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('impl 失败 → stage 保持 + stageHistory 不变', async () => {
+    const req = makeReq({ stage: 'plan', stageHistory: [{ stage: 'plan', enteredAt: 't' }] })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), advanceStageImpl: failAdvanceImpl() })
+    await c.loadRequirements()
+    const before = c.getSnapshot().requirements[0]!
+    const r = await c.advanceStage(req.id, 'implement').promise
+    expect(r.ok).toBe(false)
+    const after = c.getSnapshot().requirements[0]!
+    expect(after.stage).toBe(before.stage)
+    expect(after.stageHistory.length).toBe(before.stageHistory.length)
+  })
+})
+
+describe('PR-D：adjustTaskList（迭代 6 #1）', () => {
+  it('mode=replace：替换 plan artifact 中的 task list 整列表', async () => {
+    const req = makeReqWithPlan()
+    const newTask: RequirementTask = {
+      id: 'T-new', title: '新 task', goal: 'g',
+      acceptance: ['a'], dependencies: [], filesExpected: [],
+      status: 'pending', subHistory: [], artifactRefs: [], retryCount: 0, enteredAt: 't',
+    }
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), adjustTaskListImpl: okAdjustImpl() })
+    await c.loadRequirements()
+    const patch: AdjustTaskListPatch = { mode: 'replace', tasks: [newTask] }
+    const r = await c.adjustTaskList(req.id, patch).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    const parsed = parseTaskListFromArtifact(after.artifacts['plan-art-1']!)
+    expect(parsed?.tasks).toHaveLength(1)
+    expect(parsed?.tasks[0]?.id).toBe('T-new')
+  })
+
+  it('缺 plan artifact → fail loud（artifact-not-found）', async () => {
+    const req = makeReq({ artifacts: {} })
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), adjustTaskListImpl: okAdjustImpl() })
+    await c.loadRequirements()
+    const patch: AdjustTaskListPatch = { mode: 'replace', tasks: [] }
+    const r = await c.adjustTaskList(req.id, patch).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('artifact-not-found')
+  })
+
+  it('缺 requirement → fail loud（requirement-not-found）', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), adjustTaskListImpl: okAdjustImpl() })
+    await c.loadRequirements()
+    const patch: AdjustTaskListPatch = { mode: 'replace', tasks: [] }
+    const r = await c.adjustTaskList('NON-EXIST', patch).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('requirement-not-found')
+  })
+
+  it('impl 失败 → plan artifact body 回滚到 mutation 前', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), adjustTaskListImpl: failAdjustImpl() })
+    await c.loadRequirements()
+    const beforeBody = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']!.body
+    const patch: AdjustTaskListPatch = { mode: 'replace', tasks: [] }
+    const r = await c.adjustTaskList(req.id, patch).promise
+    expect(r.ok).toBe(false)
+    const afterBody = c.getSnapshot().requirements[0]!.artifacts['plan-art-1']!.body
+    expect(afterBody).toBe(beforeBody)
+  })
+
+  it('未注入 impl → 走 mock 兜底：乐观更新即最终结果', async () => {
+    const req = makeReqWithPlan()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]) })
+    await c.loadRequirements()
+    const patch: AdjustTaskListPatch = { mode: 'replace', tasks: [] }
+    const r = await c.adjustTaskList(req.id, patch).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    const parsed = parseTaskListFromArtifact(after.artifacts['plan-art-1']!)
+    expect(parsed?.tasks).toHaveLength(0)
+  })
+})
+
+describe('PR-D：resolveFailedTask（迭代 6 #4）', () => {
+  it("decision='redo' → 触发 controller.redoTask（failed → in_progress，retryCount +1）", async () => {
+    const req = makeReqWithFailedTask()
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      taskActionImpl: mockTaskActionOk(),
+      resolveFailedTaskImpl: okResolveImpl(),
+    })
+    await c.loadRequirements()
+    const r = await c.resolveFailedTask(req.id, 'T-fail-1', 'redo' satisfies FailedTaskResolveDecision).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    const parsed = parseTaskListFromArtifact(after.artifacts['plan-art-1']!)
+    const task = parsed?.tasks.find(tk => tk.id === 'T-fail-1')
+    expect(task?.status).toBe('in_progress')
+    expect(task?.retryCount).toBe(4)
+  })
+
+  it("decision='skip' → 触发 controller.skipTask（failed → skipped）", async () => {
+    const req = makeReqWithFailedTask()
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      taskActionImpl: mockTaskActionOk(),
+      resolveFailedTaskImpl: okResolveImpl(),
+    })
+    await c.loadRequirements()
+    const r = await c.resolveFailedTask(req.id, 'T-fail-1', 'skip' satisfies FailedTaskResolveDecision).promise
+    expect(r.ok).toBe(true)
+    const after = c.getSnapshot().requirements[0]!
+    const parsed = parseTaskListFromArtifact(after.artifacts['plan-art-1']!)
+    expect(parsed?.tasks.find(tk => tk.id === 'T-fail-1')?.status).toBe('skipped')
+  })
+
+  it("decision='rewind-plan' → 触发 controller.rewind(stage-prev)，implement → plan", async () => {
+    const req = makeReqWithFailedTask()
+    const c = createSkyAxisController({
+      loadImpl: okLoad([req]),
+      rewindImpl: okRewindImpl(),
+      resolveFailedTaskImpl: okResolveImpl(),
+    })
+    await c.loadRequirements()
+    const r = await c.resolveFailedTask(req.id, 'T-fail-1', 'rewind-plan' satisfies FailedTaskResolveDecision).promise
+    expect(r.ok).toBe(true)
+    expect(c.getSnapshot().requirements[0]?.stage).toBe('plan')
+  })
+
+  it("decision='abort' → fail loud（Phase 2 接 abort 接口）", async () => {
+    const req = makeReqWithFailedTask()
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), resolveFailedTaskImpl: okResolveImpl() })
+    await c.loadRequirements()
+    const r = await c.resolveFailedTask(req.id, 'T-fail-1', 'abort' satisfies FailedTaskResolveDecision).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('internal-error')
+  })
+
+  it("task 不在 failed 状态 → fail loud（task-not-resolvable）", async () => {
+    const req = makeReqWithPlan()  // 默认 task list 第一个 task 是 in_progress
+    const c = createSkyAxisController({ loadImpl: okLoad([req]), resolveFailedTaskImpl: okResolveImpl() })
+    await c.loadRequirements()
+    const r = await c.resolveFailedTask(req.id, 'T-001', 'redo' satisfies FailedTaskResolveDecision).promise
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { code: string } }).error.code).toBe('task-not-resolvable')
+  })
+})

@@ -620,6 +620,9 @@ export const InterventionItemSchema = z.object({
   summary: z.string().min(1).max(500),
   createdAt: z.string().datetime(),
   payload: z.unknown(),
+  /* PR-D 增量：标记已应答；已 resolved 的项目从队列移除（host 端负责）。
+     optional —— 旧记录无此字段视为未 resolved（client UI 过滤逻辑兜底）。 */
+  resolved: z.boolean().optional(),
 })
 export type InterventionItem = z.infer<typeof InterventionItemSchema>
 

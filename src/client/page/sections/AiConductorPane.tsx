@@ -42,6 +42,9 @@ export interface AiConductorPaneProps {
   onRerunDrrift?: () => void
   /** PR-C 迭代 5：drift 检测进行中（用于 DriftCard 显示「正在检测…」+ 禁用按钮）。 */
   driftLoading?: boolean
+  /** PR-D 迭代 6 #5：「自动推进下一阶段」按钮触发 —— parent 打开 StageGateModal。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onAdvanceStage?: () => void
 }
 
 /** AI 状态 → i18n 文案 key + 图标。
@@ -90,6 +93,7 @@ export function AiConductorPane(props: AiConductorPaneProps): JSX.Element {
     onOpenRewind,
     onRerunDrrift,
     driftLoading,
+    onAdvanceStage,
   } = props
   // 把 LocaleKeysOf 强转为 (k: string) => string —— labelKey/hintKey 是动态字符串，
   // 编译期 SkyAxisKey 联合不允许直接传 string，但运行时 locale 系统会兜底。
@@ -193,8 +197,13 @@ export function AiConductorPane(props: AiConductorPaneProps): JSX.Element {
           <button
             type="button"
             className={css.secondaryButton}
-            disabled
-            title={t('requirement.detail.action.autoAdvanceHint')}
+            disabled={onAdvanceStage === undefined}
+            onClick={(): void => {
+              if (onAdvanceStage !== undefined) onAdvanceStage()
+            }}
+            title={onAdvanceStage === undefined
+              ? t('requirement.detail.action.autoAdvanceHint')
+              : t('requirement.detail.action.autoAdvance')}
           >
             <PinIcon size={12} className={css.buttonIcon} />
             <span>{t('requirement.detail.action.autoAdvance')}</span>

@@ -104,7 +104,8 @@ export type RequirementStage = 'understand' | 'plan' | 'implement' | 'verify' | 
 /** AI session 顶层状态 —— 与 protocol.ts AiStateSchema 一一对应。 */
 export type RequirementAiState = 'idle' | 'running' | 'paused' | 'awaiting-input' | 'errored'
 
-/** 介入队列项镜像（client bundle 不依赖 protocol.ts zod）。 */
+/** 介入队列项镜像（client bundle 不依赖 protocol.ts zod）。
+ *  PR-D 增量：resolved? 字段 —— 已应答标记（client optimistic 删除后由 host 端 SSE 兜底真值）。 */
 export interface RequirementInterventionItem {
   id: string
   kind: 'approval' | 'question' | 'review'
@@ -113,6 +114,8 @@ export interface RequirementInterventionItem {
   createdAt: string
   /** 原 JSON 帧内容，复杂问答表单读此字段渲染。 */
   payload: unknown
+  /** 已应答标记；true 时 client 应跳过渲染。 */
+  resolved?: boolean
 }
 
 /** 阶段产物镜像。 */
@@ -378,6 +381,34 @@ export interface DriftDetectResult {
   detectedAt: string
 }
 
+/* ── PR-D 镜像 type（迭代 6：5 个介入点 UI 化）── */
+
+/** #3 介入队列应答请求 —— approval / question / review 三类共用。 */
+export interface RespondInterventionRequest {
+  rpcId: string
+  /** 答案 payload —— 形态由 kind 决定（approval: {approved: bool} / question: 用户文本或选项 / review: {passed: bool, modifyReason?: string}）。 */
+  answer: unknown
+}
+
+/** #1 调整 task list 的 patch —— mode='replace' 全替换；mode='merge' 按 id 合并（保留未列出项）。 */
+export interface AdjustTaskListPatch {
+  mode: 'replace' | 'merge'
+  tasks: RequirementTask[]
+}
+
+/** #4 任务失败后 4 选 1 决策。
+ *  - 'redo'         复用 controller.redoTask
+ *  - 'rewind-plan'  复用 controller.rewind(target='stage-prev')
+ *  - 'skip'         复用 controller.skipTask
+ *  - 'abort'        controller 内部留 hook —— Phase 2 接 abort 接口
+ */
+export type FailedTaskResolveDecision = 'redo' | 'rewind-plan' | 'skip' | 'abort'
+
+/** #2 实时 steer 请求 —— 文本最大 4000 字（与 protocol.ts AiActionRequest.steer 同限制）。 */
+export interface SteerSessionRequest {
+  text: string
+}
+
 /* ── PR-C：rewind helper（pure function）── */
 
 /** 5 阶段顺序（PR-C / 迭代 4 用）—— 用于 stage-prev 计算。 */
@@ -488,6 +519,93 @@ export function clearTaskListOnRewindToUnderstand(
     },
     updatedAt: now,
   }
+}
+
+/* ── PR-D 介入点 helper（pure function）── */
+
+/** 整列表替换 plan artifact.body 中的 task list。
+ *  与 updateTaskInPlanArtifact 平级，但 patch 一次性给整 newTasks 数组（PR-D #1 adjustTaskList 用）。
+ *  patch.mode='replace' 全替换；'merge' 按 id 合并（patch.tasks 缺 id 的旧 task 保留）。
+ *  plan artifact 缺失或解析失败时返回原 req 不变（fail-soft，让 UI 显示「无 task list 可调整」）。 */
+export function updateTaskListInPlanArtifact(
+  req: RequirementEntry,
+  patch: AdjustTaskListPatch,
+  now: string,
+): RequirementEntry {
+  const planArt = findPlanArtifact(req)
+  if (planArt === null) return req
+  const current = parseTaskListFromArtifact(planArt)
+  if (current === null) return req
+  let newTasks: RequirementTask[]
+  if (patch.mode === 'replace') {
+    newTasks = patch.tasks.slice()
+  } else {
+    // merge：按 id 替换，patch.tasks 缺 id 的旧 task 保留
+    const patchMap = new Map<string, RequirementTask>()
+    for (const tk of patch.tasks) patchMap.set(tk.id, tk)
+    newTasks = current.tasks.map(t => patchMap.get(t.id) ?? t)
+  }
+  const newList: RequirementTaskList = { ...current, tasks: newTasks }
+  return {
+    ...req,
+    artifacts: {
+      ...req.artifacts,
+      [planArt.id]: { ...planArt, body: serializeTaskList(newList) },
+    },
+    updatedAt: now,
+  }
+}
+
+/** 在 req.stageHistory 末尾追加「阶段推进完成」entry（PR-D #5 advanceStage 用）。
+ *  行为：把当前 stage entry 收尾（outcome=completed）+ 新 stage entry 追加。
+ *  与 appendRewindEntry 的差别：outcome='completed' 而非 'rolled-back'；不写 reason。 */
+export function appendStageAdvanceEntry(
+  req: RequirementEntry,
+  fromStage: RequirementStage,
+  toStage: RequirementStage,
+  now: string,
+): RequirementEntry {
+  const lastIdx = (() => {
+    for (let i = req.stageHistory.length - 1; i >= 0; i -= 1) {
+      const e = req.stageHistory[i]
+      if (e?.stage === fromStage && e.leftAt === undefined) return i
+    }
+    return -1
+  })()
+
+  const newHistory = req.stageHistory.slice()
+  if (lastIdx >= 0) {
+    const prev = newHistory[lastIdx]
+    if (prev !== undefined) {
+      newHistory[lastIdx] = {
+        ...prev,
+        leftAt: now,
+        outcome: 'completed',
+      }
+    }
+  }
+  newHistory.push({
+    stage: toStage,
+    enteredAt: now,
+  })
+
+  return {
+    ...req,
+    stage: toStage,
+    stageHistory: newHistory,
+    updatedAt: now,
+  }
+}
+
+/** 从 interventionQueue 中过滤掉 rpcId 对应项（PR-D #3 respondIntervention 用）。
+ *  rpcId 不存在时返回原 req 不变（fail-soft，避免 throw）。 */
+export function removeInterventionFromQueue(
+  req: RequirementEntry,
+  rpcId: string,
+): RequirementEntry {
+  const next = req.interventionQueue.filter(it => it.rpcId !== rpcId)
+  if (next.length === req.interventionQueue.length) return req
+  return { ...req, interventionQueue: next, updatedAt: new Date().toISOString() }
 }
 
 /* ── PR-C：drift 默认 mock 实现（迭代 5，LLM-as-judge 占位）── */
@@ -804,6 +922,12 @@ export interface RequirementError {
     /* ── PR-C 新增（drift 检测错误码：impl 未注入 / 缺 taskId）── */
     | 'drift-detector-unavailable'
     | 'drift-no-source-task'
+    /* ── PR-D 新增（5 个介入点 UI 化：approval / steer / advance / adjust / resolve）── */
+    | 'intervention-not-found'
+    | 'intervention-already-resolved'
+    | 'stage-advance-invalid'
+    | 'task-not-resolvable'
+    | 'steer-text-empty'
   detail?: string
 }
 
@@ -1001,6 +1125,35 @@ export interface SkyAxisController {
     requirementId: string,
     layer?: DriftLayer | 'all',
   ): UploadHandle
+
+  /* ── PR-D / 迭代 6：5 个介入点 UI 化 ── */
+
+  /** #3 应答介入队列项（approval / question / review）。乐观删除该项 + 调 impl。 */
+  respondIntervention(
+    requirementId: string,
+    rpcId: string,
+    answer: unknown,
+  ): UploadHandle
+
+  /** #2 实时 steer —— 写入 artifact (kind='note' + meta.source='steer') + 调 impl。 */
+  steerSession(requirementId: string, text: string): UploadHandle
+
+  /** #5 阶段 Gate —— stageHistory 收尾 + 新 entry 追加 + 调 impl。 */
+  advanceStage(requirementId: string, toStage: RequirementStage): UploadHandle
+
+  /** #1 调整 task list —— plan artifact body 全替换或合并 + 调 impl。 */
+  adjustTaskList(requirementId: string, patch: AdjustTaskListPatch): UploadHandle
+
+  /** #4 任务失败 4 选 1 决策分发。
+   *  - 'redo' → controller.redoTask
+   *  - 'rewind-plan' → controller.rewind(target='stage-prev')
+   *  - 'skip' → controller.skipTask
+   *  - 'abort' → controller 内部 fallback（Phase 2 接 abort 接口） */
+  resolveFailedTask(
+    requirementId: string,
+    taskId: string,
+    decision: FailedTaskResolveDecision,
+  ): UploadHandle
 }
 
 /**
@@ -1077,6 +1230,36 @@ export function createSkyAxisController(deps: {
     requirementId: string
     layer: DriftLayer | 'all'
     taskId?: string
+  }) => UploadHandle
+  /* ── PR-D / 迭代 6：5 个介入点 UI 化 deps ── */
+  /** #3 应答介入队列项 —— approval/question/review 共用；host 把 answer 透传到 session controller respond。
+   *  返回 UploadHandle；item 字段（若 server 返回）会替换整条 requirement（含 resolved 项移除）。 */
+  respondInterventionImpl?: (input: {
+    requirementId: string
+    rpcId: string
+    answer: unknown
+  }) => UploadHandle
+  /** #2 实时 steer —— host 转发文本到 running session；item 字段携带 server record（追加 artifact 后整 requirement）。 */
+  steerSessionImpl?: (input: {
+    requirementId: string
+    text: string
+  }) => UploadHandle
+  /** #5 阶段推进 —— 校验 toStage 合法性（必须 STAGE_ORDER 中 next 阶段）+ 调 AiActionRequest advance。
+   *  item 字段携带 server record（stageHistory 收尾后整 requirement）。 */
+  advanceStageImpl?: (input: {
+    requirementId: string
+    toStage: RequirementStage
+  }) => UploadHandle
+  /** #1 调整 task list —— plan artifact body 全替换或合并；host 持久化后返回整 requirement。 */
+  adjustTaskListImpl?: (input: {
+    requirementId: string
+    patch: AdjustTaskListPatch
+  }) => UploadHandle
+  /** #4 任务失败 4 选 1 —— host 端按 decision 走对应状态机（与 task action 一致）；item 携带 server record。 */
+  resolveFailedTaskImpl?: (input: {
+    requirementId: string
+    taskId: string
+    decision: FailedTaskResolveDecision
   }) => UploadHandle
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
@@ -1428,6 +1611,79 @@ export function createSkyAxisController(deps: {
       rollback()
       // eslint-disable-next-line no-console
       console.warn('[sky-axis] drift detect mutation rejected:', e)
+    })
+
+    return {
+      promise: handle.promise,
+      abort: () => {
+        aborted = true
+        handle.abort()
+      },
+    }
+  }
+
+  /**
+   * Intervention mutation 的共用骨架（PR-D / 迭代 6）：
+   *   1. 快照 requirements 字段
+   *   2. 调用 optimistic(req, now) → 新 requirement（apply intervention effect，如 remove item / add artifact / rewind）
+   *   3. 调用 impl（注入的 fetch 实现；mock 时可不传 impl，乐观更新即最终结果）
+   *   4. 成功：若 result.item 提供则替换整条 requirement
+   *   5. 失败：回滚 requirements 字段（保留 workspaces 等）
+   *
+   * 与 runRewindMutation 形态一致 —— 统一 optimistic + impl 模式；调用方决定具体 apply。
+   */
+  const runInterventionMutation = (
+    requirementId: string,
+    applyIntervention: (req: RequirementEntry, now: string) => RequirementEntry,
+    callImpl: () => UploadHandle,
+  ): UploadHandle => {
+    const beforeRequirements = snapshot.requirements
+    let aborted = false
+    const rollback = (): void => {
+      snapshot = { ...snapshot, requirements: beforeRequirements }
+      notify()
+    }
+    const now = new Date().toISOString()
+    snapshot = {
+      ...snapshot,
+      requirements: snapshot.requirements.map(r =>
+        r.id === requirementId ? applyIntervention(r, now) : r,
+      ),
+    }
+    notify()
+
+    let handle: UploadHandle
+    try {
+      handle = callImpl()
+    } catch (e) {
+      rollback()
+      return {
+        promise: Promise.resolve({
+          ok: false as const,
+          error: projectError('network-error', e instanceof Error ? e.message : String(e)),
+        }),
+        abort: () => { aborted = true },
+      }
+    }
+
+    handle.promise.then((result) => {
+      if (aborted) return
+      if (result.ok) {
+        if (result.item !== undefined) {
+          snapshot = {
+            ...snapshot,
+            requirements: snapshot.requirements.map(rr => rr.id === requirementId ? result.item! : rr),
+          }
+          notify()
+        }
+      } else {
+        rollback()
+      }
+    }).catch((e: unknown) => {
+      if (aborted) return
+      rollback()
+      // eslint-disable-next-line no-console
+      console.warn('[sky-axis] intervention mutation rejected:', e)
     })
 
     return {
@@ -2193,6 +2449,193 @@ export function createSkyAxisController(deps: {
       }
 
       return runDriftDetectMutation(requirementId, applyDriftSnapshot, callImpl)
+    },
+
+    /* ── PR-D / 迭代 6：5 个介入点 mutation ── */
+
+    /** #3 应答介入队列项（approval/question/review）。
+     *  乐观：从 interventionQueue 中移除该项（resolved=true）；
+     *  失败回滚。rpcId 不存在 → fail loud（不写 snapshot）。 */
+    respondIntervention(requirementId: string, rpcId: string, answer: unknown): UploadHandle {
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+      const item = req.interventionQueue.find(it => it.rpcId === rpcId)
+      if (item === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('intervention-not-found', `rpcId ${rpcId} not in queue`) }),
+          abort: () => {},
+        }
+      }
+      if (item.resolved === true) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('intervention-already-resolved', `rpcId ${rpcId} already resolved`) }),
+          abort: () => {},
+        }
+      }
+      const apply = (r: RequirementEntry, _now: string): RequirementEntry => removeInterventionFromQueue(r, rpcId)
+      const callImpl = (): UploadHandle => {
+        if (deps.respondInterventionImpl === undefined) {
+          return { promise: Promise.resolve({ ok: true as const }), abort: () => {} }
+        }
+        return deps.respondInterventionImpl({ requirementId, rpcId, answer })
+      }
+      return runInterventionMutation(requirementId, apply, callImpl)
+    },
+
+    /** #2 实时 steer —— 把文本写成 kind='note' 的 artifact（meta.source='steer'）。
+     *  text 为空 → fail loud（不写 snapshot）。artifactId 基于时间戳 + 短随机后缀。 */
+    steerSession(requirementId: string, text: string): UploadHandle {
+      const trimmed = text.trim()
+      if (trimmed === '') {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('steer-text-empty', 'steer text must be non-empty') }),
+          abort: () => {},
+        }
+      }
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+      const apply = (r: RequirementEntry, now: string): RequirementEntry => {
+        const artifactId = `steer-${now.replace(/[:.]/g, '-')}`
+        const newArtifact: RequirementArtifact = {
+          id: artifactId,
+          kind: 'note',
+          title: 'Steer note',
+          createdAt: now,
+          body: trimmed,
+          meta: { source: 'steer', length: trimmed.length },
+        }
+        return {
+          ...r,
+          artifacts: { ...r.artifacts, [artifactId]: newArtifact },
+          updatedAt: now,
+        }
+      }
+      const callImpl = (): UploadHandle => {
+        if (deps.steerSessionImpl === undefined) {
+          return { promise: Promise.resolve({ ok: true as const }), abort: () => {} }
+        }
+        return deps.steerSessionImpl({ requirementId, text: trimmed })
+      }
+      return runInterventionMutation(requirementId, apply, callImpl)
+    },
+
+    /** #5 阶段 Gate —— stageHistory 收尾 + 新 entry 追加。
+     *  toStage 必须与当前 stage 相邻（STAGE_ORDER 中 next），否则 fail loud。 */
+    advanceStage(requirementId: string, toStage: RequirementStage): UploadHandle {
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+      const fromStage = req.stage
+      const fromIdx = STAGE_ORDER.indexOf(fromStage)
+      const toIdx = STAGE_ORDER.indexOf(toStage)
+      if (fromIdx < 0 || toIdx < 0) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('stage-advance-invalid', `invalid stage: from=${fromStage} to=${toStage}`) }),
+          abort: () => {},
+        }
+      }
+      // 仅允许 next 阶段推进（prev 走 rewind(target='stage-prev')，不调 advanceStage）
+      if (toIdx !== fromIdx + 1) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('stage-advance-invalid', `advanceStage only allows next stage; from=${fromStage} to=${toStage}`) }),
+          abort: () => {},
+        }
+      }
+      const apply = (r: RequirementEntry, now: string): RequirementEntry => appendStageAdvanceEntry(r, fromStage, toStage, now)
+      const callImpl = (): UploadHandle => {
+        if (deps.advanceStageImpl === undefined) {
+          return { promise: Promise.resolve({ ok: true as const }), abort: () => {} }
+        }
+        return deps.advanceStageImpl({ requirementId, toStage })
+      }
+      return runInterventionMutation(requirementId, apply, callImpl)
+    },
+
+    /** #1 调整 task list —— 调用 updateTaskListInPlanArtifact。
+     *  plan artifact 缺失或解析失败 → fail loud（不写 snapshot）。 */
+    adjustTaskList(requirementId: string, patch: AdjustTaskListPatch): UploadHandle {
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+      const planArt = findPlanArtifact(req)
+      if (planArt === null) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('artifact-not-found', `no plan artifact in requirement ${requirementId}`) }),
+          abort: () => {},
+        }
+      }
+      const apply = (r: RequirementEntry, now: string): RequirementEntry => updateTaskListInPlanArtifact(r, patch, now)
+      const callImpl = (): UploadHandle => {
+        if (deps.adjustTaskListImpl === undefined) {
+          return { promise: Promise.resolve({ ok: true as const }), abort: () => {} }
+        }
+        return deps.adjustTaskListImpl({ requirementId, patch })
+      }
+      return runInterventionMutation(requirementId, apply, callImpl)
+    },
+
+    /** #4 任务失败 4 选 1 决策分发。
+     *  - 'redo'         → controller.redoTask
+     *  - 'rewind-plan'  → controller.rewind(target='stage-prev')
+     *  - 'skip'         → controller.skipTask
+     *  - 'abort'        → fail loud（Phase 2 接 abort 接口；目前返回 internal-error）
+     *  task status 不为 'failed' → fail loud（避免误操作其它状态 task）。 */
+    resolveFailedTask(
+      requirementId: string,
+      taskId: string,
+      decision: FailedTaskResolveDecision,
+    ): UploadHandle {
+      const req = snapshot.requirements.find(r => r.id === requirementId)
+      if (req === undefined) {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('requirement-not-found', `requirement ${requirementId} not found`) }),
+          abort: () => {},
+        }
+      }
+      // 校验 task 存在 + status 为 failed
+      const planArt = findPlanArtifact(req)
+      const taskList = planArt !== null ? parseTaskListFromArtifact(planArt) : null
+      const task = taskList?.tasks.find(tk => tk.id === taskId)
+      if (task === undefined || task.status !== 'failed') {
+        return {
+          promise: Promise.resolve({ ok: false as const, error: projectError('task-not-resolvable', `task ${taskId} is not in failed state`) }),
+          abort: () => {},
+        }
+      }
+      switch (decision) {
+        case 'redo':  return this.redoTask(requirementId, taskId)
+        case 'skip':  return this.skipTask(requirementId, taskId)
+        case 'abort':
+          // Phase 2 接 abort 接口；目前 fail loud（避免 silent no-op）
+          return {
+            promise: Promise.resolve({ ok: false as const, error: projectError('internal-error', 'abort decision not yet implemented (Phase 2)') }),
+            abort: () => {},
+          }
+        case 'rewind-plan':
+          return this.rewind(requirementId, {
+            target: 'stage-prev',
+            reason: 'human-request',
+            granularity: 'A',
+          })
+      }
     },
   }
 }

@@ -45,6 +45,9 @@ export interface StageWorkspacePaneProps {
   /** PR-C 迭代 4：per-task Rewind 按钮触发 —— parent 打开 RightDrawer。
    *  未传时按钮保持 disabled（向后兼容）。 */
   onOpenRewind?: (taskId: string) => void
+  /** PR-D 迭代 6 #1：顶部「调整计划」按钮触发 —— parent 打开 AdjustTaskListDrawer。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onOpenAdjustTaskList?: () => void
 }
 
 const STAGE_ICONS: Record<RequirementStage, (p: { size?: number; className?: string }) => JSX.Element> = {
@@ -108,10 +111,12 @@ interface TaskListSectionProps {
   currentStage: RequirementStage
   selectedTaskId: string | null
   onSelectTask: (taskId: string) => void
+  /** PR-D 迭代 6 #1：「调整计划」按钮回调（parent 打开 AdjustTaskListDrawer）。 */
+  onOpenAdjustTaskList?: () => void
 }
 
 function TaskListSection({
-  t, taskList, currentStage, selectedTaskId, onSelectTask,
+  t, taskList, currentStage, selectedTaskId, onSelectTask, onOpenAdjustTaskList,
 }: TaskListSectionProps): JSX.Element {
   const tAny = t as unknown as (k: string) => string
   const tasks = taskList.tasks
@@ -133,8 +138,13 @@ function TaskListSection({
         <button
           type="button"
           className={css.taskListAdjustBtn}
-          title={tAny('requirement.detail.taskList.adjustHint')}
-          disabled
+          title={onOpenAdjustTaskList === undefined
+            ? tAny('requirement.detail.taskList.adjustHint')
+            : tAny('requirement.detail.taskList.adjust')}
+          disabled={onOpenAdjustTaskList === undefined}
+          onClick={(): void => {
+            if (onOpenAdjustTaskList !== undefined) onOpenAdjustTaskList()
+          }}
         >
           {tAny('requirement.detail.taskList.adjust')}
         </button>
@@ -373,7 +383,7 @@ function CurrentTaskSection({
 /* ── 主组件 ── */
 
 export function StageWorkspacePane({
-  t, requirement, taskList, onSelectTask, controller = null, onOpenRewind,
+  t, requirement, taskList, onSelectTask, controller = null, onOpenRewind, onOpenAdjustTaskList,
 }: StageWorkspacePaneProps): JSX.Element {
   // 默认选中第一个未 done / rolled_back / skipped 的 task
   const initialSelected = taskList?.tasks.find((tk) =>
@@ -401,6 +411,7 @@ export function StageWorkspacePane({
           currentStage={stage}
           selectedTaskId={selectedTaskId}
           onSelectTask={handleSelect}
+          onOpenAdjustTaskList={onOpenAdjustTaskList}
         />
       )}
 

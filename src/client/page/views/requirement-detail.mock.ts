@@ -466,3 +466,150 @@ export function mockDriftDetectFail(
     abort: () => {},
   })
 }
+
+/* ── PR-D / 迭代 6：5 个介入点 mock impl ── */
+
+import type {
+  AdjustTaskListPatch,
+  FailedTaskResolveDecision,
+  RequirementStage,
+} from '../../controller/sky-axis-controller.ts'
+
+/** Mock #3 respondIntervention impl 的函数签名（局部导出）。 */
+export type MockRespondInterventionImpl = NonNullable<
+  Parameters<typeof createSkyAxisControllerMockDepsType>[0]['respondInterventionImpl']
+>
+/** Mock #2 steerSession impl 的函数签名。 */
+export type MockSteerSessionImpl = NonNullable<
+  Parameters<typeof createSkyAxisControllerMockDepsType>[0]['steerSessionImpl']
+>
+/** Mock #5 advanceStage impl 的函数签名。 */
+export type MockAdvanceStageImpl = NonNullable<
+  Parameters<typeof createSkyAxisControllerMockDepsType>[0]['advanceStageImpl']
+>
+/** Mock #1 adjustTaskList impl 的函数签名。 */
+export type MockAdjustTaskListImpl = NonNullable<
+  Parameters<typeof createSkyAxisControllerMockDepsType>[0]['adjustTaskListImpl']
+>
+/** Mock #4 resolveFailedTask impl 的函数签名。 */
+export type MockResolveFailedTaskImpl = NonNullable<
+  Parameters<typeof createSkyAxisControllerMockDepsType>[0]['resolveFailedTaskImpl']
+>
+
+/* 占位类型 —— 用于上面 NonNullable<Parameters<...>> 的目标签名推导。
+   实际运行时不需要此函数存在；纯类型工具。 */
+declare function createSkyAxisControllerMockDepsType(input: {
+  respondInterventionImpl?: (input: { requirementId: string; rpcId: string; answer: unknown }) => UploadHandle
+  steerSessionImpl?: (input: { requirementId: string; text: string }) => UploadHandle
+  advanceStageImpl?: (input: { requirementId: string; toStage: RequirementStage }) => UploadHandle
+  adjustTaskListImpl?: (input: { requirementId: string; patch: AdjustTaskListPatch }) => UploadHandle
+  resolveFailedTaskImpl?: (input: {
+    requirementId: string
+    taskId: string
+    decision: FailedTaskResolveDecision
+  }) => UploadHandle
+}): void
+
+/* #3 respondIntervention */
+export function mockRespondInterventionOk(): MockRespondInterventionImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+export function mockRespondInterventionFail(
+  code:
+    | 'intervention-not-found'
+    | 'intervention-already-resolved'
+    | 'internal-error' = 'internal-error',
+  detail = 'mock respond failure',
+): MockRespondInterventionImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+export function mockRespondInterventionProgrammable(
+  responder: (input: { requirementId: string; rpcId: string; answer: unknown }) =>
+    { ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError },
+  delayMs = 200,
+): MockRespondInterventionImpl {
+  return (input) => {
+    let aborted = false
+    const promise = new Promise<{ ok: true; item?: RequirementEntry } | { ok: false; error: RequirementError }>((resolve) => {
+      setTimeout(() => {
+        if (aborted) return
+        resolve(responder(input))
+      }, delayMs)
+    })
+    return { promise, abort: () => { aborted = true } }
+  }
+}
+
+/* #2 steerSession */
+export function mockSteerSessionOk(): MockSteerSessionImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+export function mockSteerSessionFail(
+  code: 'steer-text-empty' | 'internal-error' = 'internal-error',
+  detail = 'mock steer failure',
+): MockSteerSessionImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+
+/* #5 advanceStage */
+export function mockAdvanceStageOk(): MockAdvanceStageImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+export function mockAdvanceStageFail(
+  code: 'stage-advance-invalid' | 'internal-error' = 'internal-error',
+  detail = 'mock advance failure',
+): MockAdvanceStageImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+
+/* #1 adjustTaskList */
+export function mockAdjustTaskListOk(): MockAdjustTaskListImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+export function mockAdjustTaskListFail(
+  code: 'internal-error' = 'internal-error',
+  detail = 'mock adjust failure',
+): MockAdjustTaskListImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}
+
+/* #4 resolveFailedTask */
+export function mockResolveFailedTaskOk(): MockResolveFailedTaskImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: true as const }),
+    abort: () => {},
+  })
+}
+export function mockResolveFailedTaskFail(
+  code: 'task-not-resolvable' | 'internal-error' = 'internal-error',
+  detail = 'mock resolve failure',
+): MockResolveFailedTaskImpl {
+  return () => ({
+    promise: Promise.resolve({ ok: false as const, error: { code, detail } }),
+    abort: () => {},
+  })
+}

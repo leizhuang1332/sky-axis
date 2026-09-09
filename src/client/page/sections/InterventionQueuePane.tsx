@@ -20,6 +20,9 @@ import css from './InterventionQueuePane.module.css'
 export interface InterventionQueuePaneProps {
   t: PropsLocale<'sky-axis'>['t']
   items: readonly RequirementInterventionItem[]
+  /** PR-D 迭代 6 #3：approve / reject 按钮触发 —— parent 打开 InterventionRespondDrawer。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onRespond?: (rpcId: string) => void
 }
 
 /** kind → 图标 + 配色 + 文案 key（labelKey 是 string，调用 t() 时强转）。 */
@@ -47,15 +50,18 @@ function formatTime(iso: string): string {
   }
 }
 
-export function InterventionQueuePane({ t, items }: InterventionQueuePaneProps): JSX.Element {
+export function InterventionQueuePane({ t, items, onRespond }: InterventionQueuePaneProps): JSX.Element {
   // t 强转为 (k: string) => string —— 让 labelKey 动态字符串可传入
   const tAny = t as unknown as (k: string) => string
-  const sorted = [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  // PR-D 迭代 6：过滤掉已 resolved 的项（client optimistic 删除前的兜底）
+  const sorted = [...items]
+    .filter(it => it.resolved !== true)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   return (
     <div className={css.pane}>
       <header className={css.header}>
         <h3 className={css.title}>{t('requirement.detail.queue.title')}</h3>
-        <span className={css.count}>{items.length}</span>
+        <span className={css.count}>{sorted.length}</span>
       </header>
 
       {sorted.length === 0 ? (
@@ -81,7 +87,10 @@ export function InterventionQueuePane({ t, items }: InterventionQueuePaneProps):
                   <button
                     type="button"
                     className={css.cardActionApprove}
-                    disabled
+                    disabled={onRespond === undefined}
+                    onClick={(): void => {
+                      if (onRespond !== undefined) onRespond(item.rpcId)
+                    }}
                     title={t('requirement.detail.queue.approveHint')}
                   >
                     {t('requirement.detail.queue.approve')}
@@ -89,7 +98,10 @@ export function InterventionQueuePane({ t, items }: InterventionQueuePaneProps):
                   <button
                     type="button"
                     className={css.cardActionReject}
-                    disabled
+                    disabled={onRespond === undefined}
+                    onClick={(): void => {
+                      if (onRespond !== undefined) onRespond(item.rpcId)
+                    }}
                     title={t('requirement.detail.queue.rejectHint')}
                   >
                     {t('requirement.detail.queue.reject')}
@@ -101,10 +113,7 @@ export function InterventionQueuePane({ t, items }: InterventionQueuePaneProps):
         </ul>
       )}
 
-      {/* Phase 1 占位 */}
-      <div className={css.placeholder}>
-        <p className={css.placeholderText}>{t('requirement.detail.queue.phase1Hint')}</p>
-      </div>
+      {/* PR-D 迭代 6：去掉 placeholder —— onRespond 已接通；显示页内空白避免遮挡 */}
     </div>
   )
 }

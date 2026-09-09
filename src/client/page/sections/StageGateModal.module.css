@@ -1,0 +1,165 @@
+/* StageGateModal —— 介入点 #5 阶段 Gate（PR-D / 迭代 6）。 */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.subtitle {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--dsw-alias-accent-primary, #2563eb);
+  background: var(--dsw-alias-bg-secondary, #f3f5f8);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border-radius: 0 6px 6px 0;
+}
+
+.summaryBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-secondary, #e8eaef);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-primary, #ffffff);
+}
+
+.summaryTitle {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.stageBadge {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.stageBadge_understand { background: #6366f1; }
+.stageBadge_plan       { background: #8b5cf6; }
+.stageBadge_implement  { background: #2563eb; }
+.stageBadge_verify     { background: #0d9488; }
+.stageBadge_deliver    { background: #16a34a; }
+
+.metricsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metricLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a93a3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.metricValue {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.metricPct {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary, #8a93a3);
+}
+
+.drift_low {
+  color: var(--dsw-alias-success-text, #16a34a);
+}
+
+.drift_mid {
+  color: var(--dsw-alias-warning-text, #8a5a00);
+}
+
+.drift_high {
+  color: var(--dsw-alias-danger-text, #c53030);
+}
+
+.drift_none {
+  color: var(--dsw-alias-label-tertiary, #8a93a3);
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-warning-bg-soft, #fff8e6);
+  border-left: 3px solid var(--dsw-alias-warning-text, #8a5a00);
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.cancelButton,
+.confirmButton {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.cancelButton {
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-secondary, #e8eaef);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.cancelButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #f3f5f8);
+}
+
+.cancelButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirmButton {
+  background: var(--dsw-alias-accent-primary, #2563eb);
+  border: 1px solid var(--dsw-alias-accent-primary, #2563eb);
+  color: #ffffff;
+}
+
+.confirmButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-accent-primary, #2563eb) 88%, black);
+  border-color: color-mix(in srgb, var(--dsw-alias-accent-primary, #2563eb) 88%, black);
+}
+
+.confirmButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (prefers-color-scheme: dark) {
+  .summaryBlock {
+    background: var(--dsw-alias-bg-primary-dark, #1c2026);
+    border-color: var(--dsw-alias-border-secondary-dark, #2a3038);
+  }
+}
