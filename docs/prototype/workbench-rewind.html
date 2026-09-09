@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-sky-axis-active>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 工作台 UI 原型 · rewind drawer 态</title>
+  <style>
+    /* ═══════════════ 设计令牌 ═══════════════ */
+    :root {
+      --dsw-alias-bg-app: #f5f6f8;
+      --dsw-alias-bg-surface: #ffffff;
+      --dsw-alias-bg-subtle: #fafbfc;
+      --dsw-alias-bg-muted: #f1f2f5;
+      --dsw-alias-bg-emphasis: #e8eaef;
+
+      --dsw-alias-text-primary: #1f2329;
+      --dsw-alias-text-secondary: #57606a;
+      --dsw-alias-text-tertiary: #8f959e;
+      --dsw-alias-text-inverse: #ffffff;
+
+      --dsw-alias-border-subtle: #e5e7eb;
+      --dsw-alias-border-default: #d1d5db;
+      --dsw-alias-border-emphasis: #9ca3af;
+
+      --dsw-alias-state-business-primary: #2f7dff;
+      --dsw-alias-state-business-primary-bg: #e7f0ff;
+      --dsw-alias-state-business-primary-bg-hover: #d6e6ff;
+      --dsw-alias-state-business-success: #10b981;
+      --dsw-alias-state-business-success-bg: #e7f7f0;
+      --dsw-alias-state-business-warning: #f59e0b;
+      --dsw-alias-state-business-warning-bg: #fef3e0;
+      --dsw-alias-state-business-danger: #ef4444;
+      --dsw-alias-state-business-danger-bg: #fde8e8;
+
+      --dsw-alias-radius-sm: 4px;
+      --dsw-alias-radius-md: 6px;
+      --dsw-alias-radius-lg: 10px;
+
+      --dsw-alias-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      --dsw-alias-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font-family: var(--dsw-alias-font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--dsw-alias-text-primary);
+      background: var(--dsw-alias-bg-app);
+    }
+    button { font: inherit; cursor: pointer; }
+
+    /* ═══════════════ 页面骨架 ═══════════════ */
+    .page {
+      display: grid; grid-template-rows: auto auto auto 1fr auto;
+      height: 100vh; max-width: 1440px; margin: 0 auto;
+      background: var(--dsw-alias-bg-surface);
+      position: relative;
+    }
+
+    .header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--dsw-alias-border-subtle); }
+    .backBtn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--dsw-alias-radius-md); border: 1px solid var(--dsw-alias-border-default); background: var(--dsw-alias-bg-surface); color: var(--dsw-alias-text-secondary); }
+    .headerTitle { font-size: 16px; font-weight: 600; margin: 0 8px 0 0; }
+    .statusPill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+    .statusPill_in_progress { background: var(--dsw-alias-state-business-warning-bg); color: var(--dsw-alias-state-business-warning); }
+    .priorityPill_urgent { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; background: var(--dsw-alias-state-business-danger-bg); color: var(--dsw-alias-state-business-danger); }
+    .metaRow { display: flex; gap: 16px; margin-left: auto; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+    .metaItem { display: inline-flex; align-items: center; gap: 6px; }
+    .metaLabel { color: var(--dsw-alias-text-tertiary); }
+    .metaValue { font-weight: 500; }
+    .metaValueMono { font-family: var(--dsw-alias-font-mono); font-size: 11px; }
+
+    .tabHeader { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-surface); }
+    .tabBtn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--dsw-alias-text-secondary); font-size: 13px; font-weight: 500; }
+    .tabBtnActive { color: var(--dsw-alias-state-business-primary); border-bottom-color: var(--dsw-alias-state-business-primary); }
+
+    .stepperWrap { padding: 20px 24px 16px; border-bottom: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-subtle); }
+    .stepper { list-style: none; margin: 0; padding: 0; display: flex; gap: 0; }
+    .stepLi { flex: 1; display: flex; align-items: center; min-width: 0; }
+    .stepBtn { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; padding: 8px; background: transparent; border: 0; color: var(--dsw-alias-text-tertiary); text-align: center; }
+    .stepIcon { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--dsw-alias-bg-muted); border: 2px solid var(--dsw-alias-border-default); color: var(--dsw-alias-text-tertiary); font-size: 14px; }
+    .stepLabel { font-size: 12px; font-weight: 600; }
+    .stepDesc { font-size: 11px; color: var(--dsw-alias-text-tertiary); }
+    .stepDone .stepIcon { background: var(--dsw-alias-state-business-success-bg); border-color: var(--dsw-alias-state-business-success); color: var(--dsw-alias-state-business-success); }
+    .stepDone .stepLabel { color: var(--dsw-alias-text-primary); }
+    .stepCurrent .stepIcon { background: var(--dsw-alias-state-business-primary-bg); border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); box-shadow: 0 0 0 4px var(--dsw-alias-state-business-primary-bg-hover); }
+    .stepCurrent .stepLabel { color: var(--dsw-alias-state-business-primary); }
+    .connector { flex: 1; height: 2px; background: var(--dsw-alias-border-default); margin: 0 4px; align-self: center; position: relative; margin-top: -22px; }
+    .connectorDone { background: var(--dsw-alias-state-business-success); }
+    .stepMeta { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 2px; }
+    .stepProgress { font-size: 10px; color: var(--dsw-alias-text-tertiary); font-family: var(--dsw-alias-font-mono); }
+    .stepCurrent .stepProgress { color: var(--dsw-alias-state-business-primary); font-weight: 600; }
+    .stepRewindDots { display: inline-flex; gap: 2px; height: 6px; align-items: center; }
+    .rewindDot { width: 5px; height: 5px; border-radius: 999px; background: var(--dsw-alias-state-business-warning); }
+    .rewindDot.rolled { background: var(--dsw-alias-state-business-danger); }
+
+    .body { display: grid; grid-template-columns: 25% 1fr 25%; min-height: 0; overflow: hidden; }
+    .col { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .colLeft  { border-right: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-surface); }
+    .colMid   { background: var(--dsw-alias-bg-subtle); }
+    .colRight { border-left: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-surface); }
+
+    .colHeader { padding: 12px 16px; border-bottom: 1px solid var(--dsw-alias-border-subtle); }
+    .colTitle { margin: 0; font-size: 13px; font-weight: 600; }
+    .colSubtitle { margin: 2px 0 0; font-size: 11px; color: var(--dsw-alias-text-tertiary); }
+    .colBody { padding: 12px 16px; overflow-y: auto; flex: 1; }
+
+    .driftCard { margin: 12px 16px; padding: 10px 12px; border: 1px solid var(--dsw-alias-state-business-warning); background: var(--dsw-alias-state-business-warning-bg); border-radius: var(--dsw-alias-radius-md); }
+    .driftCardHeader { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-state-business-warning); }
+    .driftIcon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--dsw-alias-state-business-warning); color: #fff; font-size: 10px; font-weight: 700; }
+    .driftChevron { margin-left: auto; transform: rotate(180deg); }
+    .driftSummary { margin: 6px 0 0; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+    .driftDetail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--dsw-alias-state-business-warning); font-size: 11px; color: var(--dsw-alias-text-secondary); display: grid; gap: 4px; }
+    .driftRow { display: flex; justify-content: space-between; }
+    .driftScore { font-family: var(--dsw-alias-font-mono); font-weight: 600; }
+
+    .aiStatusCard { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--dsw-alias-radius-md); background: var(--dsw-alias-state-business-primary-bg); border: 1px solid var(--dsw-alias-state-business-primary); margin-bottom: 12px; }
+    .aiStatusLabel { font-size: 12px; font-weight: 600; }
+    .aiStatusHint { font-size: 11px; color: var(--dsw-alias-text-secondary); margin-top: 2px; }
+    .aiDot { width: 8px; height: 8px; border-radius: 999px; background: var(--dsw-alias-state-business-primary); margin-left: auto; animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
+
+    .metaRowBlock { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; border-bottom: 1px solid var(--dsw-alias-border-subtle); }
+    .metaRowBlock:last-child { border-bottom: 0; }
+    .metaRowLabel { color: var(--dsw-alias-text-tertiary); }
+
+    .actionsGroup { margin-top: 12px; }
+    .actionsTitle { font-size: 11px; color: var(--dsw-alias-text-tertiary); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+    .actionsRow { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btnPrimary { flex: 1; padding: 6px 10px; border-radius: var(--dsw-alias-radius-md); font-size: 12px; font-weight: 500; border: 1px solid transparent; background: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-text-inverse); }
+    .btnSecondary { flex: 1; padding: 6px 10px; border-radius: var(--dsw-alias-radius-md); font-size: 12px; font-weight: 500; background: var(--dsw-alias-bg-surface); border: 1px solid var(--dsw-alias-border-default); color: var(--dsw-alias-text-secondary); }
+    .btnDanger { background: var(--dsw-alias-state-business-danger); color: #fff; border: 0; }
+    .btnDangerGhost { background: var(--dsw-alias-state-business-danger-bg); color: var(--dsw-alias-state-business-danger); border: 1px solid var(--dsw-alias-state-business-danger); }
+
+    .placeholder { margin-top: 12px; padding: 10px; border-radius: var(--dsw-alias-radius-md); background: var(--dsw-alias-bg-muted); font-size: 11px; color: var(--dsw-alias-text-tertiary); line-height: 1.5; }
+
+    .midWrap { display: grid; grid-template-rows: 30% 70%; min-height: 0; }
+    .midSection { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .midSection + .midSection { border-top: 1px solid var(--dsw-alias-border-subtle); }
+
+    .taskList { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+    .taskRow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--dsw-alias-border-subtle); }
+    .taskDot { width: 12px; height: 12px; border-radius: 999px; border: 2px solid var(--dsw-alias-border-default); background: var(--dsw-alias-bg-surface); }
+    .taskDotDone { background: var(--dsw-alias-state-business-success); border-color: var(--dsw-alias-state-business-success); }
+    .taskDotInProgress { background: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-primary); box-shadow: 0 0 0 3px var(--dsw-alias-state-business-primary-bg); }
+    .taskDotRolledBack { background: var(--dsw-alias-state-business-warning); border-color: var(--dsw-alias-state-business-warning); }
+    .taskMain { min-width: 0; }
+    .taskTitle { font-size: 12px; font-weight: 500; }
+    .taskGoal { font-size: 11px; color: var(--dsw-alias-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .taskDrift { padding: 1px 6px; font-size: 10px; border-radius: 999px; background: var(--dsw-alias-state-business-warning-bg); color: var(--dsw-alias-state-business-warning); font-family: var(--dsw-alias-font-mono); font-weight: 600; }
+    .taskActions { display: flex; gap: 4px; }
+    .taskActionBtn { padding: 3px 8px; font-size: 11px; border-radius: var(--dsw-alias-radius-sm); border: 1px solid var(--dsw-alias-border-default); background: var(--dsw-alias-bg-surface); color: var(--dsw-alias-text-secondary); }
+
+    .currentTask { padding: 16px 20px; overflow-y: auto; flex: 1; }
+    .currentTitle { font-size: 14px; font-weight: 600; margin: 0; }
+    .currentSub { font-size: 11px; color: var(--dsw-alias-text-tertiary); margin: 2px 0 0; }
+    .currentHeader { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .currentMeta { display: flex; gap: 6px; }
+    .miniBadge { padding: 2px 8px; font-size: 10px; font-family: var(--dsw-alias-font-mono); border-radius: var(--dsw-alias-radius-sm); background: var(--dsw-alias-bg-muted); color: var(--dsw-alias-text-secondary); }
+
+    .subTabs { display: flex; gap: 0; border-bottom: 1px solid var(--dsw-alias-border-subtle); margin-bottom: 12px; }
+    .subTabBtn { padding: 6px 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: 12px; font-weight: 500; color: var(--dsw-alias-text-secondary); }
+    .subTabBtnActive { color: var(--dsw-alias-state-business-primary); border-bottom-color: var(--dsw-alias-state-business-primary); }
+
+    .diffBox { border: 1px solid var(--dsw-alias-border-subtle); border-radius: var(--dsw-alias-radius-md); background: var(--dsw-alias-bg-surface); font-family: var(--dsw-alias-font-mono); font-size: 11px; overflow: hidden; }
+    .diffHeader { padding: 6px 10px; background: var(--dsw-alias-bg-muted); border-bottom: 1px solid var(--dsw-alias-border-subtle); display: flex; justify-content: space-between; }
+    .diffHeaderPath { color: var(--dsw-alias-text-secondary); font-weight: 600; }
+    .diffStats { display: inline-flex; gap: 8px; }
+    .diffAdd { color: var(--dsw-alias-state-business-success); }
+    .diffDel { color: var(--dsw-alias-state-business-danger); }
+    .diffLine { display: flex; padding: 0 10px; line-height: 1.7; }
+    .diffLineAdd { background: #e6ffec; color: #1a4d2e; }
+    .diffLineDel { background: #ffeef0; color: #6f1d1f; }
+    .diffLineCtx { color: var(--dsw-alias-text-secondary); }
+    .diffMarker { width: 16px; display: inline-block; text-align: center; opacity: .7; }
+    .diffCode { white-space: pre; }
+
+    .acceptanceRow { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 0; color: var(--dsw-alias-text-secondary); }
+    .acceptanceCheck { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--dsw-alias-border-default); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: transparent; }
+    .acceptanceCheckDone { background: var(--dsw-alias-state-business-success); border-color: var(--dsw-alias-state-business-success); color: #fff; }
+
+    .queueCount { margin-left: auto; padding: 1px 8px; font-size: 11px; border-radius: 999px; background: var(--dsw-alias-bg-emphasis); color: var(--dsw-alias-text-secondary); }
+    .interventionList { list-style: none; margin: 0; padding: 0; }
+    .interventionCard { padding: 10px 12px; border-radius: var(--dsw-alias-radius-md); border: 1px solid var(--dsw-alias-border-subtle); margin-bottom: 8px; background: var(--dsw-alias-bg-surface); }
+    .interventionCard_approval { border-left: 3px solid var(--dsw-alias-state-business-primary); }
+    .interventionCard_question { border-left: 3px solid var(--dsw-alias-state-business-warning); }
+    .interventionCard_review { border-left: 3px solid var(--dsw-alias-state-business-success); }
+    .interventionHeader { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .interventionKind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--dsw-alias-bg-muted); }
+    .interventionTime { margin-left: auto; font-size: 11px; color: var(--dsw-alias-text-tertiary); font-family: var(--dsw-alias-font-mono); }
+    .interventionSummary { font-size: 12px; margin: 0 0 8px; }
+    .interventionActions { display: flex; gap: 6px; }
+    .btnApprove { flex: 1; padding: 4px 10px; background: var(--dsw-alias-state-business-success); color: #fff; border: 0; border-radius: var(--dsw-alias-radius-sm); font-size: 11px; font-weight: 500; }
+    .btnReject { flex: 1; padding: 4px 10px; background: var(--dsw-alias-bg-surface); color: var(--dsw-alias-text-secondary); border: 1px solid var(--dsw-alias-border-default); border-radius: var(--dsw-alias-radius-sm); font-size: 11px; }
+
+    .footer { display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; border-top: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-subtle); font-size: 11px; color: var(--dsw-alias-text-tertiary); }
+
+    .annotation { display: inline-block; padding: 1px 6px; margin-left: 6px; border-radius: 3px; font-size: 10px; font-family: var(--dsw-alias-font-mono); background: #fde8e8; color: #b91c1c; vertical-align: middle; }
+    .annotation_blue { background: #e7f0ff; color: #2f7dff; }
+    .annotation_green { background: #e7f7f0; color: #047857; }
+
+    .demoBar { padding: 8px 16px; background: #1f2329; color: #d1d5db; font-size: 11px; font-family: var(--dsw-alias-font-mono); display: flex; justify-content: space-between; align-items: center; }
+    .demoBar code { color: #93c5fd; }
+
+    /* ═══════════════ Drawer（关键新增）═══════ */
+    .scrim {
+      position: absolute; inset: 0;
+      background: rgba(15, 23, 42, .35);
+      z-index: 10;
+    }
+    .drawer {
+      position: absolute;
+      top: 0; right: 0; bottom: 0;
+      width: 420px;
+      background: var(--dsw-alias-bg-surface);
+      box-shadow: -8px 0 24px rgba(15, 23, 42, .12);
+      z-index: 11;
+      display: flex; flex-direction: column;
+    }
+    .drawerHeader {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .drawerTitle { font-size: 15px; font-weight: 600; margin: 0; }
+    .drawerSubtitle { font-size: 11px; color: var(--dsw-alias-text-tertiary); margin: 2px 0 0; }
+    .drawerClose {
+      margin-left: auto;
+      padding: 4px 10px;
+      border: 0; background: transparent;
+      font-size: 18px; color: var(--dsw-alias-text-tertiary);
+    }
+    .drawerBody { padding: 16px 20px; overflow-y: auto; flex: 1; }
+    .drawerFooter { padding: 12px 20px; border-top: 1px solid var(--dsw-alias-border-subtle); display: flex; gap: 8px; }
+
+    .field { margin-bottom: 16px; }
+    .fieldLabel { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .fieldHint  { font-size: 11px; color: var(--dsw-alias-text-tertiary); margin: 4px 0 0; }
+
+    .targetList { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .targetItem {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--dsw-alias-border-default);
+      border-radius: var(--dsw-alias-radius-md);
+      cursor: pointer;
+      background: var(--dsw-alias-bg-surface);
+    }
+    .targetItem:hover { background: var(--dsw-alias-bg-muted); }
+    .targetItemSelected {
+      border-color: var(--dsw-alias-state-business-primary);
+      background: var(--dsw-alias-state-business-primary-bg);
+    }
+    .targetRadio {
+      width: 14px; height: 14px; border-radius: 999px;
+      border: 2px solid var(--dsw-alias-border-default);
+      margin-top: 2px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .targetItemSelected .targetRadio { border-color: var(--dsw-alias-state-business-primary); }
+    .targetItemSelected .targetRadio::after {
+      content: ''; position: absolute;
+      top: 2px; left: 2px; right: 2px; bottom: 2px;
+      border-radius: 999px; background: var(--dsw-alias-state-business-primary);
+    }
+    .targetMain { flex: 1; min-width: 0; }
+    .targetLabel { font-size: 12px; font-weight: 600; }
+    .targetDesc  { font-size: 11px; color: var(--dsw-alias-text-tertiary); margin-top: 2px; }
+    .targetTag   {
+      display: inline-block;
+      padding: 1px 6px;
+      font-size: 10px;
+      border-radius: 3px;
+      background: var(--dsw-alias-bg-muted);
+      color: var(--dsw-alias-text-secondary);
+      margin-left: 6px;
+    }
+    .targetTag_warning { background: var(--dsw-alias-state-business-warning-bg); color: var(--dsw-alias-state-business-warning); }
+    .targetTag_danger  { background: var(--dsw-alias-state-business-danger-bg);  color: var(--dsw-alias-state-business-danger); }
+
+    .reasonTextarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 8px 10px;
+      font: inherit;
+      border: 1px solid var(--dsw-alias-border-default);
+      border-radius: var(--dsw-alias-radius-md);
+      background: var(--dsw-alias-bg-surface);
+      resize: vertical;
+    }
+    .reasonTextarea:focus { outline: 2px solid var(--dsw-alias-state-business-primary-bg-hover); border-color: var(--dsw-alias-state-business-primary); }
+
+    .quickReasons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .quickReasonChip {
+      padding: 3px 10px;
+      font-size: 11px;
+      border-radius: 999px;
+      border: 1px solid var(--dsw-alias-border-default);
+      background: var(--dsw-alias-bg-surface);
+      color: var(--dsw-alias-text-secondary);
+    }
+
+    .previewBox {
+      padding: 10px 12px;
+      border-radius: var(--dsw-alias-radius-md);
+      background: var(--dsw-alias-state-business-warning-bg);
+      border: 1px solid var(--dsw-alias-state-business-warning);
+      font-size: 12px;
+      color: var(--dsw-alias-text-primary);
+      line-height: 1.6;
+    }
+    .previewTitle { font-weight: 600; color: var(--dsw-alias-state-business-warning); margin-bottom: 6px; }
+    .previewList { margin: 6px 0 0; padding-left: 20px; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+
+    .confirmDangerBtn {
+      flex: 1;
+      padding: 8px 14px;
+      background: var(--dsw-alias-state-business-danger);
+      color: #fff;
+      border: 0;
+      border-radius: var(--dsw-alias-radius-md);
+      font-size: 13px; font-weight: 600;
+    }
+    .cancelBtn {
+      padding: 8px 14px;
+      background: var(--dsw-alias-bg-surface);
+      color: var(--dsw-alias-text-secondary);
+      border: 1px solid var(--dsw-alias-border-default);
+      border-radius: var(--dsw-alias-radius-md);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="demoBar">
+  <span>📐 prototype · workbench-rewind.html</span>
+  <span>
+    state: <code>rewind drawer open · target = plan (implement 阶段) · 粒度 B</code>
+    &nbsp;|&nbsp;
+    <a href="./workbench-main.html" style="color:#93c5fd;">← 主态</a>
+  </span>
+</div>
+
+<!-- ═══════════════ 页面主体（背景被 scrim 蒙住）═══════ -->
+<div class="page">
+
+  <header class="header">
+    <button class="backBtn" type="button"><span>←</span><span>返回</span></button>
+    <h1 class="headerTitle">用户登录改造：支持 OAuth 第三方登录</h1>
+    <span class="statusPill statusPill_in_progress">进行中</span>
+    <span class="priorityPill_urgent">紧急</span>
+    <div class="metaRow">
+      <span class="metaItem"><span class="metaLabel">工作区</span><span class="metaValue">user-auth-monorepo</span></span>
+      <span class="metaItem"><span class="metaLabel">分支</span><span class="metaValue">ray/feat-0909-oauth</span></span>
+      <span class="metaItem"><span class="metaLabel">ID</span><span class="metaValueMono">#2026-09-09T1</span></span>
+      <button class="backBtn" style="padding:4px 8px;font-size:11px;">🔍 审计</button>
+    </div>
+  </header>
+
+  <nav class="tabHeader">
+    <button class="tabBtn" type="button"><span>需求物料</span><span style="padding:1px 6px;background:var(--dsw-alias-bg-emphasis);border-radius:999px;font-size:11px;">5</span></button>
+    <button class="tabBtn tabBtnActive" type="button" aria-selected="true"><span>AI 工作台</span></button>
+  </nav>
+
+  <div class="stepperWrap">
+    <ol class="stepper">
+      <li class="stepLi">
+        <button class="stepBtn stepDone" type="button">
+          <span class="stepIcon">✓</span><span class="stepLabel">理解</span><span class="stepDesc">找歧义 · 澄清问题</span>
+          <span class="stepMeta"><span class="stepProgress">spec.md · 3/3 决策</span></span>
+        </button>
+        <span class="connector connectorDone"></span>
+      </li>
+      <li class="stepLi">
+        <button class="stepBtn stepDone" type="button">
+          <span class="stepIcon">✓</span><span class="stepLabel">规划</span><span class="stepDesc">多方案 · 风险 · 测试策略</span>
+          <span class="stepMeta">
+            <span class="stepProgress">5 tasks · 2 次 rewind</span>
+            <span class="stepRewindDots"><span class="rewindDot"></span><span class="rewindDot rolled"></span></span>
+          </span>
+        </button>
+        <span class="connector connectorDone"></span>
+      </li>
+      <li class="stepLi">
+        <button class="stepBtn stepCurrent" type="button" aria-current="step">
+          <span class="stepIcon">⚙</span><span class="stepLabel">实现</span><span class="stepDesc">按方案生成代码 · commit</span>
+          <span class="stepMeta"><span class="stepProgress">2/5 tasks</span></span>
+        </button>
+        <span class="connector"></span>
+      </li>
+      <li class="stepLi">
+        <button class="stepBtn" type="button" disabled><span class="stepIcon">▶</span><span class="stepLabel">验证</span><span class="stepDesc">—</span></button>
+        <span class="connector"></span>
+      </li>
+      <li class="stepLi">
+        <button class="stepBtn" type="button" disabled><span class="stepIcon">⏸</span><span class="stepLabel">交付</span><span class="stepDesc">—</span></button>
+      </li>
+    </ol>
+  </div>
+
+  <main class="body" style="filter:blur(0.5px);opacity:0.7;">
+    <aside class="col colLeft">
+      <div class="driftCard">
+        <div class="driftCardHeader">
+          <span class="driftIcon">!</span><span>检测到偏差</span>
+          <span class="driftChevron">▾</span>
+        </div>
+        <div class="driftSummary">Task #3 的实现可能偏离 plan 中的验收点 #2</div>
+      </div>
+      <div class="colHeader"><h3 class="colTitle">AI 协奏</h3><p class="colSubtitle">AI 持续运转，人在关键点拍板</p></div>
+      <div class="colBody">
+        <section class="aiStatusCard"><span style="font-size:18px;">⚡</span><div><div class="aiStatusLabel">运转中</div><div class="aiStatusHint">AI 正在处理 task #3</div></div><span class="aiDot"></span></section>
+        <div class="metaRowBlock"><span class="metaRowLabel">最近活动</span><span>12 秒前</span></div>
+        <div class="metaRowBlock"><span class="metaRowLabel">已耗时</span><span>3 分 24 秒</span></div>
+        <div class="actionsGroup">
+          <h4 class="actionsTitle">阶段推进</h4>
+          <div class="actionsRow">
+            <button class="btnSecondary" type="button" style="background:var(--dsw-alias-state-business-warning-bg);border-color:var(--dsw-alias-state-business-warning);color:var(--dsw-alias-state-business-warning);">↶ 暂回上阶段</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="col colMid">
+      <div class="midWrap">
+        <div class="midSection">
+          <div class="colHeader"><h3 class="colTitle">实现阶段 · 任务列表</h3><p class="colSubtitle">5 个任务 · 2 完成 · 1 进行中 · 2 待办</p></div>
+          <ul class="taskList">
+            <li class="taskRow"><span class="taskDot taskDotDone"></span><div class="taskMain"><div class="taskTitle">#1 抽取 OAuth provider 抽象层</div><div class="taskGoal">创建 IOAuthProvider 接口...</div></div></li>
+            <li class="taskRow"><span class="taskDot taskDotDone"></span><div class="taskMain"><div class="taskTitle">#2 实现 callback handler + state 校验</div><div class="taskGoal">防 CSRF：用 signed cookie 存 state...</div></div></li>
+            <li class="taskRow" style="background:var(--dsw-alias-state-business-primary-bg);"><span class="taskDot taskDotInProgress"></span><div class="taskMain"><div class="taskTitle">#3 实现 token exchange + 用户信息拉取</div><div class="taskGoal">用 code 换 access_token → 拉 userinfo → 写入 session</div></div><span class="taskDrift">drift 0.62</span></li>
+            <li class="taskRow"><span class="taskDot taskDotRolledBack"></span><div class="taskMain"><div class="taskTitle">#4 错误处理（曾被回退到 plan）</div><div class="taskGoal">区分 provider 错误码...</div></div></li>
+            <li class="taskRow"><span class="taskDot"></span><div class="taskMain"><div class="taskTitle">#5 单元测试 + e2e</div><div class="taskGoal">jest 单测覆盖 token 流程...</div></div></li>
+          </ul>
+        </div>
+        <div class="midSection">
+          <div class="currentTask">
+            <div class="currentHeader">
+              <div><h3 class="currentTitle">Task #3 · 实现 token exchange + 用户信息拉取</h3><p class="currentSub">in_progress · drift 0.62 · 验收点 2 偏离</p></div>
+              <div class="currentMeta"><span class="miniBadge">acceptance 2/4</span><span class="miniBadge" style="background:var(--dsw-alias-state-business-warning-bg);color:var(--dsw-alias-state-business-warning);">drift 0.62</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="col colRight">
+      <div class="colHeader"><h3 class="colTitle" style="display:flex;align-items:center;">介入队列<span class="queueCount">3</span></h3></div>
+      <div class="colBody">
+        <ul class="interventionList">
+          <li class="interventionCard interventionCard_approval"><div class="interventionHeader"><span class="interventionKind">📌 审批</span><span class="interventionTime">14:38</span></div><p class="interventionSummary">AI 请求执行 <code>rm -rf node_modules/.cache</code></p></li>
+          <li class="interventionCard interventionCard_question"><div class="interventionHeader"><span class="interventionKind">❓ 提问</span><span class="interventionTime">14:35</span></div><p class="interventionSummary">session 过期时长选哪个？</p></li>
+          <li class="interventionCard interventionCard_review"><div class="interventionHeader"><span class="interventionKind">👁 审阅</span><span class="interventionTime">14:30</span></div><p class="interventionSummary">Task #1 产物 patch，请 review</p></li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <span>5 阶段 · 2 task 完成 · drift 0.62（task #3）</span>
+    <button class="backBtn" type="button">关闭</button>
+  </footer>
+
+  <!-- ─── 蒙层 ─── -->
+  <div class="scrim"></div>
+
+  <!-- ═══════════════ 右抽屉（核心新增）═══════ -->
+  <aside class="drawer" role="dialog" aria-label="回退到上游阶段">
+
+    <header class="drawerHeader">
+      <div>
+        <h2 class="drawerTitle">↶ 回退到上游阶段</h2>
+        <p class="drawerSubtitle">当前阶段：实现 · 已完成 2/5 task · drift 0.62</p>
+      </div>
+      <button class="drawerClose" type="button" aria-label="关闭">×</button>
+    </header>
+
+    <div class="drawerBody">
+
+      <!-- 字段 1：选 target -->
+      <div class="field">
+        <label class="fieldLabel">目标
+          <span class="annotation annotation_blue">粒度 B</span>
+        </label>
+        <p class="fieldHint">选择回退到哪个阶段 / 任务。粒度越粗损失越大，但通常定位更准。</p>
+
+        <ul class="targetList">
+          <li class="targetItem">
+            <span class="targetRadio"></span>
+            <div class="targetMain">
+              <div class="targetLabel">当前 task #3 重做
+                <span class="targetTag">粒度 A</span>
+              </div>
+              <div class="targetDesc">只销毁 task #3 的 patch 与 verify 结果，保留 task #1、#2 的产物。</div>
+            </div>
+          </li>
+
+          <li class="targetItem targetItemSelected">
+            <span class="targetRadio"></span>
+            <div class="targetMain">
+              <div class="targetLabel">回退到 Plan 阶段
+                <span class="targetTag targetTag_warning">粒度 B</span>
+              </div>
+              <div class="targetDesc">销毁当前阶段所有 task 产物，重新拆任务清单。保留 spec.md 与上游材料。</div>
+            </div>
+          </li>
+
+          <li class="targetItem">
+            <span class="targetRadio"></span>
+            <div class="targetMain">
+              <div class="targetLabel">回退到 Understand（spec）
+                <span class="targetTag targetTag_danger">粒度 C</span>
+              </div>
+              <div class="targetDesc">销毁所有阶段产物（包括 plan.md），只保留 materials。需求方向错了时使用。</div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- 字段 2：选 reason -->
+      <div class="field">
+        <label class="fieldLabel">原因</label>
+        <p class="fieldHint">写入 stageHistory 的审计记录，后续可在 🔍 审计 里查到。</p>
+        <textarea class="reasonTextarea" placeholder="例如：task #3 的实现用了 localStorage，但 plan 中明确要求 httpOnly cookie...">task #3 的实现用了 localStorage，但 plan 中明确要求 httpOnly cookie。需要重新拆 task，把"session 存储介质"独立成可讨论点。</textarea>
+        <div class="quickReasons">
+          <button class="quickReasonChip" type="button">verify 失败</button>
+          <button class="quickReasonChip" type="button">drift 超阈值</button>
+          <button class="quickReasonChip" type="button">需求变更</button>
+          <button class="quickReasonChip" type="button">用户主动回退</button>
+          <button class="quickReasonChip" type="button">方案不对</button>
+        </div>
+      </div>
+
+      <!-- 预览：会销毁什么 / 保留什么 -->
+      <div class="previewBox">
+        <div class="previewTitle">⚠ 此操作的影响（粒度 B）</div>
+        <div style="font-size:11px;">回退后将销毁：</div>
+        <ul class="previewList">
+          <li>当前阶段所有 5 个 task 的 patch 与 verify 结果</li>
+          <li>task #1、#2 的产物（粒度 B 会级联清理下游）</li>
+          <li>artifacts{} 中 kind=patch 的所有条目</li>
+        </ul>
+        <div style="font-size:11px;margin-top:6px;">保留：</div>
+        <ul class="previewList">
+          <li>spec.md（理解阶段产物）</li>
+          <li>requirements.materials{}（需求物料）</li>
+          <li>stageHistory 中的审计记录（追加新条目，不删除旧的）</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <footer class="drawerFooter">
+      <button class="cancelBtn" type="button">取消</button>
+      <button class="confirmDangerBtn" type="button">确认回退到 Plan</button>
+    </footer>
+
+  </aside>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-sky-axis-active>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 工作台 UI 原型 · 主态（workbench tab · implement stage · task in progress）</title>
+  <style>
+    /* ═══════════════ 设计令牌（对齐 --dsw-alias-* 命名约定） ═══════════════ */
+    :root {
+      --dsw-alias-bg-app: #f5f6f8;
+      --dsw-alias-bg-surface: #ffffff;
+      --dsw-alias-bg-subtle: #fafbfc;
+      --dsw-alias-bg-muted: #f1f2f5;
+      --dsw-alias-bg-emphasis: #e8eaef;
+
+      --dsw-alias-text-primary: #1f2329;
+      --dsw-alias-text-secondary: #57606a;
+      --dsw-alias-text-tertiary: #8f959e;
+      --dsw-alias-text-inverse: #ffffff;
+
+      --dsw-alias-border-subtle: #e5e7eb;
+      --dsw-alias-border-default: #d1d5db;
+      --dsw-alias-border-emphasis: #9ca3af;
+
+      --dsw-alias-state-business-primary: #2f7dff;
+      --dsw-alias-state-business-primary-bg: #e7f0ff;
+      --dsw-alias-state-business-primary-bg-hover: #d6e6ff;
+      --dsw-alias-state-business-success: #10b981;
+      --dsw-alias-state-business-success-bg: #e7f7f0;
+      --dsw-alias-state-business-warning: #f59e0b;
+      --dsw-alias-state-business-warning-bg: #fef3e0;
+      --dsw-alias-state-business-danger: #ef4444;
+      --dsw-alias-state-business-danger-bg: #fde8e8;
+
+      --dsw-alias-radius-sm: 4px;
+      --dsw-alias-radius-md: 6px;
+      --dsw-alias-radius-lg: 10px;
+
+      --dsw-alias-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      --dsw-alias-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    /* ═══════════════ 重置 ═══════════════ */
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font-family: var(--dsw-alias-font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--dsw-alias-text-primary);
+      background: var(--dsw-alias-bg-app);
+    }
+    button { font: inherit; cursor: pointer; }
+
+    /* ═══════════════ 主页面骨架 ═══════════════ */
+    .page {
+      display: grid;
+      grid-template-rows: auto auto auto 1fr auto;
+      height: 100vh;
+      max-width: 1440px;
+      margin: 0 auto;
+      background: var(--dsw-alias-bg-surface);
+    }
+
+    /* ── 顶栏 ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+    }
+    .backBtn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 10px; border-radius: var(--dsw-alias-radius-md);
+      border: 1px solid var(--dsw-alias-border-default);
+      background: var(--dsw-alias-bg-surface);
+      color: var(--dsw-alias-text-secondary);
+    }
+    .headerTitle { font-size: 16px; font-weight: 600; margin: 0 8px 0 0; }
+    .statusPill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+    .statusPill_open       { background: var(--dsw-alias-state-business-primary-bg); color: var(--dsw-alias-state-business-primary); }
+    .statusPill_in_progress{ background: var(--dsw-alias-state-business-warning-bg); color: var(--dsw-alias-state-business-warning); }
+    .priorityPill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+    .priorityPill_urgent { background: var(--dsw-alias-state-business-danger-bg); color: var(--dsw-alias-state-business-danger); }
+    .metaRow { display: flex; gap: 16px; margin-left: auto; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+    .metaItem { display: inline-flex; align-items: center; gap: 6px; }
+    .metaLabel { color: var(--dsw-alias-text-tertiary); }
+    .metaValue { font-weight: 500; }
+    .metaValueMono { font-family: var(--dsw-alias-font-mono); font-size: 11px; }
+
+    /* ── Tab header ── */
+    .tabHeader {
+      display: flex; gap: 4px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      background: var(--dsw-alias-bg-surface);
+    }
+    .tabBtn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 16px;
+      background: transparent; border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--dsw-alias-text-secondary);
+      font-size: 13px; font-weight: 500;
+    }
+    .tabBtnActive {
+      color: var(--dsw-alias-state-business-primary);
+      border-bottom-color: var(--dsw-alias-state-business-primary);
+    }
+    .tabBadge {
+      padding: 1px 6px;
+      background: var(--dsw-alias-bg-emphasis);
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--dsw-alias-text-secondary);
+    }
+
+    /* ── Stepper 区（页面级，跨三列）── */
+    .stepperWrap {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      background: var(--dsw-alias-bg-subtle);
+    }
+    .stepper { list-style: none; margin: 0; padding: 0; display: flex; gap: 0; }
+    .stepLi { flex: 1; display: flex; align-items: center; min-width: 0; }
+    .stepBtn {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      width: 100%; padding: 8px;
+      background: transparent; border: 0;
+      color: var(--dsw-alias-text-tertiary);
+      text-align: center;
+    }
+    .stepIcon {
+      width: 32px; height: 32px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 999px;
+      background: var(--dsw-alias-bg-muted);
+      border: 2px solid var(--dsw-alias-border-default);
+      color: var(--dsw-alias-text-tertiary);
+      font-size: 14px;
+    }
+    .stepLabel { font-size: 12px; font-weight: 600; }
+    .stepDesc  { font-size: 11px; color: var(--dsw-alias-text-tertiary); }
+
+    .stepDone .stepIcon {
+      background: var(--dsw-alias-state-business-success-bg);
+      border-color: var(--dsw-alias-state-business-success);
+      color: var(--dsw-alias-state-business-success);
+    }
+    .stepDone .stepLabel { color: var(--dsw-alias-text-primary); }
+    .stepCurrent .stepIcon {
+      background: var(--dsw-alias-state-business-primary-bg);
+      border-color: var(--dsw-alias-state-business-primary);
+      color: var(--dsw-alias-state-business-primary);
+      box-shadow: 0 0 0 4px var(--dsw-alias-state-business-primary-bg-hover);
+    }
+    .stepCurrent .stepLabel { color: var(--dsw-alias-state-business-primary); }
+
+    .connector {
+      flex: 1; height: 2px;
+      background: var(--dsw-alias-border-default);
+      margin: 0 4px;
+      align-self: center;
+      position: relative;
+      margin-top: -22px;
+    }
+    .connectorDone { background: var(--dsw-alias-state-business-success); }
+
+    /* task 进度条 + rewind 历史点 */
+    .stepMeta {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      margin-top: 2px;
+    }
+    .stepProgress {
+      font-size: 10px; color: var(--dsw-alias-text-tertiary);
+      font-family: var(--dsw-alias-font-mono);
+    }
+    .stepCurrent .stepProgress { color: var(--dsw-alias-state-business-primary); font-weight: 600; }
+    .stepRewindDots {
+      display: inline-flex; gap: 2px; height: 6px; align-items: center;
+    }
+    .rewindDot {
+      width: 5px; height: 5px; border-radius: 999px;
+      background: var(--dsw-alias-state-business-warning);
+    }
+    .rewindDot.rolled { background: var(--dsw-alias-state-business-danger); }
+
+    /* ── 三列布局 ── */
+    .body {
+      display: grid;
+      grid-template-columns: 25% 1fr 25%;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .col {
+      display: flex; flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .colLeft   { border-right: 1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-surface); }
+    .colMid    { background: var(--dsw-alias-bg-subtle); }
+    .colRight  { border-left:  1px solid var(--dsw-alias-border-subtle); background: var(--dsw-alias-bg-surface); }
+
+    .colHeader {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+    }
+    .colTitle { margin: 0; font-size: 13px; font-weight: 600; color: var(--dsw-alias-text-primary); }
+    .colSubtitle { margin: 2px 0 0; font-size: 11px; color: var(--dsw-alias-text-tertiary); }
+    .colBody { padding: 12px 16px; overflow-y: auto; flex: 1; }
+
+    /* ── Conductor 专属：drift 卡 / 状态卡 ── */
+    .driftCard {
+      margin: 12px 16px;
+      padding: 10px 12px;
+      border: 1px solid var(--dsw-alias-state-business-warning);
+      background: var(--dsw-alias-state-business-warning-bg);
+      border-radius: var(--dsw-alias-radius-md);
+      cursor: pointer;
+    }
+    .driftCardHeader {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 600;
+      color: var(--dsw-alias-state-business-warning);
+    }
+    .driftIcon {
+      width: 16px; height: 16px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 999px; background: var(--dsw-alias-state-business-warning);
+      color: #fff; font-size: 10px; font-weight: 700;
+    }
+    .driftChevron { margin-left: auto; transition: transform .15s; }
+    .driftChevronOpen { transform: rotate(180deg); }
+    .driftSummary { margin: 6px 0 0; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+    .driftDetail {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--dsw-alias-state-business-warning);
+      font-size: 11px; color: var(--dsw-alias-text-secondary);
+      display: grid; gap: 4px;
+    }
+    .driftRow { display: flex; justify-content: space-between; }
+    .driftScore { font-family: var(--dsw-alias-font-mono); font-weight: 600; }
+
+    .aiStatusCard {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px;
+      border-radius: var(--dsw-alias-radius-md);
+      background: var(--dsw-alias-state-business-primary-bg);
+      border: 1px solid var(--dsw-alias-state-business-primary);
+      margin-bottom: 12px;
+    }
+    .aiStatusCard[data-level="paused"]    { background: var(--dsw-alias-state-business-warning-bg); border-color: var(--dsw-alias-state-business-warning); }
+    .aiStatusCard[data-level="errored"]   { background: var(--dsw-alias-state-business-danger-bg);  border-color: var(--dsw-alias-state-business-danger); }
+    .aiStatusIcon { font-size: 18px; }
+    .aiStatusLabel { font-size: 12px; font-weight: 600; }
+    .aiStatusHint  { font-size: 11px; color: var(--dsw-alias-text-secondary); margin-top: 2px; }
+    .aiDot {
+      width: 8px; height: 8px; border-radius: 999px;
+      background: var(--dsw-alias-state-business-primary);
+      margin-left: auto;
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
+
+    .metaRowBlock {
+      display: flex; justify-content: space-between;
+      padding: 6px 0;
+      font-size: 12px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+    }
+    .metaRowBlock:last-child { border-bottom: 0; }
+    .metaRowLabel { color: var(--dsw-alias-text-tertiary); }
+
+    .actionsGroup { margin-top: 12px; }
+    .actionsTitle { font-size: 11px; color: var(--dsw-alias-text-tertiary); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+    .actionsRow { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btnPrimary, .btnSecondary {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: var(--dsw-alias-radius-md);
+      font-size: 12px; font-weight: 500;
+      border: 1px solid transparent;
+      transition: background .12s;
+    }
+    .btnPrimary {
+      background: var(--dsw-alias-state-business-primary);
+      color: var(--dsw-alias-text-inverse);
+    }
+    .btnPrimary:hover { background: #1e6ae0; }
+    .btnSecondary {
+      background: var(--dsw-alias-bg-surface);
+      border-color: var(--dsw-alias-border-default);
+      color: var(--dsw-alias-text-secondary);
+    }
+    .btnSecondary:hover { background: var(--dsw-alias-bg-muted); }
+    .btnSecondary:disabled, .btnPrimary:disabled {
+      opacity: .4; cursor: not-allowed;
+    }
+
+    .placeholder {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: var(--dsw-alias-radius-md);
+      background: var(--dsw-alias-bg-muted);
+      font-size: 11px; color: var(--dsw-alias-text-tertiary);
+      line-height: 1.5;
+    }
+
+    /* ── 中列：上下分 30/70 ── */
+    .midWrap {
+      display: grid;
+      grid-template-rows: 30% 70%;
+      min-height: 0;
+    }
+    .midSection {
+      display: flex; flex-direction: column;
+      min-height: 0; overflow: hidden;
+    }
+    .midSection + .midSection { border-top: 1px solid var(--dsw-alias-border-subtle); }
+
+    /* task list (top 30%) */
+    .taskList {
+      list-style: none; margin: 0; padding: 0;
+      overflow-y: auto; flex: 1;
+    }
+    .taskRow {
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      cursor: pointer;
+    }
+    .taskRow:hover { background: var(--dsw-alias-bg-muted); }
+    .taskRowCurrent { background: var(--dsw-alias-state-business-primary-bg); }
+    .taskRowCurrent:hover { background: var(--dsw-alias-state-business-primary-bg-hover); }
+    .taskDot {
+      width: 12px; height: 12px; border-radius: 999px;
+      border: 2px solid var(--dsw-alias-border-default);
+      background: var(--dsw-alias-bg-surface);
+    }
+    .taskDotDone        { background: var(--dsw-alias-state-business-success); border-color: var(--dsw-alias-state-business-success); }
+    .taskDotInProgress  { background: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-primary); box-shadow: 0 0 0 3px var(--dsw-alias-state-business-primary-bg); }
+    .taskDotFailed      { background: var(--dsw-alias-state-business-danger); border-color: var(--dsw-alias-state-business-danger); }
+    .taskDotRolledBack  { background: var(--dsw-alias-state-business-warning); border-color: var(--dsw-alias-state-business-warning); }
+    .taskDotBlocked     { background: var(--dsw-alias-bg-emphasis); border-color: var(--dsw-alias-border-emphasis); }
+
+    .taskMain { min-width: 0; }
+    .taskTitle { font-size: 12px; font-weight: 500; color: var(--dsw-alias-text-primary); }
+    .taskGoal  { font-size: 11px; color: var(--dsw-alias-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .taskDrift {
+      padding: 1px 6px; font-size: 10px;
+      border-radius: 999px;
+      background: var(--dsw-alias-state-business-warning-bg);
+      color: var(--dsw-alias-state-business-warning);
+      font-family: var(--dsw-alias-font-mono);
+      font-weight: 600;
+    }
+    .taskActions { display: flex; gap: 4px; }
+    .taskActionBtn {
+      padding: 3px 8px;
+      font-size: 11px;
+      border-radius: var(--dsw-alias-radius-sm);
+      border: 1px solid var(--dsw-alias-border-default);
+      background: var(--dsw-alias-bg-surface);
+      color: var(--dsw-alias-text-secondary);
+    }
+
+    /* current task content (bottom 70%) */
+    .currentTask { padding: 16px 20px; overflow-y: auto; flex: 1; }
+    .currentHeader {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .currentTitle { font-size: 14px; font-weight: 600; margin: 0; }
+    .currentSub   { font-size: 11px; color: var(--dsw-alias-text-tertiary); margin: 2px 0 0; }
+    .currentMeta { display: flex; gap: 6px; }
+    .miniBadge {
+      padding: 2px 8px;
+      font-size: 10px; font-family: var(--dsw-alias-font-mono);
+      border-radius: var(--dsw-alias-radius-sm);
+      background: var(--dsw-alias-bg-muted);
+      color: var(--dsw-alias-text-secondary);
+    }
+
+    .subTabs {
+      display: flex; gap: 0;
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      margin-bottom: 12px;
+    }
+    .subTabBtn {
+      padding: 6px 12px;
+      background: transparent; border: 0;
+      border-bottom: 2px solid transparent;
+      font-size: 12px; font-weight: 500;
+      color: var(--dsw-alias-text-secondary);
+    }
+    .subTabBtnActive {
+      color: var(--dsw-alias-state-business-primary);
+      border-bottom-color: var(--dsw-alias-state-business-primary);
+    }
+
+    .diffBox {
+      border: 1px solid var(--dsw-alias-border-subtle);
+      border-radius: var(--dsw-alias-radius-md);
+      background: var(--dsw-alias-bg-surface);
+      font-family: var(--dsw-alias-font-mono);
+      font-size: 11px;
+      overflow: hidden;
+    }
+    .diffHeader {
+      padding: 6px 10px;
+      background: var(--dsw-alias-bg-muted);
+      border-bottom: 1px solid var(--dsw-alias-border-subtle);
+      display: flex; justify-content: space-between;
+      font-family: var(--dsw-alias-font-mono);
+      font-size: 11px;
+    }
+    .diffHeaderPath { color: var(--dsw-alias-text-secondary); font-weight: 600; }
+    .diffStats { display: inline-flex; gap: 8px; }
+    .diffAdd { color: var(--dsw-alias-state-business-success); }
+    .diffDel { color: var(--dsw-alias-state-business-danger); }
+    .diffLine { display: flex; padding: 0 10px; line-height: 1.7; }
+    .diffLineAdd { background: #e6ffec; color: #1a4d2e; }
+    .diffLineDel { background: #ffeef0; color: #6f1d1f; }
+    .diffLineCtx { color: var(--dsw-alias-text-secondary); }
+    .diffMarker { width: 16px; display: inline-block; text-align: center; opacity: .7; }
+    .diffCode { white-space: pre; }
+
+    .acceptanceRow {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; padding: 4px 0;
+      color: var(--dsw-alias-text-secondary);
+    }
+    .acceptanceCheck {
+      width: 14px; height: 14px;
+      border-radius: 3px;
+      border: 1.5px solid var(--dsw-alias-border-default);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; color: transparent;
+    }
+    .acceptanceCheckDone { background: var(--dsw-alias-state-business-success); border-color: var(--dsw-alias-state-business-success); color: #fff; }
+
+    /* ── 介入队列（右列）── */
+    .queueCount {
+      margin-left: auto;
+      padding: 1px 8px; font-size: 11px;
+      border-radius: 999px;
+      background: var(--dsw-alias-bg-emphasis);
+      color: var(--dsw-alias-text-secondary);
+    }
+    .interventionList { list-style: none; margin: 0; padding: 0; }
+    .interventionCard {
+      padding: 10px 12px;
+      border-radius: var(--dsw-alias-radius-md);
+      border: 1px solid var(--dsw-alias-border-subtle);
+      margin-bottom: 8px;
+      background: var(--dsw-alias-bg-surface);
+    }
+    .interventionCard_approval { border-left: 3px solid var(--dsw-alias-state-business-primary); }
+    .interventionCard_question { border-left: 3px solid var(--dsw-alias-state-business-warning); }
+    .interventionCard_review   { border-left: 3px solid var(--dsw-alias-state-business-success); }
+    .interventionHeader { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .interventionKind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--dsw-alias-bg-muted); }
+    .interventionTime { margin-left: auto; font-size: 11px; color: var(--dsw-alias-text-tertiary); font-family: var(--dsw-alias-font-mono); }
+    .interventionSummary { font-size: 12px; color: var(--dsw-alias-text-primary); margin: 0 0 8px; }
+    .interventionActions { display: flex; gap: 6px; }
+    .btnApprove {
+      flex: 1;
+      padding: 4px 10px;
+      background: var(--dsw-alias-state-business-success);
+      color: #fff; border: 0; border-radius: var(--dsw-alias-radius-sm);
+      font-size: 11px; font-weight: 500;
+    }
+    .btnReject {
+      flex: 1;
+      padding: 4px 10px;
+      background: var(--dsw-alias-bg-surface);
+      color: var(--dsw-alias-text-secondary);
+      border: 1px solid var(--dsw-alias-border-default);
+      border-radius: var(--dsw-alias-radius-sm);
+      font-size: 11px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 20px;
+      border-top: 1px solid var(--dsw-alias-border-subtle);
+      background: var(--dsw-alias-bg-subtle);
+      font-size: 11px;
+      color: var(--dsw-alias-text-tertiary);
+    }
+
+    /* ═══════════════ 注释角标（仅原型） ═══════════════ */
+    .annotation {
+      display: inline-block;
+      padding: 1px 6px;
+      margin-left: 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-family: var(--dsw-alias-font-mono);
+      background: #fde8e8; color: #b91c1c;
+      vertical-align: middle;
+    }
+    .annotation_blue { background: #e7f0ff; color: #2f7dff; }
+    .annotation_green { background: #e7f7f0; color: #047857; }
+
+    /* ═══════════════ 顶部 demo 工具条 ═══════════════ */
+    .demoBar {
+      padding: 8px 16px;
+      background: #1f2329;
+      color: #d1d5db;
+      font-size: 11px;
+      font-family: var(--dsw-alias-font-mono);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .demoBar code { color: #93c5fd; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════ 演示工具条（不是产品 UI） ═══════════════ -->
+<div class="demoBar">
+  <span>📐 prototype · workbench-main.html</span>
+  <span>
+    state: <code>workbench tab · implement stage · task3 in_progress</code>
+    &nbsp;|&nbsp;
+    <a href="./workbench-rewind.html" style="color:#93c5fd;">→ rewind drawer 态</a>
+  </span>
+</div>
+
+<!-- ═══════════════ 页面主体 ═══════════════ -->
+<div class="page">
+
+  <!-- ─── 顶栏 ─── -->
+  <header class="header">
+    <button class="backBtn" type="button">
+      <span>←</span><span>返回</span>
+    </button>
+    <h1 class="headerTitle">用户登录改造：支持 OAuth 第三方登录</h1>
+    <span class="statusPill statusPill_in_progress">进行中</span>
+    <span class="priorityPill priorityPill_urgent">紧急</span>
+    <div class="metaRow">
+      <span class="metaItem">
+        <span class="metaLabel">工作区</span>
+        <span class="metaValue">user-auth-monorepo</span>
+      </span>
+      <span class="metaItem">
+        <span class="metaLabel">分支</span>
+        <span class="metaValue">ray/feat-0909-oauth</span>
+      </span>
+      <span class="metaItem">
+        <span class="metaLabel">ID</span>
+        <span class="metaValueMono">#2026-09-09T1</span>
+      </span>
+      <button class="backBtn" title="查看阶段流转审计" style="padding:4px 8px;font-size:11px;">🔍 审计</button>
+    </div>
+  </header>
+
+  <!-- ─── Tab header ─── -->
+  <nav class="tabHeader" aria-label="需求详情标签">
+    <button class="tabBtn" type="button">
+      <span>需求物料</span>
+      <span class="tabBadge">5</span>
+    </button>
+    <button class="tabBtn tabBtnActive" type="button" aria-selected="true">
+      <span>AI 工作台</span>
+    </button>
+  </nav>
+
+  <!-- ─── Stepper（页面级）── ─ -->
+  <div class="stepperWrap">
+    <ol class="stepper" aria-label="开发意图工作流 5 阶段">
+
+      <li class="stepLi">
+        <button class="stepBtn stepDone" type="button">
+          <span class="stepIcon">✓</span>
+          <span class="stepLabel">理解</span>
+          <span class="stepDesc">找歧义 · 澄清问题</span>
+          <span class="stepMeta">
+            <span class="stepProgress">spec.md · 3/3 决策</span>
+          </span>
+        </button>
+        <span class="connector connectorDone" aria-hidden="true"></span>
+      </li>
+
+      <li class="stepLi">
+        <button class="stepBtn stepDone" type="button">
+          <span class="stepIcon">✓</span>
+          <span class="stepLabel">规划</span>
+          <span class="stepDesc">多方案 · 风险 · 测试策略</span>
+          <span class="stepMeta">
+            <span class="stepProgress">5 tasks · 2 次 rewind</span>
+            <span class="stepRewindDots" title="曾被回退 2 次">
+              <span class="rewindDot"></span>
+              <span class="rewindDot rolled"></span>
+            </span>
+          </span>
+        </button>
+        <span class="connector connectorDone" aria-hidden="true"></span>
+      </li>
+
+      <li class="stepLi">
+        <button class="stepBtn stepCurrent" type="button" aria-current="step">
+          <span class="stepIcon">⚙</span>
+          <span class="stepLabel">实现</span>
+          <span class="stepDesc">按方案生成代码 · commit</span>
+          <span class="stepMeta">
+            <span class="stepProgress">2/5 tasks</span>
+          </span>
+        </button>
+        <span class="connector" aria-hidden="true"></span>
+      </li>
+
+      <li class="stepLi">
+        <button class="stepBtn" type="button" disabled>
+          <span class="stepIcon">▶</span>
+          <span class="stepLabel">验证</span>
+          <span class="stepDesc">跑测试 · review</span>
+          <span class="stepMeta">
+            <span class="stepProgress">—</span>
+          </span>
+        </button>
+        <span class="connector" aria-hidden="true"></span>
+      </li>
+
+      <li class="stepLi">
+        <button class="stepBtn" type="button" disabled>
+          <span class="stepIcon">⏸</span>
+          <span class="stepLabel">交付</span>
+          <span class="stepDesc">跟踪 CI · 合并 · 部署</span>
+          <span class="stepMeta">
+            <span class="stepProgress">—</span>
+          </span>
+        </button>
+      </li>
+
+    </ol>
+  </div>
+
+  <!-- ─── 三列布局 ─── -->
+  <main class="body">
+
+    <!-- ─── 左列：AI 协奏（25%）── ─ -->
+    <aside class="col colLeft">
+
+      <!-- ✨ 新增：drift 警示卡（默认折叠）-->
+      <div class="driftCard" role="button" tabindex="0" aria-expanded="false">
+        <div class="driftCardHeader">
+          <span class="driftIcon">!</span>
+          <span>检测到偏差</span>
+          <span class="driftChevron">▾</span>
+        </div>
+        <div class="driftSummary">
+          Task #3 的实现可能偏离 plan 中的验收点 #2
+          <span class="annotation">新：drift 卡</span>
+        </div>
+      </div>
+
+      <div class="colHeader">
+        <h3 class="colTitle">AI 协奏</h3>
+        <p class="colSubtitle">AI 持续运转，人在关键点拍板</p>
+      </div>
+
+      <div class="colBody">
+        <!-- AI 状态卡 -->
+        <section class="aiStatusCard" data-level="running">
+          <span class="aiStatusIcon">⚡</span>
+          <div>
+            <div class="aiStatusLabel">运转中</div>
+            <div class="aiStatusHint">AI 正在处理 task #3</div>
+          </div>
+          <span class="aiDot"></span>
+        </section>
+
+        <!-- 元信息 -->
+        <div class="metaRowBlock">
+          <span class="metaRowLabel">最近活动</span>
+          <span>12 秒前</span>
+        </div>
+        <div class="metaRowBlock">
+          <span class="metaRowLabel">Session ID</span>
+          <span class="metaValueMono">sess-a8f3...</span>
+        </div>
+        <div class="metaRowBlock">
+          <span class="metaRowLabel">已耗时</span>
+          <span>3 分 24 秒</span>
+        </div>
+
+        <!-- 操作按钮组 -->
+        <div class="actionsGroup">
+          <h4 class="actionsTitle">阶段控制</h4>
+          <div class="actionsRow">
+            <button class="btnPrimary" type="button" disabled>启动 AI</button>
+          </div>
+          <div class="actionsRow" style="margin-top:6px;">
+            <button class="btnSecondary" type="button" disabled>暂停</button>
+            <button class="btnSecondary" type="button" disabled>恢复</button>
+            <button class="btnSecondary" type="button">取消</button>
+          </div>
+        </div>
+
+        <div class="actionsGroup">
+          <h4 class="actionsTitle">阶段推进</h4>
+          <div class="actionsRow">
+            <button class="btnSecondary" type="button" title="完成所有 task 后启用">自动推进下一阶段</button>
+          </div>
+          <div class="actionsRow" style="margin-top:6px;">
+            <button class="btnSecondary" type="button" style="background:var(--dsw-alias-state-business-warning-bg);border-color:var(--dsw-alias-state-business-warning);color:var(--dsw-alias-state-business-warning);">
+              ↶ 暂回上阶段
+            </button>
+            <span class="annotation annotation_blue">iteration 4</span>
+          </div>
+        </div>
+
+        <div class="placeholder">
+          阶段级 rewind：打开右抽屉选 target + reason。
+          <br>任务级 rewind：在 task 行直接点 ↶。
+        </div>
+      </div>
+    </aside>
+
+    <!-- ─── 中列：当前阶段工作区（50%，上下分 30/70）── ─ -->
+    <section class="col colMid">
+      <div class="midWrap">
+
+        <!-- 上 30%：task list -->
+        <div class="midSection">
+          <div class="colHeader" style="display:flex;align-items:center;">
+            <div>
+              <h3 class="colTitle">实现阶段 · 任务列表
+                <span class="annotation annotation_green">新：30%</span>
+              </h3>
+              <p class="colSubtitle">5 个任务 · 2 完成 · 1 进行中 · 2 待办</p>
+            </div>
+            <button class="taskActionBtn" style="margin-left:auto;">+ 调整 task list</button>
+          </div>
+
+          <ul class="taskList">
+
+            <li class="taskRow">
+              <span class="taskDot taskDotDone" title="已完成"></span>
+              <div class="taskMain">
+                <div class="taskTitle">#1 抽取 OAuth provider 抽象层</div>
+                <div class="taskGoal">创建 IOAuthProvider 接口，封装 GitHub/Google/Feishu 通用方法</div>
+              </div>
+              <span class="miniBadge">3 files</span>
+              <div class="taskActions">
+                <button class="taskActionBtn" type="button" title="查看产物">查看</button>
+              </div>
+            </li>
+
+            <li class="taskRow">
+              <span class="taskDot taskDotDone" title="已完成"></span>
+              <div class="taskMain">
+                <div class="taskTitle">#2 实现 callback handler + state 校验</div>
+                <div class="taskGoal">防 CSRF：用 signed cookie 存 state，handler 校验后清除</div>
+              </div>
+              <span class="miniBadge">2 files</span>
+              <div class="taskActions">
+                <button class="taskActionBtn" type="button">查看</button>
+              </div>
+            </li>
+
+            <!-- 当前 task：in_progress -->
+            <li class="taskRow taskRowCurrent" aria-current="true">
+              <span class="taskDot taskDotInProgress" title="进行中"></span>
+              <div class="taskMain">
+                <div class="taskTitle">#3 实现 token exchange + 用户信息拉取</div>
+                <div class="taskGoal">用 code 换 access_token → 拉 userinfo → 写入 session</div>
+              </div>
+              <span class="taskDrift" title="语义 drift 分数 0.62">drift 0.62</span>
+              <div class="taskActions">
+                <button class="taskActionBtn" type="button">查看</button>
+                <button class="taskActionBtn" type="button" title="重做当前 task（粒度 A）">↻ 重做</button>
+              </div>
+            </li>
+
+            <li class="taskRow">
+              <span class="taskDot taskDotRolledBack" title="已回退"></span>
+              <div class="taskMain">
+                <div class="taskTitle">#4 错误处理（曾被回退到 plan）</div>
+                <div class="taskGoal">区分 provider 错误码 → 标准化异常类型</div>
+              </div>
+              <span class="miniBadge" style="color:var(--dsw-alias-state-business-warning);">rolled_back</span>
+              <div class="taskActions">
+                <button class="taskActionBtn" type="button">查看</button>
+                <button class="taskActionBtn" type="button" title="粒度 B：回退到 plan 重新拆">↶</button>
+              </div>
+            </li>
+
+            <li class="taskRow">
+              <span class="taskDot" title="待办"></span>
+              <div class="taskMain">
+                <div class="taskTitle">#5 单元测试 + e2e</div>
+                <div class="taskGoal">jest 单测覆盖 token 流程；playwright 跑通 GitHub login</div>
+              </div>
+              <span class="miniBadge">—</span>
+              <div class="taskActions">
+                <button class="taskActionBtn" type="button" disabled>开始</button>
+              </div>
+            </li>
+
+          </ul>
+        </div>
+
+        <!-- 下 70%：current task content -->
+        <div class="midSection">
+          <div class="currentTask">
+            <div class="currentHeader">
+              <div>
+                <h3 class="currentTitle">Task #3 · 实现 token exchange + 用户信息拉取</h3>
+                <p class="currentSub">in_progress · 进入时间 14:32 · 已耗时 3 分 24 秒</p>
+              </div>
+              <div class="currentMeta">
+                <span class="miniBadge">acceptance 2/4</span>
+                <span class="miniBadge" style="background:var(--dsw-alias-state-business-warning-bg);color:var(--dsw-alias-state-business-warning);">drift 0.62</span>
+              </div>
+            </div>
+
+            <!-- 验收清单 -->
+            <div style="margin-bottom:14px;">
+              <div class="acceptanceRow">
+                <span class="acceptanceCheck acceptanceCheckDone">✓</span>
+                <span>调用 /oauth/token 拿到 access_token</span>
+              </div>
+              <div class="acceptanceRow">
+                <span class="acceptanceCheck acceptanceCheckDone">✓</span>
+                <span>解析 userinfo 邮箱字段</span>
+              </div>
+              <div class="acceptanceRow">
+                <span class="acceptanceCheck">·</span>
+                <span>写入 session 并 set cookie
+                  <span class="annotation" style="background:var(--dsw-alias-state-business-warning-bg);color:var(--dsw-alias-state-business-warning);">drift: 实现里直接写 localStorage，与 plan 不符</span>
+                </span>
+              </div>
+              <div class="acceptanceRow">
+                <span class="acceptanceCheck">·</span>
+                <span>401 时清理 session + 重定向 /login</span>
+              </div>
+            </div>
+
+            <!-- 子 tab：产物 -->
+            <div class="subTabs">
+              <button class="subTabBtn subTabBtnActive" type="button">Patch</button>
+              <button class="subTabBtn" type="button">执行日志</button>
+              <button class="subTabBtn" type="button">Verify</button>
+              <span style="margin-left:auto;font-size:11px;color:var(--dsw-alias-text-tertiary);align-self:center;">
+                ↻ 上次更新 8 秒前
+              </span>
+            </div>
+
+            <!-- diff box -->
+            <div class="diffBox">
+              <div class="diffHeader">
+                <span class="diffHeaderPath">src/auth/oauth-service.ts</span>
+                <span class="diffStats">
+                  <span class="diffAdd">+18</span>
+                  <span class="diffDel">−4</span>
+                </span>
+              </div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">async function exchangeToken(code: string): Promise&lt;TokenPair&gt; {</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">  const res = await fetch('/api/oauth/token', {</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">    method: 'POST',</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">    body: JSON.stringify({ code }),</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">  });</span></div>
+              <div class="diffLine diffLineCtx"><span class="diffMarker">&nbsp;</span><span class="diffCode">  const user = await fetchUserInfo(res.access_token);</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode" style="color:var(--dsw-alias-state-business-warning);">  // ⚠ drift: 直接写 localStorage（plan 中明确要求 set httpOnly cookie）</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">  localStorage.setItem('auth_token', res.access_token);</span></div>
+              <div class="diffLine diffLineAdd"><span class="diffMarker">+</span><span class="diffCode">  localStorage.setItem('user', JSON.stringify(user));</span></div>
+              <div class="diffLine diffLineDel"><span class="diffMarker">−</span><span class="diffCode">  // TODO: integrate session middleware</span></div>
+              <div class="diffLine diffLineDel"><span class="diffMarker">−</span><span class="diffCode">  return res;</span></div>
+              <div class="diffLine diffLineCtx"><span class="diffMarker">&nbsp;</span><span class="diffCode">}</span></div>
+            </div>
+
+            <!-- 当前 task 操作 -->
+            <div style="display:flex;gap:8px;margin-top:14px;align-items:center;">
+              <button class="btnPrimary" type="button">✓ 接受当前 task</button>
+              <button class="btnSecondary" type="button">↻ 重做</button>
+              <button class="btnSecondary" type="button">↶ 回退到 plan</button>
+              <button class="btnSecondary" type="button" style="margin-left:auto;">跳过</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─── 右列：介入队列（25%）── ─ -->
+    <aside class="col colRight">
+      <div class="colHeader">
+        <h3 class="colTitle" style="display:flex;align-items:center;">
+          介入队列
+          <span class="queueCount">3</span>
+        </h3>
+        <p class="colSubtitle">等待你处理的介入项</p>
+      </div>
+
+      <div class="colBody">
+        <ul class="interventionList">
+
+          <li class="interventionCard interventionCard_approval">
+            <div class="interventionHeader">
+              <span class="interventionKind">📌 审批</span>
+              <span class="interventionTime">14:38</span>
+            </div>
+            <p class="interventionSummary">AI 请求执行 <code>rm -rf node_modules/.cache</code> 清理构建缓存</p>
+            <div class="interventionActions">
+              <button class="btnApprove" type="button">批准</button>
+              <button class="btnReject" type="button">拒绝</button>
+            </div>
+          </li>
+
+          <li class="interventionCard interventionCard_question">
+            <div class="interventionHeader">
+              <span class="interventionKind">❓ 提问</span>
+              <span class="interventionTime">14:35</span>
+            </div>
+            <p class="interventionSummary">session 过期时长选哪个？<br>A) 7 天<br>B) 30 天<br>C) 跟随 access_token TTL</p>
+            <div class="interventionActions">
+              <button class="btnApprove" type="button">选 A</button>
+              <button class="btnReject" type="button">选 B</button>
+            </div>
+          </li>
+
+          <li class="interventionCard interventionCard_review">
+            <div class="interventionHeader">
+              <span class="interventionKind">👁 审阅</span>
+              <span class="interventionTime">14:30</span>
+            </div>
+            <p class="interventionSummary">Task #1 产物 · OAuthProvider 抽象层 patch，请 review</p>
+            <div class="interventionActions">
+              <button class="btnApprove" type="button">接受</button>
+              <button class="btnReject" type="button">需修改</button>
+            </div>
+          </li>
+
+        </ul>
+
+        <div class="placeholder" style="margin-top:16px;">
+          介入队列与 drift 卡分工：<br>
+          • 队列：人类被显式邀请介入（approval/question/review）<br>
+          • drift 卡：AI 自评发现偏差，等人类拍板
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- ─── 底部 ─── -->
+  <footer class="footer">
+    <span>5 阶段 · 2 task 完成 · 1 task 进行中 · drift 0.62（task #3）</span>
+    <button class="backBtn" type="button">关闭</button>
+  </footer>
+
+</div>
+
+</body>
+</html>
