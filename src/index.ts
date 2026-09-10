@@ -72,7 +72,16 @@ import {
  *     `startWorkspaceFollow()` 订阅 `ctx.workspaceController.follow(signal)` 流驱动)
  *     详见 UPGRADE-MIGRATION-GUIDE.md §1
  */
-export const inject = ['webServer', 'workspaceController', 'storageDomain']
+/**
+ * 接入 0 前置探测：临时加 `'sessionController'` 用于一次性探测 host 端
+ * ctx.sessionController 就绪情况（DSH 框架是否已注册 SessionController host provider）。
+ * ⚠️ 与 client 端 `ctx.sessions` 不同——sessionController 是 host 半区 service，
+ *   static inject 含 agentDefaultModel/agents/llm/typert 等 9 个框架级服务，
+ *   就绪门槛更高。探测 effect 全程 try/catch，trap 不传播进主流程。
+ *   探测结论决定接入 0（ensureSession + agentPreset 注册）能否动手。
+ *   详见 docs/ai工作台接入dsh-agent-session-架构预览.md §3 节点1 + §5 接入0。
+ */
+export const inject = ['webServer', 'workspaceController', 'storageDomain', 'sessionController']
 
 /**
  * sky-axis 插件自身版本（写入 `.sky-axis/mate.yaml` 的 skyAxis.version 字段）。
@@ -117,6 +126,95 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   const pingSvc = new SkyAxisPingService()
   // eslint-disable-next-line no-console
   console.info('[sky-axis] host apply: pid=' + process.pid + ' ready (Phase 2.5 + safety-net)')
+
+  // 接入 0 前置探测：一次性探 ctx.sessionController 是否就绪（不进主流程）。
+  //   依据 docs/ai工作台接入dsh-agent-session-架构预览.md §3 节点1 + §5 接入0：
+  //   sessionController 是 host 半区 service，static inject 含 9 个框架级服务
+  //   (agentDefaultModel/agents/llm/typert/...)，就绪门槛比 client ctx.sessions 高。
+  //   全程 try/catch + 独立 effect，trap 不传播；只读探测（不调 create/prompt——
+  //   写操作会真起 session）。探测结论决定 ensureSession + agentPreset 能否动手。
+  ctx.effect(() => {
+    const tag = '[sky-axis:probe:sessionController]'
+    try {
+      const sc = (ctx as unknown as {
+        sessionController?: {
+          create?: (req?: unknown) => Promise<unknown>
+          list?: (req?: unknown) => Promise<unknown>
+        }
+      }).sessionController
+      if (sc === undefined) {
+        // eslint-disable-next-line no-console
+        console.info(tag, 'ctx.sessionController = undefined (DSH 框架未注册 host provider)')
+        return () => {}
+      }
+      // eslint-disable-next-line no-console
+      console.info(tag, 'ctx.sessionController 存在，keys =', Object.keys(sc))
+      // 只读探 list（冷读，不建 session）；create 是写操作，不在此探。
+      void (async () => {
+        try {
+          const res = await sc.list?.({})
+          // eslint-disable-next-line no-console
+          console.info(tag, 'sessionController.list() ok → host 端 session 就绪，接入 0 可动手。result =', res)
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.info(tag, 'sessionController.list() 失败（框架级服务未全就绪?）:', (e as Error).message)
+        }
+      })()
+    } catch (e) {
+      // 若抛 "cannot get property 'sessionController' without inject" → inject 未生效
+      // eslint-disable-next-line no-console
+      console.info(tag, 'ctx.sessionController 探测抛错（cordis trap? inject 未生效?）:', (e as Error).message)
+    }
+    return () => {}
+  }, 'sky-axis: probe sessionController (one-shot)')
+
+  // 接入 0 前置探测 #2：一次性探 ctx.agentPresets 是否可用（不进主流程）。
+  //   agent 调查结论：DSH 的 agentPreset 是文件系统驱动的（目录= preset，
+  //   agent.cordis.yml = 组合文件），注册中心是 ctx.agentPresets，但
+  //   sky-axis 既没显式依赖 dsh-agent-presets 包，也没 cordis composition
+  //   mount 它。本探测确认 DSH 宿主运行时是否已 mount 该 plugin。
+  //   - 用 ctx.get('agentPresets')（同 DSH 内部 composeAgent 的访问方式），
+  //     不走属性访问（避免不在 inject 数组时的 cordis Proxy trap）。
+  //   - 只读探 list()（列出 shipped preset）；不调 copy/remove（写操作）。
+  //   探测结论决定 sky-axis-collaborator preset 的注册路径：
+  //     - ctx.agentPresets = undefined → create 走 fallback（无自定义 preset）
+  //       → 接入 0 可先用 fallback 起步，preset 注册后续解决
+  //     - ctx.agentPresets 存在 → 看有无 sky-axis-collaborator，没有则走 copy('standard',...)
+  ctx.effect(() => {
+    const tag = '[sky-axis:probe:agentPresets]'
+    try {
+      // ctx.get() 不受 inject 数组约束（cordis root ctx 的 service registry 直查），
+      // 比 ctx.agentPresets 属性访问更安全。
+      const ap = (ctx as unknown as {
+        get?: (name: string) => unknown
+      }).get?.('agentPresets') as {
+        list?: () => Promise<unknown>
+        resolve?: (id?: string) => Promise<unknown>
+        defaultId?: string
+      } | undefined
+      if (ap === undefined) {
+        // eslint-disable-next-line no-console
+        console.info(tag, 'ctx.agentPresets = undefined (dsh-agent-presets 未 mount) → create 将走 fallback，接入 0 可先无 preset 起步')
+        return () => {}
+      }
+      // eslint-disable-next-line no-console
+      console.info(tag, 'ctx.agentPresets 存在，defaultId =', ap.defaultId, '，keys =', Object.keys(ap))
+      void (async () => {
+        try {
+          const res = await ap.list?.()
+          // eslint-disable-next-line no-console
+          console.info(tag, 'agentPresets.list() ok，可用 preset =', res)
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.info(tag, 'agentPresets.list() 失败:', (e as Error).message)
+        }
+      })()
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.info(tag, 'ctx.agentPresets 探测抛错:', (e as Error).message)
+    }
+    return () => {}
+  }, 'sky-axis: probe agentPresets (one-shot)')
 
   // 业务服务:Sprint 5 起不再依赖 storage domain,数据走 `<workspace>/.sky-axis/mate.yaml`
   //

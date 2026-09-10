@@ -166,9 +166,15 @@ function buildWorkspaceOps(_ctx: Context): WorkspaceOps {
  *                  完全交给 DSH 原生 sidebar UI,sdk 端不再触碰这两个 service,
  *                  也就不会被 host 半区缺 native backend / Typert bridge hang
  *                  / cordis trap 误伤。详见 buildWorkspaceOps 注释。
- * - 不 inject sessions —— 新仪表板不订阅会话数据。
+ * - Phase 2 前置探测:临时加 `'sessions'` 用于一次性探测 ctx.sessions 就绪情况
+ *   （dsh-api-gateway 是否已由当前部署的 DSH host 半区注册）。探测 effect
+ *   全程 try/catch,trap 错误不传播进主流程。探测结论出来后:
+ *     - gateway 未就绪 → 移除 'sessions' inject + 探测 effect,等 DSH 框架侧
+ *     - gateway 就绪 → 保留 'sessions',进第 1 步对接 steer/respond impl
+ *   详见 [[cordis-inject-guard]]:ctx.sessions 与 ctx.remote 同源(gateway),
+ *   之前 0.1.2-rc.1 实测 ctx.remote 未就绪。
  */
-export const inject = ['locale', 'slots', 'workspaces']
+export const inject = ['locale', 'slots', 'workspaces', 'sessions']
 
 /**
  * 挂载 sidebar entry + 主列 page + 装配 requirement 控制器。
@@ -355,6 +361,42 @@ export function apply(ctx: ClientContext): void {
     void controller.loadRequirements()
     return () => {}
   }, 'sky-axis: load requirements (initial)')
+
+  // 9. 一次性探测 ctx.sessions 就绪情况（Phase 2 前置调研，不进 UI 流程）。
+  //    依据 [[cordis-inject-guard]]：ctx.sessions 与 ctx.remote 同源（dsh-api-gateway），
+  //    0.1.2-rc.1 早期实测 ctx.remote 未就绪（host 半区未注册 gateway，访问被 cordis
+  //    Proxy trap 抛错）。本探测验证当前实际部署是否已修复。
+  //    全程 try/catch + 独立 effect，trap 错误不传播进主流程；只读探测（不调
+  //    create()/prompt()——写操作会真起 session，有副作用）。
+  //    探测结论决定后续：见 inject 数组注释。
+  ctx.effect(() => {
+    const tag = '[sky-axis:probe:sessions]'
+    try {
+      // 窄类型 cast 访问（同 effect 6 范式），不依赖 ISessions 完整类型导入，
+      // 避免探测代码与 session 契约类型层耦合。
+      const sessions = (ctx as unknown as {
+        sessions?: {
+          list?: { getSnapshot?: () => unknown }
+        }
+      }).sessions
+      if (sessions === undefined) {
+        console.info(tag, 'ctx.sessions = undefined (dsh-api-gateway 未挂载)')
+        return () => {}
+      }
+      console.info(tag, 'ctx.sessions 存在，keys =', Object.keys(sessions))
+      try {
+        const snap = sessions.list?.getSnapshot?.()
+        console.info(tag, 'sessions.list.getSnapshot() ok → gateway 就绪，可进第 1 步对接。snapshot =', snap)
+      } catch (e) {
+        // 若抛 "cannot get property 'remote' ..." → gateway 挂了 sessions 壳但 remote 未就绪
+        console.info(tag, 'sessions.list 访问失败（gateway 壳在但 remote 未就绪?）:', (e as Error).message)
+      }
+    } catch (e) {
+      // 若抛 "cannot get property 'sessions' without inject" → inject 声明没生效
+      console.info(tag, 'ctx.sessions 探测抛错（cordis trap? inject 未生效?）:', (e as Error).message)
+    }
+    return () => {}
+  }, 'sky-axis: probe sessions (one-shot)')
 }
 
 // 包表面：cordis 加载所需的 apply + 命名空间 key 类型
