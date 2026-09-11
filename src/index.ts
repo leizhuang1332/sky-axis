@@ -38,6 +38,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mountOnce } from './host/shared/mount-once.ts'
 import { SkyAxisPingService } from './host/ping-service.ts'
 import { RequirementHostService } from './host/requirement-service.ts'
+import { SkyAxisTools } from './host/sky-axis-tools/index.ts'
+import { ensureCollaboratorPreset } from './host/ensure-collaborator-preset.ts'
 import { makeRequirementRoutes } from './host/routes/requirements.ts'
 import { makeMaterialRoutes } from './host/routes/materials.ts'
 import { makeArtifactRoutes } from './host/routes/artifacts.ts'
@@ -84,6 +86,18 @@ import {
 export const inject = ['webServer', 'workspaceController', 'storageDomain', 'sessionController']
 
 /**
+ * 接入 2：sky-axis-collaborator preset 是否已就位（host apply 时确定，写入 module-level）。
+ * ensureSession 装配时读取此标志 —— true 用 'sky-axis-collaborator'，false 退回 'standard'。
+ * 类型：let（mutable module-level），仅 host apply 主流程写一次。
+ */
+let collaboratorPresetReady = false
+
+/** 接入 2：sky-axis-collaborator preset 就绪状态查询 helper（reqSvc.ensureSession 内部调用）。 */
+export function isCollaboratorPresetReady(): boolean {
+  return collaboratorPresetReady
+}
+
+/**
  * sky-axis 插件自身版本（写入 `.sky-axis/mate.yaml` 的 skyAxis.version 字段）。
  *
  * Sprint 2 决策：hardcode 同步 package.json 的 `version` 字段。后续若要做
@@ -123,6 +137,20 @@ function installSafetyNet(): void {
 
 export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
   installSafetyNet()
+  // 接入 2：注册 sky-axis-tools cordis plugin（advance_stage tool → ctx.tools）。
+  //   effect dispose 时 DSH 进程退出，cordis 自动 dispose plugin。
+  ctx.plugin(SkyAxisTools)
+
+  // 接入 2：一次性 effect 跑 ensureCollaboratorPreset —— 把 shipped standard 复制到
+  //   <dshHome>/.agent-presets/sky-axis-collaborator/ + 改写 persona 注入 5 阶段协议。
+  //   失败全部走 fallback（module-level collaboratorPresetReady 留 false），UI warn。
+  ctx.effect(async () => {
+    collaboratorPresetReady = await ensureCollaboratorPreset(ctx)
+    if (!collaboratorPresetReady) {
+      console.info('[sky-axis:preset] sky-axis-collaborator preset NOT ready, ensureSession will fallback to shipped standard')
+    }
+    return () => {}
+  }, 'sky-axis: ensure collaborator preset (one-shot)')
   const pingSvc = new SkyAxisPingService()
   // eslint-disable-next-line no-console
   console.info('[sky-axis] host apply: pid=' + process.pid + ' ready (Phase 2.5 + safety-net)')

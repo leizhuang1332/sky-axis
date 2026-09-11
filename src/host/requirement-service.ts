@@ -50,6 +50,8 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller'
  *   详见 docs/ai工作台接入dsh-agent-session-架构预览.md §2.1 + §3 节点1
  */
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
+import { COLLABORATOR_PRESET_ID } from './ensure-collaborator-preset.ts'
+import { isCollaboratorPresetReady } from '../index.ts'
 /**
  * 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2):
  *   - 原 `@deepseek-ai/dsh-host-apiproxy` 整体被删,`ApiProxy` 类型不再存在
@@ -76,6 +78,9 @@ import {
   RequirementEvent,
   RequirementId,
   SourceRepo,
+  Task,
+  TaskList,
+  TaskListSchema,
   UserId,
   WorkspaceId as SkyAxisWorkspaceId,
   SkyAxisErrorCode,
@@ -419,6 +424,9 @@ export class RequirementHostService {
   private readonly followControllers = new Map<RequirementId, AbortController>()
   /** 接入 1：onAiStateChange 去重防抖 —— 同状态不重复写盘。key = requirementId。 */
   private readonly lastAiState = new Map<RequirementId, string>()
+  // 接入 2：sync stage cache —— consumeSessionFollow 入口处从 mate.yaml 初始化，
+  //   applyAdvanceStage 推进后更新；bridge 用它做 plan JSON 提取阶段门控（同步访问）。
+  private readonly stageCache = new Map<RequirementId, Requirement['stage']>()
 
   constructor(
     private readonly ctx: import('@deepseek-ai/cordis').Context,
@@ -685,6 +693,275 @@ export class RequirementHostService {
     return () => { this.domainChangeListeners.delete(cb) }
   }
 
+  /* ── 接入 2：task 动作 / stage 推进 / plan artifact ── */
+
+  /**
+   * 接入 2：处理 task 动作（start/accept/redo/skip）。
+   *
+   * 4 种 action 语义：
+   *   - start：pending → in_progress；调 DSH prompt('queue', taskStartPrompt)
+   *   - accept：in_progress/verifying/failed → done；仅本地状态切换
+   *   - redo：failed/rolled_back → in_progress；调 DSH prompt('queue', taskRedoPrompt)
+   *   - skip：pending/in_progress/failed → skipped；仅本地状态切换
+   *
+   * start/redo 走 prompt 后会跟着 aiState=running（已启动），不需要再 ensureSession。
+   * accept/skip 不调 prompt，本地切换 + emitChange put 即返。
+   *
+   * 错误：requirement/task 不存在 → 'requirement-not-found'；action 非法 → 'validation-failed'。
+   */
+  async taskAction(
+    requirementId: RequirementId,
+    taskId: string,
+    action: 'start' | 'accept' | 'redo' | 'skip',
+  ): Promise<Requirement> {
+    const tag = '[sky-axis:ai] taskAction'
+    const current = await this.get(requirementId)
+    if (current === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${requirementId} not found`)
+    }
+    if (current.aiSessionId === null) {
+      throw new SkyAxisHostError(
+        'ai-session-missing',
+        `requirement ${requirementId} has no AI session; call /ai/start first`,
+      )
+    }
+
+    // 在 plan artifact 里找 task（接入 2 plan 提取后才会有；mock 阶段 plan 不存在 → 'task-not-found'）
+    const task = this.findTaskInPlan(current, taskId)
+    if (task === undefined) {
+      throw new SkyAxisHostError('task-not-found', `task ${taskId} not found in plan artifacts`)
+    }
+
+    const nextStatus = ((): Task['status'] | null => {
+      switch (action) {
+        case 'start':  return task.status === 'pending' || task.status === 'blocked' ? 'in_progress' : null
+        case 'accept': return task.status === 'in_progress' || task.status === 'verifying' || task.status === 'failed' ? 'done' : null
+        case 'redo':   return task.status === 'failed' || task.status === 'rolled_back' ? 'in_progress' : null
+        case 'skip':   return task.status === 'pending' || task.status === 'in_progress' || task.status === 'failed' || task.status === 'blocked' ? 'skipped' : null
+      }
+    })()
+    if (nextStatus === null) {
+      throw new SkyAxisHostError(
+        'validation-failed',
+        `task ${taskId} action '${action}' invalid from status '${task.status}'`,
+      )
+    }
+
+    // 本地状态切换（读-改-写，锁内原子）
+    const workspacePath = await this.resolveWorkspacePath(current.workspaceId)
+    const now = new Date().toISOString()
+    const { result: updated } = await updateRequirements(
+      workspacePath,
+      ({ current: sec }) => {
+        const prev = sec[requirementId]
+        if (prev === undefined) {
+          throw new SkyAxisHostError('requirement-not-found', `requirement ${requirementId} not found in mate.yaml`)
+        }
+        const prevTask = prev.artifacts['plan'] === undefined
+          ? undefined
+          : this.tryParseTaskList(prev.artifacts['plan']?.body ?? '')?.tasks.find(t => t.id === taskId)
+        if (prevTask === undefined) {
+          throw new SkyAxisHostError('task-not-found', `task ${taskId} disappeared`)
+        }
+        const subHistory = [
+          ...prevTask.subHistory,
+          {
+            status: prevTask.status,
+            enteredAt: prevTask.subHistory[prevTask.subHistory.length - 1]?.enteredAt ?? prevTask.enteredAt,
+            leftAt: now,
+          },
+          { status: nextStatus, enteredAt: now },
+        ]
+        const nextTask = { ...prevTask, status: nextStatus, subHistory }
+        const nextTasks = this.replaceTaskInPlan(prev, prevTask, nextTask)
+        return { next: { ...sec, [requirementId]: { ...prev, ...nextTasks, updatedAt: now } }, result: prev }
+      },
+      { now },
+    )
+    this.emitChange({ operation: 'put', item: updated })
+    void updated // 占位避免 lint
+
+    // start/redo 调 DSH prompt（queue 模式，不打断 running turn）
+    if (action === 'start' || action === 'redo') {
+      const promptText = action === 'start' ? this.buildTaskStartPrompt(task) : this.buildTaskRedoPrompt(task)
+      try {
+        await this.sessionController.prompt({
+        sessionId: current.aiSessionId as never,
+        mode: 'queue',
+        content: [{ type: 'text', text: promptText }],
+      } as never, new AbortController().signal)
+        console.info(tag, `${action} prompt sent for task ${taskId} (sessionId=${current.aiSessionId})`)
+      } catch (e) {
+        // prompt 失败不影响本地状态切换 —— SSE 已把 in_progress 状态推回 client；
+        // 用户重试 taskAction('start') 时 task 已 in_progress 会被 validation-failed 拒
+        // （这是故意的：避免重复 prompt 压垮 queue）。
+        console.warn(tag, `DSH prompt failed (task status already updated): ${(e as Error).message}`)
+      }
+    } else {
+      console.info(tag, `${action} status changed for task ${taskId} (no DSH prompt)`)
+    }
+    return updated
+  }
+
+  /**
+   * 接入 2：stage 推进回调 —— ai-event-bridge 监听到 tool/call 'advance_stage' 时调。
+   *
+   * 行为：
+   *   - 校验 toStage ∈ {'plan','implement','verify','deliver'}（'understand' 不可推）
+   *   - 写 stageHistory：收尾当前 stage entry（outcome='completed'）+ leftAt + reason
+   *     + 追加新 stage entry（enteredAt=now）
+   *   - emitChange put → SSE 回流
+   *
+   * 失败：req 不存在 → 静默 no-op（agent 在没有 mate.yaml 的 cwd 下跑不会报错）。
+   */
+  async applyAdvanceStage(
+    requirementId: RequirementId,
+    toStage: 'plan' | 'implement' | 'verify' | 'deliver',
+    reason: string,
+    activityAt: string,
+  ): Promise<void> {
+    const tag = '[sky-axis:ai] applyAdvanceStage'
+    const current = await this.get(requirementId)
+    if (current === undefined || current.aiSessionId === null) return
+
+    const workspacePath = await this.resolveWorkspacePath(current.workspaceId)
+    const now = activityAt
+    const { result: updated } = await updateRequirements(
+      workspacePath,
+      ({ current: sec }) => {
+        const prev = sec[requirementId]
+        if (prev === undefined) {
+          throw new SkyAxisHostError('requirement-not-found', `requirement ${requirementId} not found`)
+        }
+        // 当前 stage 已是 toStage → 幂等 no-op
+        if (prev.stage === toStage) return { next: sec, result: prev }
+
+        const lastIdx = prev.stageHistory.length - 1
+        const lastEntry = prev.stageHistory[lastIdx]
+        const closedHistory = prev.stageHistory.map((entry, i) => {
+          if (i !== lastIdx) return entry
+          if (entry.leftAt !== undefined) return entry // 已收尾（rewind/手动 closed）
+          return {
+            ...entry,
+            leftAt: now,
+            outcome: 'completed' as const,
+            reason: reason || entry.reason,
+          }
+        })
+        const nextHistory = [
+          ...closedHistory,
+          { stage: toStage, enteredAt: now },
+        ]
+        return {
+          next: { ...sec, [requirementId]: { ...prev, stage: toStage, stageHistory: nextHistory, updatedAt: now } },
+          result: prev,
+        }
+      },
+      { now },
+    )
+    this.emitChange({ operation: 'put', item: updated })
+    // 接入 2：更新 stage cache，让后续 follow 帧的阶段门控立刻生效
+    this.stageCache.set(requirementId, toStage)
+    console.info(tag, `${requirementId} advanced to ${toStage} (reason: ${reason || '(none)'})`)
+  }
+
+  /**
+   * 接入 2：plan artifact 写入回调 —— ai-event-bridge 解析 assistant/message JSON 后调。
+   *
+   * 行为：复用 writeArtifact(reqId, {kind:'plan', body: JSON.stringify(taskList)})。
+   * taskList 来自 TaskListSchema 校验通过的解析结果（bridge 已 zod check）。
+   * artifact meta 写 { isTaskList: true, taskCount } 方便 UI 区分 plan-as-tasks vs plan-as-markdown。
+   */
+  async applyPlanArtifact(
+    requirementId: RequirementId,
+    taskList: TaskList,
+    activityAt: string,
+  ): Promise<void> {
+    const tag = '[sky-axis:ai] applyPlanArtifact'
+    const artifact: Artifact = {
+      id: `plan-${Date.now().toString(36)}`,
+      kind: 'plan',
+      title: `Tasks (${taskList.tasks.length}) for ${requirementId.slice(-8)}`,
+      createdAt: activityAt,
+      body: JSON.stringify(taskList),
+      meta: { isTaskList: true, taskCount: taskList.tasks.length, producedAt: taskList.producedAt, producedAtStage: taskList.producedAtStage },
+    }
+    await this.writeArtifact(requirementId, artifact)
+    console.info(tag, `${requirementId} wrote plan artifact with ${taskList.tasks.length} tasks`)
+  }
+
+  /**
+   * 内部 helper：从 plan artifact body 解析 TaskList，找 task by id。
+   * plan 不存在 / 解析失败 → undefined。
+   */
+  private findTaskInPlan(req: Requirement, taskId: string): Task | undefined {
+    const planArtifact = req.artifacts['plan']
+    if (planArtifact === undefined) return undefined
+    const parsed = this.tryParseTaskList(planArtifact.body)
+    if (parsed === undefined) return undefined
+    return parsed.tasks.find(t => t.id === taskId)
+  }
+
+  /** 内部 helper：尝试把 plan artifact body 解析为 TaskList（zod 校验失败 → undefined）。 */
+  private tryParseTaskList(body: string): TaskList | undefined {
+    try {
+      const obj = JSON.parse(body)
+      const parsed = TaskListSchema.safeParse(obj)
+      if (!parsed.success) return undefined
+      return parsed.data
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 内部 helper：在 plan artifact KV 里替换单条 task（保 plan body 结构稳定）。 */
+  private replaceTaskInPlan(req: Requirement, oldTask: Task, newTask: Task): Partial<Requirement> {
+    const planArtifact = req.artifacts['plan']
+    if (planArtifact === undefined) return {}
+    const parsed = this.tryParseTaskList(planArtifact.body)
+    if (parsed === undefined) return {}
+    const nextTasks = parsed.tasks.map(t => (t.id === oldTask.id ? newTask : t))
+    const nextBody = JSON.stringify({ ...parsed, tasks: nextTasks })
+    return {
+      artifacts: {
+        ...req.artifacts,
+        plan: { ...planArtifact, body: nextBody },
+      },
+    }
+  }
+
+  /** 内部 helper：构造 task start prompt 文本（喂给 DSH prompt('queue', ...)）。 */
+  private buildTaskStartPrompt(task: Task): string {
+    return [
+      `## Task ${task.id} (${task.title})`,
+      '',
+      `**Goal**: ${task.goal}`,
+      '',
+      '**Acceptance**:',
+      ...task.acceptance.map(a => `- ${a}`),
+      task.filesExpected.length > 0 ? `\n**Files expected**: ${task.filesExpected.join(', ')}` : '',
+      task.dependencies.length > 0 ? `\n**Dependencies**: ${task.dependencies.join(', ')}` : '',
+      '',
+      '请按以上约束实现本 task，完成后调 advance_stage 推进 sky-axis 阶段。',
+    ].filter(Boolean).join('\n')
+  }
+
+  /** 内部 helper：构造 task redo prompt 文本。 */
+  private buildTaskRedoPrompt(task: Task): string {
+    return [
+      `## Redo task ${task.id} (${task.title})`,
+      '',
+      `本 task 之前尝试失败，需要重做。`,
+      '',
+      `**Goal**: ${task.goal}`,
+      '',
+      '**Acceptance**:',
+      ...task.acceptance.map(a => `- ${a}`),
+      '',
+      '请分析失败原因、修复并继续。完成后调 advance_stage 推进 sky-axis 阶段。',
+    ].filter(Boolean).join('\n')
+  }
+
   /**
    * 关闭 service(幂等)。释放 domain handle 触发 backend unit close;
    * DSH host 重启 / 插件卸载时调用。
@@ -736,24 +1013,43 @@ export class RequirementHostService {
 
     // 调 DSH create —— agentPreset 用 shipped 'standard'（接入 0 起步）
     //
-    // DSH session.create 是 workspaceId/cwd 互斥设计（见 commands.js:85-86 守卫）：
-    //   - 传 workspaceId → DSH 内部 workspaceRegistry 反查 path 作 cwd
-    //   - 传 cwd → 直接用，跳过 workspaceRegistry
-    //   - 两个都传 → 'gateway/bad-request: accepts workspaceId or cwd, not both'
-    // sky-axis 的 workspaceId 是自有 FK，与 DSH workspaceRegistry 未必同源；
-    // 已从 resolveWorkspacePath 拿到确定性 cwd，直接传 cwd 最可靠。
+    // DSH session.create 是 workspaceId/cwd 互斥设计（见 commands.js:85-86 守卫）。
+    //
+    // 接入 2.1 (P1)：sky-axis workspaceId 与 DSH workspaceRegistry 完全同源
+    //   —— sky-axis workspaceViewCache 来自 `workspaceController.follow(signal)`，
+    //   是 DSH workspaceRegistry 的同一份数据。resolveWorkspacePath() 已经验证 cache hit
+    //   并抛 workspace-not-found 兜底，所以可以直接传 workspaceId。
+    //
+    //   改用 workspaceId 而非 cwd 的好处（接入 2.1 关键）：
+    //     - host SessionCommandController.create 在拿到 workspaceId 后会自动
+    //       `workspace.attachSession(sessionId)`（commands.js:105-113），让 sessionId
+    //       进 DSH workspaceRegistry 的 `workspace.sessionIds` 列表。
+    //     - DSH native UI sidebar 通过 `workspace.sessionIds.includes(id)` 把 session
+    //       归到 workspace group 下渲染（client.js:370-378），sky-axis 创建的 session
+    //       才能像 DSH native 创建的一样出现在 sidebar workspace 分组里。
+    //     - 同时 client 端通过 typert gateway push 收到 `api-session/added` 事件
+    //       （commands.js 走 host listener emit），sessionId 自动进 client 端
+    //       `ctx.sessions.list.summaries`。
+    //   客户端再调 `ctx.sessions.open(sessionId)` 设 current，让 sidebar 的
+    //   `sessionVisible` 闸（`blank && id !== current`）放行（详见
+    //   docs/ai工作台接入dsh-agent-session-接入0-1执行计划.md §10）。
     //
     // 30s 超时兜底：create 内部会调到 ctx.agents.create → agentDefaultModel.currentSelection()，
-    // 如果宿主 agent 框架级服务（agents / agentDefaultModel / llm provider）未就绪，create
-    // 可能永远不 resolve，导致 route handler 永远走不到 res.end()，浏览器看到空白响应。
-    // 超时后抛 ai-not-configured，UI 能拿到明确 actionable 错误。
+    // 如果宿主 agent 框架级服务未就绪，create 可能永远不 resolve，超时后抛 ai-not-configured。
+    //
+    // 接入 2：agentPreset 动态选择。
+    //   - collaborator preset 已就位 → 'sky-axis-collaborator'（注入 5 阶段协议 + advance_stage tool）
+    //   - collaborator preset 不可用 → 退回 shipped 'standard'（agent 跑得动但不调 advance_stage）
     const CREATE_TIMEOUT_MS = 30_000
+    // 模块级状态 import —— 用 require-style 静态导入避免循环依赖（ensure-collaborator-preset 不依赖 service）
+    // 状态由 src/index.ts:140 的 apply effect 写入；这里只在 host 半区读（不会从 client 半区触发）
+    const agentPresetId = isCollaboratorPresetReady() ? COLLABORATOR_PRESET_ID : 'standard'
     let sessionId: string
     try {
-      console.info(`[sky-axis:ai] ensureSession: creating session for ${requirementId} (workspacePath=${workspacePath}, preset=standard)`)
+      console.info(`[sky-axis:ai] ensureSession: creating session for ${requirementId} (workspacePath=${workspacePath}, preset=${agentPresetId})`)
       const createPromise = this.sessionController.create({
-        cwd: workspacePath,
-        agentPreset: 'standard',
+        workspaceId: req.workspaceId as never,
+        agentPreset: agentPresetId,
       } as never) as Promise<{ sessionId: string }>
       const result = await Promise.race([
         createPromise,
@@ -763,7 +1059,7 @@ export class RequirementHostService {
         )),
       ])
       sessionId = result.sessionId
-      console.info(`[sky-axis:ai] ensureSession: session created, sessionId=${sessionId}`)
+      console.info(`[sky-axis:ai] ensureSession: session created, sessionId=${sessionId}, workspaceId=${req.workspaceId} (workspace attached → DSH sidebar will show)`)
     } catch (e) {
       // sessionController 未就绪 / preset 未注册 / 框架级服务缺失 / 超时 —— 统一包成
       // ai-not-configured（mapStatus 已映射 503，UI 给 actionable 提示）
@@ -798,7 +1094,85 @@ export class RequirementHostService {
     )
     this.emitChange({ operation: 'put', item: updated })
     console.info(`[sky-axis:ai] ensureSession: wrote back aiSessionId=${sessionId} aiState=running for ${requirementId} → SSE put emitted`)
+
+    // 接入 2.2：首次 prompt 注入 —— 让 agent 主动开始干活，把 session 的 blank 翻 false。
+    //
+    // 设计：发一段静态上下文 + 5 阶段协议提醒。mode='queue'（不打断 host 内部启动）
+    // + 同步等首 prompt ack（agent 入队后 host 立即返回）。
+    //
+    // 内容策略：先验证「agent 能基于上下文开始干活」的最小闭环；PRD 全文 + materials
+    // 摘要留到接入 3+ 增量加载。
+    //
+    // 失败兜底：prompt 失败不影响 aiSessionId/aiState 已写回的事实 —— agent 仍然 idle
+    // 等用户在 sidebar 那个 session 里手动打字。
+    try {
+      const promptText = this.buildInitialPrompt(updated, workspacePath)
+      // DSH SessionPromptRequest.requestId 是 required（commands.js:289 立刻用 request.requestId 填 source.rpcId）。
+      // sky-axis 自己 mint UUID —— DSH 内部对值格式无要求，只要求非空字符串。
+      const requestId = `sky-axis-${require('node:crypto').randomUUID()}`
+      await this.sessionController.prompt({
+        requestId: requestId as never,
+        sessionId: sessionId as never,
+        mode: 'queue',
+        content: [{ type: 'text', text: promptText }],
+      } as never, new AbortController().signal)
+      console.info(`[sky-axis:ai] ensureSession: initial prompt queued for ${requirementId} (${promptText.length} chars, requestId=${requestId})`)
+    } catch (e) {
+      // DSH 任何 prompt 错误都被 commands.js:317 包成 `session/agent-busy: prompt rejected`，
+      // 真实 reason 在 e.message 或 e.cause 里。打完整对象便于排查。
+      const errAny = e as { message?: string; cause?: unknown; data?: unknown }
+      console.warn(`[sky-axis:ai] ensureSession: initial prompt failed (session still alive, user can type in DSH sidebar)`)
+      console.warn(`[sky-axis:ai]   message: ${errAny.message ?? '(none)'}`)
+      console.warn(`[sky-axis:ai]   full error:`, e)
+      if (errAny.data !== undefined) console.warn(`[sky-axis:ai]   data:`, errAny.data)
+      if (errAny.cause !== undefined) console.warn(`[sky-axis:ai]   cause:`, errAny.cause)
+    }
+
     return updated
+  }
+
+  /**
+   * 接入 2.2：构造首次 prompt 文本 —— 静态上下文 + 5 阶段协议提醒。
+   *
+   * 内容：
+   *   - 当前 requirement 关键字段（id / title / description / priority / stage / tags）
+   *   - Workspace 路径 + PRD 文件路径（agent 可读）
+   *   - 当前 stageHistory（让 agent 知道之前有没有 rewind）
+   *   - 5 阶段协议提示（提醒调 advance_stage tool）
+   *
+   * @param req  - 已写回 aiSessionId 的 requirement
+   * @param workspacePath - DSH workspace path（已 resolve）
+   */
+  private buildInitialPrompt(req: Requirement, workspacePath: string): string {
+    const prdFiles = req.materials.prdFiles.map(f => f.path).join(', ') || '(无)'
+    const tags = req.tags.length > 0 ? req.tags.join(', ') : '(无)'
+    const history = req.stageHistory
+      .map(h => `  - ${h.stage}${h.leftAt !== undefined ? ` → leftAt=${h.leftAt}` : ' (current)'} (enteredAt=${h.enteredAt})`)
+      .join('\n')
+    return `你是 sky-axis 协作 agent。需求 ID: ${req.id}
+
+## 需求快照
+- 标题: ${req.title}
+- 描述: ${req.description.length > 0 ? req.description : '(空)'}
+- 优先级: ${req.priority}
+- 当前 stage: ${req.stage}
+- 标签: ${tags}
+
+## Workspace 上下文
+- Workspace 路径: ${workspacePath}
+- PRD 文件: ${prdFiles}
+
+## Stage history
+${history}
+
+## 行动指引
+请按 5 阶段协议（understand → plan → implement → verify → deliver）推进本需求：
+1. 先读 PRD + 现有代码（understand 阶段）
+2. 产出 tasks.json（plan 阶段，**严格 JSON，无 markdown fence**）
+3. 每个阶段产出符合 stage contract 时立即调 advance_stage(toStage) tool
+4. 任意阶段遇到阻塞可调 ask_user_question 申请用户介入
+
+session 已绑定到本需求，follow 流已启动，sky-axis UI 实时显示 aiState / stage / task list。开始工作。`
   }
 
   /**
@@ -845,6 +1219,8 @@ export class RequirementHostService {
       try {
         const req = await this.get(requirementId)
         if (req === undefined || req.aiSessionId === null) return
+        // 接入 2：初始化 stage cache（同步访问用）
+        this.stageCache.set(requirementId, req.stage)
         const sessionId = req.aiSessionId
         await consumeFollowStream({
           sessionController: this.sessionController,
@@ -853,6 +1229,18 @@ export class RequirementHostService {
           onAiStateChange: async (state, activityAt) => {
             await this.applyAiStateChange(requirementId, state, activityAt)
           },
+          // 接入 2：tool/call 'advance_stage' → 推进 stageHistory
+          onAdvanceStage: async (toStage, reason, activityAt) => {
+            await this.applyAdvanceStage(requirementId, toStage, reason, activityAt)
+          },
+          // 接入 2：assistant/message plan JSON → 写 Artifact(kind='plan')
+          onPlanArtifact: async (taskList, activityAt) => {
+            await this.applyPlanArtifact(requirementId, taskList as unknown as TaskList, activityAt)
+          },
+          // 接入 2：plan 提取阶段门控（仅 understand/plan 阶段触发）。
+          //   同步：从 stageCache 取 —— consumeSessionFollow 入口处先 await get()
+          //   初始化 cache，bridge 整个 for-await 周期内保持一致。
+          currentStage: () => this.stageCache.get(requirementId) ?? 'understand',
         })
         // follow 正常结束（generator return）→ 兜底置 idle
         await this.applyAiStateChange(requirementId, 'idle', new Date().toISOString())

@@ -41,6 +41,7 @@ import type {
   RequirementStage,
   RequirementTask,
 } from '../../controller/sky-axis-controller.ts'
+import { TaskListSchema } from '../../../protocol.ts'
 import type {
   SkyAxisController,
   RewindRequest,
@@ -328,12 +329,25 @@ export function RequirementDetailPage({
     { stage: 'deliver',    Icon: PauseIcon,    label: t('requirement.detail.stage.deliver.label'),    desc: t('requirement.detail.stage.deliver.desc') },
   ]), [t])
 
+  // 接入 2：plan artifact 优先 —— 从 requirement.artifacts 找 kind='plan' 的项，parse body；
+  //   parse 失败或没有 plan → fallback 到 mock（接入 3+ 真实落地后删除 fallback）。
+  const planArtifactTaskList = useMemo(() => {
+    const planArtifact = Object.values(requirement.artifacts ?? {}).find(a => a.kind === 'plan')
+    if (planArtifact === undefined) return null
+    try {
+      const parsed = TaskListSchema.safeParse(JSON.parse(planArtifact.body))
+      return parsed.success ? parsed.data : null
+    } catch {
+      return null
+    }
+  }, [requirement.artifacts])
   // Phase 1.0 mock：当前 stage 的 task list（驱动中列上下分 30/70 的 task list 区）。
-  // Phase 3 接 artifact 系统后改为 controller 投影。固定传同一份 mock 以保证 demo 稳定。
+  //   接入 2：plan artifact 存在时用真实 task list，否则 fallback 到 mock（demo 不空白）。
   const mockTaskList = useMemo(() => {
     void allMockTaskLists // 防止 lint 误报「导入但未使用」
+    if (planArtifactTaskList !== null) return planArtifactTaskList
     return pickMockTaskList(requirement.stage ?? 'understand')
-  }, [requirement.stage])
+  }, [planArtifactTaskList, requirement.stage])
 
   // Stepper stageMeta：每个 stage 节点下挂 taskProgress + rewind dots。
   // Phase 1 没有真实数据，演示时从 mock 数据汇总；空 stage（verify/deliver）跳过即可（Stepper 行为）。

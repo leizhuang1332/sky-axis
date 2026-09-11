@@ -271,19 +271,118 @@ export function apply(ctx: ClientContext): void {
         return { ok: false as const, error: { code: r.code, detail: r.detail } }
       }))
     },
+    // 接入 2：task 动作（start/accept/redo/skip）。
+    //   与物料 CRUD 不同：返回 Promise<Result<Requirement>>（不走 UploadHandle，无 abort 需求）。
+    //   wrapPromise 把 Result 适配成 controller 的 {ok, item?, error?} 形态。
+    taskActionImpl: ({ requirementId, taskId, action }) => {
+      const promise = reqClient.taskAction(requirementId as never, taskId, action).then(r => {
+        if (r.ok) return { ok: true as const, item: { ...r.value } }
+        return { ok: false as const, error: { code: r.code, detail: r.detail } }
+      })
+      return wrapPromise(promise)
+    },
     // 接入 0-1：AI session 启动。
     //   reqClient.startAi 返回 Result<Requirement>（host 返回的 item 已含
     //   aiSessionId/aiState='running'）；spread 成 controller 的 item 形态。
     //   不返回 UploadHandle（非物料操作，无需 abort）；follow 流由 host 端
     //   startFollow 异步驱动，经 SSE put 回流驱动 aiState 切换。
+    //
+    // 接入 2.1：startAi 成功后，client 端必须调 ctx.sessions.open(aiSessionId)
+    //   让 DSH native UI sidebar 看到这个 session。
+    //
+    //   原因（基于 DSH 源码调研）：
+    //     - host 端 sessionController.create 已经走 workspace.attachSession 把 sessionId
+    //       进 workspace.sessionIds，且 typert gateway 通过 api-session/added push
+    //       让 client 端 ctx.sessions.list.summaries 出现这个 session。
+    //     - 但 sidebar 的 sessionVisible 闸（client-ui-workspace/lib/client.js:314-316）
+    //       要求 `!session.blank || session.id === current`：sky-axis 创建的 session
+    //       blank=true（没发首条 prompt）+ 没调 open → 被闸挡掉。
+    //     - 调 ctx.sessions.open(sessionId) 设 current，让 sessionVisible 放行。
+    //     - 与 DSH native UI 自己 startSession 的 connectWorkspace → sessions.open 模式一致。
+    //
+    //   竞态保护：api-session/added push 异步到达 client，ctx.sessions.open 内部
+    //   manager.select 会抛 `unknown session ${id}`（manager.js:88）当 summaries
+    //   还没命中。监听 ctx.sessions.list 等待 byId[sessionId] 出现再 open。
     startAiImpl: async (requirementId) => {
       const r = await reqClient.startAi(requirementId as never)
-      if (r.ok) return { ok: true, item: { ...r.value } }
+      if (r.ok) {
+        const aiSessionId = r.value.aiSessionId
+        // 让 DSH native UI sidebar 看到这个 session
+        if (aiSessionId !== null && aiSessionId !== undefined) {
+          openSkyAxisSessionInSidebar(aiSessionId)
+        }
+        return { ok: true, item: { ...r.value } }
+      }
       return { ok: false, error: { code: r.code, detail: r.detail } }
     },
   })
 
-  // 4. Sidebar 主树 entry —— DOM 直挂。
+  // 接入 2.1：把 sky-axis 创建的 session 让 DSH native UI sidebar 看到。
+//
+// 作用：ctx.sessions.open(sessionId) 设 current 让 sidebar 的 sessionVisible 闸放行。
+// 详见 startAiImpl 注释 + docs/ai工作台接入dsh-agent-session-接入0-1执行计划.md §10。
+//
+// 竞态保护：api-session/added push 异步到达 client，open 内部 manager.select 会抛
+// `unknown session`。监听 ctx.sessions.list 等待 byId[sessionId] 出现再 open。
+// 5s timeout 兜底，避免 push 丢失时挂起。
+//
+// 半区约束：ctx.sessions 只在 client ctx（host ctx 拿不到），所以这个 helper 必须
+// 在 client 半区调用（host 半区调不进）。sky-axis host 半区已经走 workspaceId 路径，
+// 让 host `workspace.attachSession(sessionId)` 把 sessionId 进 workspace.sessionIds。
+function openSkyAxisSessionInSidebar(aiSessionId: string): void {
+  const sessions = (ctx as unknown as {
+    sessions?: {
+      readonly list: {
+        getSnapshot(): { byId: Readonly<Record<string, unknown>>; current?: string }
+        subscribe(listener: () => void): () => void
+      }
+      open(id: string): void
+    }
+  }).sessions
+
+  if (sessions === undefined) {
+    console.warn('[sky-axis:client] ctx.sessions unavailable, sidebar not synced')
+    return
+  }
+
+  const tryOpen = (): boolean => {
+    const snap = sessions.list.getSnapshot()
+    if (snap.byId[aiSessionId] !== undefined) {
+      try {
+        sessions.open(aiSessionId)
+        console.info(`[sky-axis:client] opened session ${aiSessionId} in DSH sidebar`)
+        return true
+      } catch (e) {
+        console.warn(`[sky-axis:client] ctx.sessions.open(${aiSessionId}) failed:`, (e as Error).message)
+        return true // 已尝试，不重试
+      }
+    }
+    return false
+  }
+
+  // 同步路径：summaries 已经 ready（host create 后 push 已到）
+  if (tryOpen()) return
+
+  // 异步路径：监听 summaries 出现
+  let unsub: (() => void) | null = null
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  unsub = sessions.list.subscribe(() => {
+    if (tryOpen() && unsub !== null) {
+      unsub()
+      unsub = null
+      if (timeoutId !== null) clearTimeout(timeoutId)
+    }
+  })
+  timeoutId = setTimeout(() => {
+    if (unsub !== null) {
+      unsub()
+      unsub = null
+      console.warn(`[sky-axis:client] open session ${aiSessionId} timed out after 5s (api-session/added push may have dropped)`)
+    }
+  }, 5_000)
+}
+
+// 4. Sidebar 主树 entry —— DOM 直挂。
   try {
     mountSidebarEntry(controller)
   } catch (error) {

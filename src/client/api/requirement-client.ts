@@ -24,6 +24,7 @@ import {
   RequirementsListResponseSchema,
   RequirementResponseSchema,
   RemoveMaterialResponseSchema,
+  TaskActionRequestSchema,
   WorkspacesListResponseSchema,
   type AddDesignLinkRequest,
   type AddExternalLinkRequest,
@@ -436,6 +437,41 @@ export class RequirementClient {
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
+    })
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.item }
+  }
+
+  /* ── 接入 2：task 动作 ── */
+
+  /**
+   * task 动作（POST /ai/task/action，body = TaskActionRequest）。
+   *
+   * host 端 taskAction：start/redo 调 DSH prompt('queue', taskPrompt)；accept/skip 仅本地状态切换。
+   * 失败语义：
+   *   - taskId 不在 plan artifact → 'task-not-found'（404）
+   *   - action 与 task.status 不兼容 → 'validation-failed'（400）
+   *   - requirement 不存在 → 'requirement-not-found'（404）
+   *   - requirement 没有 AI session → 'ai-session-missing'（409）
+   *
+   * 返回 item 含更新后的 plan artifact body（task.status 已切换）。
+   */
+  async taskAction(
+    requirementId: RequirementId,
+    taskId: string,
+    action: 'start' | 'accept' | 'redo' | 'skip',
+  ): Promise<Result<Requirement>> {
+    // 客户端预校验（host 也兜底）
+    const check = TaskActionRequestSchema.safeParse({ requirementId, taskId, action })
+    if (!check.success) {
+      return { ok: false, code: 'validation-failed', detail: `input invalid: ${JSON.stringify(check.error.issues).slice(0, 300)}` }
+    }
+    const res = await fetch(`${this.baseUrl}/ai/task/action`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(check.data),
     })
     const parsed = await parseJson(res, RequirementResponseSchema)
     if (!parsed.ok) return parsed

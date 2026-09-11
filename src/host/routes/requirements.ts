@@ -22,6 +22,7 @@ import {
   NewRequirementSchema,
   ImportRequirementSchema,
   RequirementIdSchema,
+  TaskActionRequestSchema,
   type ApiError,
   type SkyAxisErrorCode,
   type Requirement,
@@ -80,6 +81,7 @@ export function mapStatus(code: SkyAxisErrorCode): number {
     case 'ai-event-failed':         return 502
     case 'ai-not-configured':       return 503
     case 'ai-session-missing':      return 409
+    case 'task-not-found':          return 404
     case 'invalid-record':          return 500
     case 'internal-error':          return 500
     case 'network-error':           return 502
@@ -366,6 +368,29 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
           // 2. startFollow：启动 per-requirement follow 流（幂等），follow 帧翻译成
           //    aiState 变化经 emitChange put 回流。重启恢复由 index.ts bootstrap 负责。
           service.startFollow(requirementId)
+          jsonResponse(res, 200, { ok: true, item })
+        } catch (error) {
+          translateError(res, error)
+        }
+      },
+    },
+
+    /* ── POST /ai/task/action（接入 2：task 动作）──
+     * body = TaskActionRequest { requirementId, taskId, action }。
+     * host 端 taskAction：start/redo 调 DSH prompt('queue', taskPrompt)；accept/skip 仅本地状态切换。
+     * 错误：taskId 不在 plan artifact → 'task-not-found'（404）；action 与当前 task.status 不兼容 → 'validation-failed'（400）。 */
+    {
+      kind: 'exact',
+      path: SkyAxisEndpoints.aiTaskAction,
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
+          return
+        }
+        try {
+          const raw = await readJsonBody(req)
+          const input = zodParseOrThrow(TaskActionRequestSchema, raw)
+          const item = await service.taskAction(input.requirementId, input.taskId, input.action)
           jsonResponse(res, 200, { ok: true, item })
         } catch (error) {
           translateError(res, error)

@@ -57,6 +57,11 @@ export const SkyAxisEndpoints = {
   /* ── AI session（接入 0-1）── */
   /** 启动 AI session（POST ?requirementId=xxx；body = AiStartRequest，可选 initialPrompt）。 */
   aiStart: `${SKY_AXIS_API_PREFIX}/ai/start`,
+
+  /* ── AI session（接入 2：任务动作 + 阶段推进）── */
+  /** task 动作（start/accept/redo/skip）；POST，body = TaskActionRequest。
+   *  host 端 start/redo 调 DSH prompt('queue', taskPrompt)；accept/skip 仅本地状态切换。 */
+  aiTaskAction: `${SKY_AXIS_API_PREFIX}/ai/task/action`,
 } as const
 
 /* ── 共享子 schema ── */
@@ -802,6 +807,27 @@ export const AiStartRequestSchema = z.object({
 })
 export type AiStartRequest = z.infer<typeof AiStartRequestSchema>
 
+/* ── 接入 2：task 动作请求 ── */
+
+/**
+ * task 动作请求（POST /ai/task/action，body）。
+ *
+ * 4 种 action 语义：
+ *   - start：pending → in_progress；host 调 DSH prompt('queue', taskPrompt)
+ *   - accept：in_progress/verifying/failed → done；仅本地状态切换（手动接受）
+ *   - redo：failed/rolled_back → in_progress；host 调 DSH prompt('queue', redoPrompt)
+ *   - skip：pending/in_progress/failed → skipped；仅本地状态切换
+ *
+ * controller 层乐观更新已带 dedup（runTaskMutation 内部 transition dedup）；
+ * host 端在 updateRequirements mutator 内部用 read-modify-write 锁原子切换状态。
+ */
+export const TaskActionRequestSchema = z.object({
+  requirementId: RequirementIdSchema,
+  taskId: z.string().min(1).max(64),
+  action: z.enum(['start', 'accept', 'redo', 'skip']),
+})
+export type TaskActionRequest = z.infer<typeof TaskActionRequestSchema>
+
 /* ── 入参：新建需求 ── */
 
 /**
@@ -1035,6 +1061,9 @@ export const SKY_AXIS_ERROR_CODES = [
   'ai-event-failed',
   'artifact-not-found',
   'stage-invalid',
+  // ── 接入 2 新增：task 动作相关 ──
+  /** taskId 不在 requirement 的 plan artifact 里（可能 plan 还没产出 / taskId 拼错）。 */
+  'task-not-found',
   // ── Phase 2.5 新增 ──
   /** material CRUD：itemId 不在指定 section 内（可能已被删除）。 */
   'material-not-found',

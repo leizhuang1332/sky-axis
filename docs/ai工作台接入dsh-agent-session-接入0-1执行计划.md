@@ -262,6 +262,189 @@ DSH `create` 内部会调 `ctx.agents.create → agentDefaultModel.currentSelect
 
 ---
 
+## 9. 接入 2 设计稿（最小可见推进闭环）
+
+> 状态：调研完成，待拍板 + 实施。三个核心决策用户已对齐：
+> 1. **preset 创作**：host apply 时自动 `agentPresets.copy('standard', 'sky-axis-collaborator')`，copy 失败走 fallback 到 shipped 'standard'。
+> 2. **stage 推进**：tool 显式推进——agent 调 `advance_stage(toStage)` tool，bridge 识别 `tool/call` 事件提取参数。
+> 3. **artifact 提取**：接入 2 只提 plan（understand→plan 阶段 assistant/message 输出 JSON tasks 写为 Artifact(kind='plan')）；patch/note/log/report 延后到接入 3+。
+
+### 9.1 核心机制（依据 + 设计）
+
+#### A. sky-axis-collaborator preset 落盘
+
+**copy API**（[`dsh-agent-presets/lib/types/index.d.ts:282`](../../node_modules/.pnpm/@deepseek-ai+dsh-agent-pres_8201c18de8a894481815a04557712e7b/node_modules/@deepseek-ai/dsh-agent-presets/lib/types/index.d.ts#L282)）：
+
+```typescript
+copy(from: string, id: string, name?: string): Promise<void>
+// 写到 <dshHome>/.agent-presets/<id>/ 目录（[discovery.d.ts:38](../../node_modules/.pnpm/@deepseek-ai+dsh-agent-pres_8201c18de8a894481815a04557712e7b/node_modules/@deepseek-ai/dsh-agent-presets/lib/types/discovery.d.ts#L38) USER_PRESET_DIR = '.agent-presets'）
+```
+
+**关键约束**（[authoring.d.ts:10-12](../../node_modules/.pnpm/@deepseek-ai+dsh-agent-pres_8201c18de8a894481815a04557712e7b/node_modules/@deepseek-ai/dsh-agent-presets/lib/types/authoring.d.ts#L10-L12)）：*copy 不允许 caller 注入 composition text*——只能复制源 preset 的整个目录，sky-axis 必须在 copy 完成后**自己编辑落盘的 `agent.cordis.yml`**（覆写 persona text 注入 5 阶段协议 + `advance_stage` tool 说明）。
+
+**幂等 + fallback 流程**：
+
+```
+1. resolve('sky-axis-collaborator') 成功 → skip copy（已存在）
+2. copy('standard', 'sky-axis-collaborator') 成功 → 改写 agent.cordis.yml 注入 5 阶段协议
+3. copy 失败（路径不可写 / 已占用） → console.warn + fallback 到 shipped 'standard'
+   ensureSession 仍传 agentPreset='sky-axis-collaborator'（resolve 会失败）→ ai-not-configured
+4. ensureSession fallback：临时改用 agentPreset='standard' 让 session 起得来，
+   UI 显式提示「5 阶段协议未注入，agent 不会主动调 advance_stage」
+```
+
+#### B. advance_stage tool 注册
+
+**tool 协议**（[`dsh-tools/lib/types/index.d.ts:106-119`](../../node_modules/.pnpm/@deepseek-ai+dsh-tools@0.1._39d2674c82de6d29148a728ff0282af8/node_modules/@deepseek-ai/dsh-tools/lib/types/index.d.ts#L106-L119)）：
+
+```typescript
+export interface ToolDefinition extends ToolSchema {
+  name: string; description: string; parameters: Record<string, unknown>; // JSON Schema
+  output: ToolOutputDefinition;
+  execute(args: unknown, exec: ToolRunContext): Promise<unknown>;
+}
+// 通过 ctx.tools.register(definition) 注册到 ToolRuntime
+```
+
+**注册路径**（最小风险方案）：sky-axis 把 `advanceStageTool` 通过 `cordis.patch.yml` 注入到 host composition，工具对**所有 session 全局可见**——但只有 sky-axis-collaborator preset 的 system prompt 提到它，standard preset 跑出来的 agent 不会主动调（靠 system prompt 约束）。
+
+**新建文件** `src/host/sky-axis-tools/advance-stage.ts`：
+
+```typescript
+import { defineTool } from '@deepseek-ai/dsh-tools'
+export const advanceStageTool = defineTool({
+  name: 'advance_stage',
+  description: '把当前需求推到下一阶段.toStage 必须是 plan/implement/verify/deliver 之一',
+  parameters: {
+    type: 'object',
+    properties: {
+      toStage: { type: 'string', enum: ['plan', 'implement', 'verify', 'deliver'] },
+      reason:  { type: 'string' },
+    },
+    required: ['toStage'],
+  },
+  output: { schema: { type: 'object' }, render: (_a, val) => [{ type: 'text', text: `stage=${(val as { stage: string }).stage}` }] },
+  execute: async (args) => ({ stage: (args as { toStage: string }).toStage }),
+})
+// cordis plugin entry: ctx.tools.register(advanceStageTool)
+```
+
+**tool 调用识别**（[`dsh-session/lib/types/types.d.ts:303-309`](../../node_modules/.pnpm/@deepseek-ai+dsh-session@0._ee5063a80d448ae764858c08e7528ed1/node_modules/@deepseek-ai/dsh-session/lib/types/types.d.ts#L303-L309)）：
+
+```typescript
+'tool/call': { turn, step, callId, name: string, arguments: string /* JSON */ };
+```
+
+bridge 在 `tool/call` case 解析 `arguments` 提取 `toStage` → 调 `reqSvc.applyAdvanceStage(reqId, toStage, reason, now)`。
+
+#### C. taskAction → DSH.prompt 映射
+
+**prompt API**（[`dsh-api-session-controller/lib/types/types.d.ts:284-296`](../../node_modules/.pnpm/@deepseek-ai+dsh-api-sessio_d4d423faa7d34f889f15e29291267e23/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts#L284-L296)）：
+
+```typescript
+SessionPromptRequest {
+  requestId, sessionId,
+  mode: 'queue' | 'steer',  // 接入 2 用 'queue'（不打断 running turn）
+  content: readonly PromptContentPart[]  // 接入 2 用 [{type:'text', text:'...'}]
+}
+```
+
+**4 个 action 实现差异**：
+
+| action | 是否调 DSH prompt | prompt 模板 | 是否写 stageHistory |
+|---|---|---|---|
+| **start** | ✅ | `task ${taskId} (${title}) 目标 ${goal}; 验收 ${acceptance.join('\n')};完成后请调 advance_stage` | 否（stage 由 advance_stage 推进） |
+| **redo** | ✅ | `task ${taskId} 之前失败需重做;目标 ${goal};请修复并继续` | 否 |
+| **accept** | ❌（仅本地状态切换） | —— | 否 |
+| **skip** | ❌（仅本地状态切换） | —— | 否 |
+
+**新 route**：`POST /api/sky-axis/ai/task/action`，body = `{requirementId, taskId, action}`。
+
+#### D. plan artifact 提取
+
+**assistant/message 事件**（[`dsh-session/lib/types/types.d.ts:281-297`](../../node_modules/.pnpm/@deepseek-ai+dsh-session@0._ee5063a80d448ae764858c08e7528ed1/node_modules/@deepseek-ai/dsh-session/lib/types/types.d.ts#L281-L297)）：
+
+```typescript
+'assistant/message': { turn, step, message: AssistantMessage, usage?, interrupted? }
+// AssistantMessage.content: ContentBlock[] = TextBlock | ReasoningBlock | ToolCallBlock | ...
+```
+
+**识别策略**（用户已拍板）：
+
+1. **阶段门控**：只处理 `currentStage ∈ {'plan', 'understand'}` 期间的 assistant/message（其他阶段暂不处理）
+2. **JSON 抽取**：system prompt 强制要求 agent 输出严格 JSON（不含 markdown fence），直接 `JSON.parse(message.content.text)`
+3. **zod 校验**：必须能通过 `TaskListSchema.parse`（[protocol.ts:754-769](../src/protocol.ts#L754-L769)）；失败 → 忽略，不报错
+4. **幂等**：同 stage 内多次成功 → 取最后一次（last-write-wins）
+
+**写回路径**：ai-event-bridge 通过 `onPlanArtifact` callback 调 `reqSvc.writeArtifact(reqId, artifact)`（接口已存在，[requirement-service.ts:1570](../src/host/requirement-service.ts#L1570)）。artifact schema 见 [protocol.ts:645-654](../src/protocol.ts#L645-L654)。
+
+```typescript
+// bridge → reqSvc callback
+const artifact: Artifact = {
+  id: `plan-${Date.now().toString(36)}`,
+  kind: 'plan',
+  title: `Tasks for ${reqId}`,
+  createdAt: now,
+  body: JSON.stringify(taskList),  // TaskList 序列化为 JSON
+  meta: { isTaskList: true, taskCount: taskList.tasks.length },
+}
+await reqSvc.writeArtifact(reqId, artifact)
+```
+
+#### E. mock task list 替换边界
+
+**mock 引用点**（3 处，2 处保留 + 1 处替换）：
+
+| 位置 | 用途 | 接入 2 处理 |
+|---|---|---|
+| `RequirementDetailPage.tsx:268` | Stepper meta（导航条描述） | **保留 mock**（不需要真实数据） |
+| `RequirementDetailPage.tsx:343` | Stepper summary 计算 | **保留 mock** |
+| `RequirementDetailPage.tsx:333-336` | StageWorkspacePane 数据源 | **替换**：从 `requirement.artifacts[?].kind==='plan'` parse → null fallback to mock |
+
+**StageWorkspacePane 是受控组件**（接 `taskList?: RequirementTaskList \| null` prop），改 RequirementDetailPage 传值即可，**不动 StageWorkspacePane**。
+
+### 9.2 改动清单（按依赖顺序）
+
+| # | 文件 | 性质 | 内容 |
+|---|---|---|---|
+| 1 | `cordis.patch.yml` | 修改 | 把 `src/host/sky-axis-tools` plugin 加入 host composition |
+| 2 | `src/host/sky-axis-tools/index.ts` | 新建 | 导出 `apply(ctx)` cordis plugin entry |
+| 3 | `src/host/sky-axis-tools/advance-stage.ts` | 新建 | `defineTool({name:'advance_stage', ...})` |
+| 4 | `src/host/ensure-collaborator-preset.ts` | 新建 | `ensureCollaboratorPreset(ctx)`：`copy('standard','sky-axis-collaborator')` + rewrite agent.cordis.yml + 失败 fallback |
+| 5 | `src/index.ts` | 修改 | inject 数组 + 加 effect 调 `ensureCollaboratorPreset(ctx)` + bootstrap ensureSession 失败时 fallback 到 'standard' |
+| 6 | `src/protocol.ts` | 修改 | 加 `SkyAxisEndpoints.aiTaskAction` + `TaskActionRequestSchema` |
+| 7 | `src/host/requirement-service.ts` | 新增 | `taskAction(reqId, taskId, action)` 方法（start/redo 调 prompt，accept/skip 仅本地状态切换）+ `applyAdvanceStage(reqId, toStage, reason, now)` 方法（写 stageHistory entry + emitChange put）+ `applyPlanArtifact(reqId, taskList, now)` 方法（调 writeArtifact） |
+| 8 | `src/host/routes/requirements.ts` | 新增 | POST `/ai/task/action` route |
+| 9 | `src/host/ai-event-bridge.ts` | 修改 | `tool/call` case 拆出 `advance_stage` 识别 + `assistant/message` case 加 plan JSON 提取 + `ConsumeFollowStreamArgs` 加 `onAdvanceStage`/`onPlanArtifact`/`currentStage` 字段 |
+| 10 | `src/client/api/requirement-client.ts` | 新增 | `taskAction(reqId, taskId, action)` fetch |
+| 11 | `src/client/index.ts` | 修改 | 注入 `taskActionImpl`（调 `reqClient.taskAction`） |
+| 12 | `src/client/page/views/RequirementDetailPage.tsx` | 修改 | `mockTaskList` 计算：plan artifact → null fallback to mock |
+
+### 9.3 实施风险
+
+| 风险 | 缓解 |
+|---|---|
+| preset copy 路径不可写 → fallback 到 standard preset → agent 不知道 advance_stage | UI 显式 warn banner；stageHistory 不增长但 task action 仍可用 |
+| agent 不调 advance_stage（LLM 跑偏） | system prompt 强约束；接入 3+ 引入 auto-advance timeout |
+| plan JSON 解析失败（LLM 输出非严格 JSON） | system prompt 强制 JSON-only；解析失败保留 mock fallback |
+| tool execute 抛错 → agent 重试死循环 | tool body 包 try/catch，execute 必须 total |
+| 多人同时 startTask（racing） | controller `appendTaskTransition` 已带 dedup；DSH queue 自动 dedup by requestId |
+| host apply 时 copy + fallback 都失败 | 健康检查 route（`/health`）+ UI 启动 warn banner |
+
+### 9.4 验证
+
+1. **静态**：`pnpm run typecheck` 零错误 + `pnpm run build` 产物更新 + `pnpm run test` 6 失败维持基线（Windows 权限环境问题，无新增回归）
+2. **端到端**：
+   - 启动 DSH 宿主 → 控制台看到 `[sky-axis:preset] collaborator preset registered at <path>` 或 fallback warn
+   - 创建 requirement → 启动 AI session → 看到 `[sky-axis:preset] using sky-axis-collaborator for <reqId>`
+   - agent 跑 plan stage → 产出 plan JSON → bridge 识别 → `writeArtifact('plan', ...)` → `[sky-axis:ai] plan artifact written for <reqId>, N tasks`
+   - UI StageWorkspacePane 切到 plan artifact 渲染（替换 mockTaskList fallback）
+   - 点 task 列表的「开始」→ POST `/ai/task/action` → host `taskAction('start')` → DSH `prompt('queue', taskPrompt)` → 日志 `[sky-axis:ai] taskAction: prompt sent for task <id> action=start`
+   - agent 调 `advance_stage('implement')` → bridge `tool/call` 识别 → `applyAdvanceStage` → `[sky-axis:ai] applyAdvanceStage: <reqId> toStage=implement` → stageHistory 收尾 + emitChange put → SSE 回流 → UI Stepper 切到 implement 阶段
+3. **失败路径**：copy 失败 → fallback 'standard' → ensureSession 仍能 create → UI 显示「advance_stage 协议未注入」warn + 任务可调但 stage 不自动推进
+
+---
+
 ## 6. 关键文件清单
 
 | 文件 | 角色 | 改动类型 |
