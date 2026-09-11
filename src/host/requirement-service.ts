@@ -52,6 +52,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller'
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import { COLLABORATOR_PRESET_ID } from './ensure-collaborator-preset.ts'
 import { isCollaboratorPresetReady } from '../index.ts'
+import { buildInitialPrompt, buildStageTransitionPrompt, mintSkyAxisRequestId } from './prompts/stage-prompts.ts'
 /**
  * 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2):
  *   - 原 `@deepseek-ai/dsh-host-apiproxy` 整体被删,`ApiProxy` 类型不再存在
@@ -863,6 +864,14 @@ export class RequirementHostService {
     // 接入 2：更新 stage cache，让后续 follow 帧的阶段门控立刻生效
     this.stageCache.set(requirementId, toStage)
     console.info(tag, `${requirementId} advanced to ${toStage} (reason: ${reason || '(none)'})`)
+
+    // 接入 2.3：stage-aware prompt 同步注入（fire-and-forget，不阻塞 applyAdvanceStage 返回）
+    //   关键约束：applyAdvanceStage 被 ai-event-bridge await，bridge 等它完成才进下一 event。
+    //   如果这里 await prompt 会拖慢 follow 流 for-await（影响后续 assistant/message plan JSON 抽取）。
+    //   因此必须 void + .catch 吞错 —— 失败 warn 日志，stageHistory 已经写完，session 仍 alive。
+    void this.injectStageTransitionPrompt(requirementId, toStage, updated).catch((err: Error) => {
+      console.warn(`[sky-axis:ai] applyAdvanceStage: stage transition prompt failed for ${requirementId}: ${err.message}`)
+    })
   }
 
   /**
@@ -888,6 +897,37 @@ export class RequirementHostService {
     }
     await this.writeArtifact(requirementId, artifact)
     console.info(tag, `${requirementId} wrote plan artifact with ${taskList.tasks.length} tasks`)
+  }
+
+  /**
+   * 接入 2.3：阶段切换时注入下一阶段 prompt（fire-and-forget）。
+   *
+   * 设计：buildStageTransitionPrompt 只讲下一阶段目标 + 上阶段产物摘要，
+   * 解决 agent 在 stage 边界「忘记自己下一步该做什么」的问题。
+   *
+   * 关键约束：
+   *   - 必须 void + .catch 吞错（applyAdvanceStage 被 ai-event-bridge await，
+   *     内层 await 会拖慢 follow 流 for-await）。
+   *   - prompt 失败不影响 stageHistory（已经写完）+ SSE put（已经 emit），
+   *     session 仍 alive —— 用户在 sidebar 里仍可手动驱动 agent。
+   *
+   * 幂等：applyAdvanceStage 已是 toStage 时不调 prompt（applyAdvanceStage line 836-837 已做幂等）。
+   */
+  private async injectStageTransitionPrompt(
+    requirementId: RequirementId,
+    toStage: 'plan' | 'implement' | 'verify' | 'deliver',
+    updated: Requirement,
+  ): Promise<void> {
+    if (updated.aiSessionId === null) return
+    const promptText = buildStageTransitionPrompt(updated, toStage)
+    const requestId = mintSkyAxisRequestId('sky-axis-stage')
+    await this.sessionController.prompt({
+      requestId: requestId as never,
+      sessionId: updated.aiSessionId as never,
+      mode: 'queue',
+      content: [{ type: 'text', text: promptText }],
+    } as never, new AbortController().signal)
+    console.info(`[sky-axis:ai] applyAdvanceStage: stage transition prompt sent for ${requirementId} → ${toStage} (${promptText.length} chars)`)
   }
 
   /**
@@ -1100,23 +1140,24 @@ export class RequirementHostService {
     // 设计：发一段静态上下文 + 5 阶段协议提醒。mode='queue'（不打断 host 内部启动）
     // + 同步等首 prompt ack（agent 入队后 host 立即返回）。
     //
-    // 内容策略：先验证「agent 能基于上下文开始干活」的最小闭环；PRD 全文 + materials
-    // 摘要留到接入 3+ 增量加载。
+    // 接入 2.3：buildInitialPrompt 改为 stage-aware —— 只讲当前 stage 目标 + 协议框架，
+    //   不剧透未来 stage 的产物形态（agent 在 understand 阶段看到 plan 的 tasks.json
+    //   格式会行为越界）。
     //
     // 失败兜底：prompt 失败不影响 aiSessionId/aiState 已写回的事实 —— agent 仍然 idle
     // 等用户在 sidebar 那个 session 里手动打字。
     try {
-      const promptText = this.buildInitialPrompt(updated, workspacePath)
+      const promptText = buildInitialPrompt(updated, workspacePath)
       // DSH SessionPromptRequest.requestId 是 required（commands.js:289 立刻用 request.requestId 填 source.rpcId）。
       // sky-axis 自己 mint UUID —— DSH 内部对值格式无要求，只要求非空字符串。
-      const requestId = `sky-axis-${require('node:crypto').randomUUID()}`
+      const requestId = mintSkyAxisRequestId('sky-axis-init')
       await this.sessionController.prompt({
         requestId: requestId as never,
         sessionId: sessionId as never,
         mode: 'queue',
         content: [{ type: 'text', text: promptText }],
       } as never, new AbortController().signal)
-      console.info(`[sky-axis:ai] ensureSession: initial prompt queued for ${requirementId} (${promptText.length} chars, requestId=${requestId})`)
+      console.info(`[sky-axis:ai] ensureSession: initial prompt queued for ${requirementId} stage=${updated.stage} (${promptText.length} chars)`)
     } catch (e) {
       // DSH 任何 prompt 错误都被 commands.js:317 包成 `session/agent-busy: prompt rejected`，
       // 真实 reason 在 e.message 或 e.cause 里。打完整对象便于排查。
@@ -1132,48 +1173,11 @@ export class RequirementHostService {
   }
 
   /**
-   * 接入 2.2：构造首次 prompt 文本 —— 静态上下文 + 5 阶段协议提醒。
+   * 接入 2.3：在 host 端构造首次 prompt 已迁移到 `src/host/prompts/stage-prompts.ts` 的
+   * `buildInitialPrompt()` —— 仅讲当前 stage 目标 + 协议框架，不剧透未来 stage。
    *
-   * 内容：
-   *   - 当前 requirement 关键字段（id / title / description / priority / stage / tags）
-   *   - Workspace 路径 + PRD 文件路径（agent 可读）
-   *   - 当前 stageHistory（让 agent 知道之前有没有 rewind）
-   *   - 5 阶段协议提示（提醒调 advance_stage tool）
-   *
-   * @param req  - 已写回 aiSessionId 的 requirement
-   * @param workspacePath - DSH workspace path（已 resolve）
+   * 删除此处旧的 5 阶段剧透版（接入 2.2 残留）。
    */
-  private buildInitialPrompt(req: Requirement, workspacePath: string): string {
-    const prdFiles = req.materials.prdFiles.map(f => f.path).join(', ') || '(无)'
-    const tags = req.tags.length > 0 ? req.tags.join(', ') : '(无)'
-    const history = req.stageHistory
-      .map(h => `  - ${h.stage}${h.leftAt !== undefined ? ` → leftAt=${h.leftAt}` : ' (current)'} (enteredAt=${h.enteredAt})`)
-      .join('\n')
-    return `你是 sky-axis 协作 agent。需求 ID: ${req.id}
-
-## 需求快照
-- 标题: ${req.title}
-- 描述: ${req.description.length > 0 ? req.description : '(空)'}
-- 优先级: ${req.priority}
-- 当前 stage: ${req.stage}
-- 标签: ${tags}
-
-## Workspace 上下文
-- Workspace 路径: ${workspacePath}
-- PRD 文件: ${prdFiles}
-
-## Stage history
-${history}
-
-## 行动指引
-请按 5 阶段协议（understand → plan → implement → verify → deliver）推进本需求：
-1. 先读 PRD + 现有代码（understand 阶段）
-2. 产出 tasks.json（plan 阶段，**严格 JSON，无 markdown fence**）
-3. 每个阶段产出符合 stage contract 时立即调 advance_stage(toStage) tool
-4. 任意阶段遇到阻塞可调 ask_user_question 申请用户介入
-
-session 已绑定到本需求，follow 流已启动，sky-axis UI 实时显示 aiState / stage / task list。开始工作。`
-  }
 
   /**
    * 接入 1：启动 per-requirement session follow 流（幂等）。

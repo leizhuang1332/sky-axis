@@ -61,6 +61,19 @@ function defineTool(opts: {
 type AdvanceStage = 'plan' | 'implement' | 'verify' | 'deliver'
 
 /**
+ * 接入 2.3：每个 stage 的简明目标（用于 tool render 让 agent 在 tool/result 后看到自己该干什么）。
+ *
+ * 注意：完整 stage-goal 在 `src/host/prompts/stage-prompts.ts` 的 `STAGE_GOAL`。
+ * 这里只放**一句**用于 tool render 的精简版（tool result 是 model-facing content，不应过长）。
+ */
+const STAGE_GOAL_HINT: Readonly<Record<AdvanceStage, string>> = {
+  plan: '通读 spec.md，输出严格 TaskList JSON（无 markdown fence），sky-axis bridge 会抽取写 plan artifact。',
+  implement: '按 plan artifact 的 tasks 逐项实现；用户在 task 列表点「开始」时会喂入 task prompt。',
+  verify: '跑 typecheck/lint/test，验证 task.goal；产出 verify-report。',
+  deliver: '提交 + 部署 + 观测；本阶段为 pipeline 末端。',
+}
+
+/**
  * advance_stage tool —— 通知 sky-axis 把需求推进到指定阶段。
  *
  * 参数：
@@ -88,18 +101,33 @@ export const advanceStageTool = defineTool({
       type: 'object',
       properties: {
         stage: { type: 'string' },
+        goal: { type: 'string' },
+        nextStep: { type: 'string' },
       },
       additionalProperties: false,
     },
+    // 接入 2.3：富文本 render —— 让 agent 在 tool/result 后看到「自己刚进入什么 stage + 该干什么」。
+    //   tool body execute 仅返回 canonical（结构化），render 把它转 model-facing ContentBlock。
+    //   注意：tool result 是 data，不是 instruction —— agent 不一定听从。这里只是兜底引导。
+    //   主要引导靠 applyAdvanceStage 末尾的 followup prompt（host 端主动 push）。
     render: (_args: unknown, value: unknown) => {
-      const stage = (value as { stage: AdvanceStage }).stage
-      return [{ type: 'text', text: `sky-axis: stage advanced to ${stage}` } as never]
+      const { stage, goal, nextStep } = value as { stage: AdvanceStage; goal: string; nextStep: string }
+      const lines = [
+        `sky-axis: stage advanced to ${stage}`,
+        `当前阶段目标: ${goal}`,
+        `下一步: ${nextStep}`,
+      ]
+      return [{ type: 'text', text: lines.join('\n') } as never]
     },
   },
   execute: async (args: unknown) => {
     const { toStage } = args as { toStage: AdvanceStage; reason?: string }
     // 真实 stage 推进由 ai-event-bridge 监听 tool/call 事件触发；
-    // 这里仅返回 canonical value 给 agent 反馈。
-    return { stage: toStage }
+    // 这里仅返回 canonical value 给 agent 反馈（render 会再格式化成 model-facing text）。
+    return {
+      stage: toStage,
+      goal: STAGE_GOAL_HINT[toStage],
+      nextStep: '按上面 stage-goal 描述继续工作',
+    }
   },
 })
