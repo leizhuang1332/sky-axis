@@ -413,6 +413,34 @@ export class RequirementClient {
     if (!parsed.ok) return parsed
     return { ok: true, value: { id: parsed.value.id, item: parsed.value.item } }
   }
+
+  /* ── 接入 0-1：AI session 启动 ── */
+
+  /**
+   * 启动 AI session（POST /ai/start?requirementId=xxx）。
+   *
+   * host 端 ensureSession：create DSH session（standard preset）+ 写回
+   * aiSessionId/aiState='running' + emitChange put（SSE 推回 client）+ startFollow。
+   * 幂等：已有 aiSessionId 时 host 直接返回当前 req。
+   *
+   * 失败语义：
+   *   - sessionController 未就绪 / preset 未注册 → 'ai-not-configured'（503）
+   *   - requirement 不存在 → 'requirement-not-found'（404）
+   *   - workspace 不可解析 → 'workspace-not-found'（404）
+   *
+   * body = AiStartRequest（接入 0-1 暂不调 prompt，initialPrompt 保留为后续注入）。
+   */
+  async startAi(requirementId: RequirementId): Promise<Result<Requirement>> {
+    const res = await fetch(`${this.baseUrl}/ai/start?requirementId=${encodeURIComponent(requirementId)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const parsed = await parseJson(res, RequirementResponseSchema)
+    if (!parsed.ok) return parsed
+    return { ok: true, value: parsed.value.item }
+  }
 }
 
 /** SSE 事件类型（与 host 端 writeEvent 格式对齐）。 */

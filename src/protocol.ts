@@ -53,6 +53,10 @@ export const SkyAxisEndpoints = {
   /* ── 产物落盘（Phase 3.x：工作区目录结构改造 Sprint 4）── */
   /** 显式触发 artifact 落盘到 outputs/（默认不写 —— opt-in by client）。 */
   artifactWrite: `${SKY_AXIS_API_PREFIX}/artifacts/{kind}/write`,
+
+  /* ── AI session（接入 0-1）── */
+  /** 启动 AI session（POST ?requirementId=xxx；body = AiStartRequest，可选 initialPrompt）。 */
+  aiStart: `${SKY_AXIS_API_PREFIX}/ai/start`,
 } as const
 
 /* ── 共享子 schema ── */

@@ -100,6 +100,8 @@ export function RequirementDetailPage({
   }>({ open: false, trigger: null, taskId: null })
   const [rewindSubmitting, setRewindSubmitting] = useState<boolean>(false)
   const [driftLoading, setDriftLoading] = useState<boolean>(false)
+  // 接入 0-1：AI session 启动中（POST /ai/start 进行中）—— 启动按钮 loading + 禁用。
+  const [aiStarting, setAiStarting] = useState<boolean>(false)
 
   /* ── PR-D：4 个 modal/drawer 状态 + 1 个 sticky bar 状态 ── */
   const [adjustDrawerOpen, setAdjustDrawerOpen] = useState<boolean>(false)
@@ -161,6 +163,22 @@ export function RequirementDetailPage({
     const handle = controller.rerunDriftDetection(requirement.id, 'all')
     handle.promise.finally(() => {
       setDriftLoading(false)
+    })
+  }, [controller, requirement.id])
+
+  // 接入 0-1：启动 AI session —— controller.startAi 返回 {ok, error?}（非 UploadHandle）。
+  //   成功时 SSE put 帧会回流更新 aiState/aiSessionId（controller 已乐观更新 snapshot）；
+  //   失败时 aiState 保持 idle，error 经 snapshot.requirementsError 暴露（parent toast）。
+  //   aiStarting 仅控制按钮 loading 视觉；HTTP 完成即 false（不等 follow 流）。
+  const handleStartAi = useCallback(() => {
+    setAiStarting(true)
+    controller.startAi(requirement.id).then((result) => {
+      setAiStarting(false)
+      // 成功：aiState 已被 controller 乐观更新为 running；follow 流会持续驱动。
+      // 失败：controller 已写 requirementsError；UI 可经 parent toast 展示（Phase 2）。
+      void result
+    }).catch(() => {
+      setAiStarting(false)
     })
   }, [controller, requirement.id])
 
@@ -451,6 +469,8 @@ export function RequirementDetailPage({
                 onRerunDrrift={handleRerunDrift}
                 driftLoading={driftLoading}
                 onAdvanceStage={handleOpenStageGate}
+                onStartAi={handleStartAi}
+                aiStarting={aiStarting}
               />
             </aside>
             <section className={css.workspace}>

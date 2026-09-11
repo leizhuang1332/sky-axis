@@ -42,6 +42,15 @@ import type {
 } from '@deepseek-ai/dsh-api-workspace-controller'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller'
 /**
+ * 接入 0：sessionController 类型（type-only，不进 runtime bundle）。
+ *   - SessionController 由 DSH host 半区注册（ctx.sessionController），sky-axis
+ *     在 src/index.ts:83 inject 数组声明 'sessionController' 后可用
+ *   - create({workspaceId, cwd, agentPreset}) → Promise<SessionCreateValue>
+ *   - follow({address:{kind:'session',sessionId}}, signal) → AsyncIterable<SessionFollowFrame>
+ *   详见 docs/ai工作台接入dsh-agent-session-架构预览.md §2.1 + §3 节点1
+ */
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
+/**
  * 0.1.2 迁移说明(dsh-upgrade-audit 报告 §2.2):
  *   - 原 `@deepseek-ai/dsh-host-apiproxy` 整体被删,`ApiProxy` 类型不再存在
  *   - workspace 相关的服务入口改用 `@deepseek-ai/dsh-api-workspace-controller`
@@ -400,6 +409,17 @@ export class RequirementHostService {
   /** Phase 2.6 源码关联:git 沙箱封装(stateless,可在多 service 间共享)。 */
   readonly gitService: GitService = createGitService()
 
+  /**
+   * 接入 0-1：per-requirement follow 流 AbortController 管理。
+   *   - key = requirementId，value = 该 requirement 的 session follow 流 AbortController
+   *   - startFollow 幂等：已有活跃流则 return
+   *   - stopFollow / close() 时 abort + delete
+   *   - 重启恢复：index.ts bootstrap 末尾对有 aiSessionId 的 req 调 startFollow
+   */
+  private readonly followControllers = new Map<RequirementId, AbortController>()
+  /** 接入 1：onAiStateChange 去重防抖 —— 同状态不重复写盘。key = requirementId。 */
+  private readonly lastAiState = new Map<RequirementId, string>()
+
   constructor(
     private readonly ctx: import('@deepseek-ai/cordis').Context,
     /**
@@ -409,6 +429,14 @@ export class RequirementHostService {
      * readonly 仅供 routes/requirements.ts#GET /workspaces 路径直接读取。
      */
     readonly workspaceController: WorkspaceController,
+    /**
+     * 接入 0：DSH host 半区 SessionController（由 ctx.sessionController 注入）。
+     *   - ensureSession: create({workspaceId, cwd, agentPreset:'standard'})
+     *   - startFollow: follow({address:{kind:'session',sessionId}}, signal)
+     * inject 数组（src/index.ts:83）已声明 'sessionController'。探测确认就绪
+     * （[[sky-axis-sessions-gateway-ready]]）。
+     */
+    readonly sessionController: SessionController,
   ) {
     // 不再需要 storageDomain 注入;Stage 6 由 fs-watcher-manager 推 emitChange
     let resolveBaseline!: (views: readonly WorkspaceView[]) => void
@@ -670,7 +698,210 @@ export class RequirementHostService {
     if (this.closed) return
     this.closed = true
     this.followAbortController.abort()
+    // 接入 1：abort 所有 per-requirement session follow 流
+    for (const controller of this.followControllers.values()) {
+      controller.abort()
+    }
+    this.followControllers.clear()
     this.domainChangeListeners.clear()
+  }
+
+  /* ── 接入 0-1：AI session 生命周期 ── */
+
+  /**
+   * 接入 0：为 requirement 创建/绑定 DSH agent session（幂等）。
+   *
+   * 流程：
+   *   1. get(reqId) → 不存在抛 requirement-not-found
+   *   2. 幂等：req.aiSessionId 非空 → 直接返回（已绑定）
+   *   3. resolveWorkspacePath → cwd
+   *   4. sessionController.create({workspaceId, cwd, agentPreset:'standard'})
+   *   5. updateRequirements 写回 aiSessionId/aiState='running'/aiLastActivityAt
+   *   6. emitChange put → SSE 推回 client（UI aiState 自动切 running）
+   *
+   * 接入 0 用 shipped 'standard' preset 起步（custom sky-axis-collaborator preset
+   * 创作延后，见 docs/ai工作台接入dsh-agent-session-架构预览.md §4 决策3）。
+   * create 失败（sessionController 未就绪 / preset 未注册）包成 ai-not-configured。
+   */
+  async ensureSession(requirementId: RequirementId): Promise<Requirement> {
+    const req = await this.get(requirementId)
+    if (req === undefined) {
+      throw new SkyAxisHostError('requirement-not-found', `requirement ${requirementId} not found`)
+    }
+    // 幂等：已绑定 session 直接返回
+    if (req.aiSessionId !== null) return req
+
+    const workspacePath = await this.resolveWorkspacePath(req.workspaceId)
+    const now = new Date().toISOString()
+
+    // 调 DSH create —— agentPreset 用 shipped 'standard'（接入 0 起步）
+    //
+    // DSH session.create 是 workspaceId/cwd 互斥设计（见 commands.js:85-86 守卫）：
+    //   - 传 workspaceId → DSH 内部 workspaceRegistry 反查 path 作 cwd
+    //   - 传 cwd → 直接用，跳过 workspaceRegistry
+    //   - 两个都传 → 'gateway/bad-request: accepts workspaceId or cwd, not both'
+    // sky-axis 的 workspaceId 是自有 FK，与 DSH workspaceRegistry 未必同源；
+    // 已从 resolveWorkspacePath 拿到确定性 cwd，直接传 cwd 最可靠。
+    //
+    // 30s 超时兜底：create 内部会调到 ctx.agents.create → agentDefaultModel.currentSelection()，
+    // 如果宿主 agent 框架级服务（agents / agentDefaultModel / llm provider）未就绪，create
+    // 可能永远不 resolve，导致 route handler 永远走不到 res.end()，浏览器看到空白响应。
+    // 超时后抛 ai-not-configured，UI 能拿到明确 actionable 错误。
+    const CREATE_TIMEOUT_MS = 30_000
+    let sessionId: string
+    try {
+      console.info(`[sky-axis:ai] ensureSession: creating session for ${requirementId} (workspacePath=${workspacePath}, preset=standard)`)
+      const createPromise = this.sessionController.create({
+        cwd: workspacePath,
+        agentPreset: 'standard',
+      } as never) as Promise<{ sessionId: string }>
+      const result = await Promise.race([
+        createPromise,
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error(`create session timed out after ${CREATE_TIMEOUT_MS}ms (agent framework services may not be ready: agents/agentDefaultModel/llm)`)),
+          CREATE_TIMEOUT_MS,
+        )),
+      ])
+      sessionId = result.sessionId
+      console.info(`[sky-axis:ai] ensureSession: session created, sessionId=${sessionId}`)
+    } catch (e) {
+      // sessionController 未就绪 / preset 未注册 / 框架级服务缺失 / 超时 —— 统一包成
+      // ai-not-configured（mapStatus 已映射 503，UI 给 actionable 提示）
+      throw new SkyAxisHostError(
+        'ai-not-configured',
+        `create session failed for requirement ${requirementId}: ${(e as Error).message}`,
+      )
+    }
+
+    // 写回 mate.yaml + emitChange put（复用现有 mutator + SSE 模式）
+    const { result: updated } = await updateRequirements(
+      workspacePath,
+      ({ current }) => {
+        const prev = current[requirementId]
+        if (prev === undefined) {
+          throw new SkyAxisHostError('requirement-not-found', `requirement ${requirementId} not found in mate.yaml`)
+        }
+        // 并发兜底：另一路径已绑定 session 则不覆盖
+        if (prev.aiSessionId !== null) {
+          return { next: current, result: prev }
+        }
+        const next: Requirement = {
+          ...prev,
+          aiSessionId: sessionId,
+          aiState: 'running',
+          aiLastActivityAt: now,
+          updatedAt: now,
+        }
+        return { next: { ...current, [requirementId]: next }, result: next }
+      },
+      { now },
+    )
+    this.emitChange({ operation: 'put', item: updated })
+    console.info(`[sky-axis:ai] ensureSession: wrote back aiSessionId=${sessionId} aiState=running for ${requirementId} → SSE put emitted`)
+    return updated
+  }
+
+  /**
+   * 接入 1：启动 per-requirement session follow 流（幂等）。
+   *
+   * 对 req.aiSessionId 对应的 DSH session 调 sessionController.follow()，
+   * 由 ai-event-bridge 把 SessionFollowFrame 翻译成 aiState 变化，
+   * 通过 onAiStateChange callback 写回 mate.yaml + emitChange put。
+   *
+   * 幂等：已有活跃 follow 流则 return。重启恢复由 index.ts bootstrap 调用。
+   * 流的生命周期：AbortController 管；stopFollow / close() abort 释放。
+   */
+  startFollow(requirementId: RequirementId): void {
+    if (this.followControllers.has(requirementId)) return // 幂等
+    console.info(`[sky-axis:ai] startFollow: starting follow stream for ${requirementId}`)
+    const controller = new AbortController()
+    this.followControllers.set(requirementId, controller)
+    void this.consumeSessionFollow(requirementId, controller.signal).catch((err) => {
+      if (controller.signal.aborted) return
+      // eslint-disable-next-line no-console
+      console.warn(`[sky-axis] session follow stream for ${requirementId} aborted:`, err)
+    })
+  }
+
+  /** 接入 1：停止 per-requirement session follow 流。幂等。 */
+  stopFollow(requirementId: RequirementId): void {
+    const controller = this.followControllers.get(requirementId)
+    if (controller === undefined) return
+    controller.abort()
+    this.followControllers.delete(requirementId)
+    this.lastAiState.delete(requirementId)
+  }
+
+  /**
+   * 接入 1：消费 session follow 流（同 consumeWorkspaceFollow 范式）。
+   *
+   * while + for await + signal + 重连退避。调 ai-event-bridge 翻译帧，
+   * 通过 onAiStateChange callback 写回 aiState。
+   */
+  private async consumeSessionFollow(requirementId: RequirementId, signal: AbortSignal): Promise<void> {
+    // 延迟 import 避免循环依赖（ai-event-bridge 复用本 service 类型）
+    const { consumeFollowStream } = await import('./ai-event-bridge.ts')
+    while (!signal.aborted) {
+      try {
+        const req = await this.get(requirementId)
+        if (req === undefined || req.aiSessionId === null) return
+        const sessionId = req.aiSessionId
+        await consumeFollowStream({
+          sessionController: this.sessionController,
+          sessionId,
+          signal,
+          onAiStateChange: async (state, activityAt) => {
+            await this.applyAiStateChange(requirementId, state, activityAt)
+          },
+        })
+        // follow 正常结束（generator return）→ 兜底置 idle
+        await this.applyAiStateChange(requirementId, 'idle', new Date().toISOString())
+        break
+      } catch (err) {
+        if (signal.aborted) throw err
+        // eslint-disable-next-line no-console
+        console.warn(`[sky-axis] session follow for ${requirementId} failed; retrying after backoff:`, err)
+        await new Promise<void>((resolve) => setTimeout(resolve, 1_000))
+      }
+    }
+  }
+
+  /**
+   * 接入 1：把 aiState 变化写回 mate.yaml + emitChange put。
+   * 去重防抖：同状态（lastAiState）不重复写盘。
+   */
+  private async applyAiStateChange(
+    requirementId: RequirementId,
+    state: string,
+    activityAt: string,
+  ): Promise<void> {
+    // 去重：同状态不重复写（turn/start 高频触发）
+    if (this.lastAiState.get(requirementId) === state) return
+    this.lastAiState.set(requirementId, state)
+    console.info(`[sky-axis:ai] applyAiStateChange: ${requirementId} aiState=${state} (from follow stream)`)
+
+    const req = await this.get(requirementId)
+    if (req === undefined || req.aiSessionId === null) return
+    const workspacePath = await this.resolveWorkspacePath(req.workspaceId)
+    const now = new Date().toISOString()
+    const { result: updated } = await updateRequirements(
+      workspacePath,
+      ({ current }) => {
+        const prev = current[requirementId]
+        if (prev === undefined || prev.aiSessionId === null) {
+          return { next: current, result: prev ?? req }
+        }
+        const next: Requirement = {
+          ...prev,
+          aiState: state as Requirement['aiState'],
+          aiLastActivityAt: activityAt,
+          updatedAt: now,
+        }
+        return { next: { ...current, [requirementId]: next }, result: next }
+      },
+      { now },
+    )
+    this.emitChange({ operation: 'put', item: updated })
   }
 
   /* ── 跨 workspace list / get ── */

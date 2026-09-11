@@ -1006,6 +1006,14 @@ export interface SkyAxisController {
   /** 删除一条需求（host delete 路由）。成功后 SSE 推 deleted 事件。 */
   deleteRequirement(id: string): Promise<{ ok: boolean; error?: RequirementError }>
 
+  /** 接入 0-1：启动 AI session（host /ai/start 路由）。
+   *  host 端 ensureSession：create DSH session（standard preset）+ 写回
+   *  aiSessionId/aiState='running' + emitChange put（SSE 推回）+ startFollow。
+   *  幂等：已有 aiSessionId 时 host 直接返回当前 req，本方法乐观更新 snapshot。
+   *  成功后 SSE 也会推 put 帧，aiState/aiSessionId 自动更新。
+   *  失败（ai-not-configured / requirement-not-found）返回 error，UI 保持 idle。 */
+  startAi(requirementId: string): Promise<{ ok: boolean; error?: RequirementError }>
+
   /** 处理 SSE 事件（来自 subscribeRequirementEvents 回调）。 */
   handleStreamEvent(event: RequirementStreamEvent): void
 
@@ -1261,6 +1269,11 @@ export function createSkyAxisController(deps: {
     taskId: string
     decision: FailedTaskResolveDecision
   }) => UploadHandle
+  /* ── 接入 0-1：AI session 启动 deps ── */
+  /** 启动 AI session —— host /ai/start：ensureSession（create + 写回 aiSessionId/aiState）+ startFollow。
+   *  返回 item 字段携带 server record（aiSessionId/aiState 已更新）。
+   *  幂等：已有 aiSessionId 时 host 直接返回当前 req；client 侧乐观更新 snapshot（不等 SSE put 帧回流）。 */
+  startAiImpl?: (requirementId: string) => Promise<{ ok: boolean; item?: RequirementEntry; error?: RequirementError }>
 } = {}): SkyAxisController {
   let snapshot: SkyAxisSnapshot = {
     pageOpen: false,
@@ -1858,6 +1871,42 @@ export function createSkyAxisController(deps: {
           return { ok: true }
         }
         // 删除失败：写错误到 snapshot 让 UI 可见
+        const err = result.error ?? projectError('internal-error')
+        snapshot = { ...snapshot, requirementsError: err }
+        notify()
+        return { ok: false, error: err }
+      } catch (e) {
+        const err = projectError('network-error', e instanceof Error ? e.message : String(e))
+        snapshot = { ...snapshot, requirementsError: err }
+        notify()
+        return { ok: false, error: err }
+      }
+    },
+
+    async startAi(requirementId) {
+      if (deps.startAiImpl === undefined) {
+        return { ok: false, error: projectError('internal-error', 'startAiImpl not injected') }
+      }
+      try {
+        const result = await deps.startAiImpl(requirementId)
+        if (result.ok) {
+          // 乐观更新：用 server 返回的 item（aiSessionId/aiState 已更新）立即替换本条 req；
+          //   不等 SSE put 帧回流 —— startFollow 产生的事件经 host emitChange put
+          //   也会经 handleStreamEvent 再次更新，去重靠对象引用比较即可（两次都写同一字段）。
+          if (result.item !== undefined) {
+            const exists = snapshot.requirements.some(r => r.id === result.item!.id)
+            const next = exists
+              ? snapshot.requirements.map(r => r.id === result.item!.id ? result.item! : r)
+              : [result.item, ...snapshot.requirements]
+            snapshot = { ...snapshot, requirements: next.sort((a, b) => b.id.localeCompare(a.id)), requirementsError: null }
+          } else {
+            // host 没返回 item（不应发生，但兜底清错误态）
+            snapshot = { ...snapshot, requirementsError: null }
+          }
+          notify()
+          return { ok: true }
+        }
+        // 启动失败：写错误到 snapshot 让 UI 可见；aiState 保持 idle（host 没写回）
         const err = result.error ?? projectError('internal-error')
         snapshot = { ...snapshot, requirementsError: err }
         notify()

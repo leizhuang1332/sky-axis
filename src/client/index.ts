@@ -271,6 +271,16 @@ export function apply(ctx: ClientContext): void {
         return { ok: false as const, error: { code: r.code, detail: r.detail } }
       }))
     },
+    // 接入 0-1：AI session 启动。
+    //   reqClient.startAi 返回 Result<Requirement>（host 返回的 item 已含
+    //   aiSessionId/aiState='running'）；spread 成 controller 的 item 形态。
+    //   不返回 UploadHandle（非物料操作，无需 abort）；follow 流由 host 端
+    //   startFollow 异步驱动，经 SSE put 回流驱动 aiState 切换。
+    startAiImpl: async (requirementId) => {
+      const r = await reqClient.startAi(requirementId as never)
+      if (r.ok) return { ok: true, item: { ...r.value } }
+      return { ok: false, error: { code: r.code, detail: r.detail } }
+    },
   })
 
   // 4. Sidebar 主树 entry —— DOM 直挂。

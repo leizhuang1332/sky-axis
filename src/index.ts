@@ -216,12 +216,81 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
     return () => {}
   }, 'sky-axis: probe agentPresets (one-shot)')
 
+  // 接入 0 前置探测 #3：agent 框架级服务（agentDefaultModel / agents / llm）。
+  //   端到端验证发现：DGH sessionController 已能接收 create 调用，但内部 ctx.agents.create
+  //   会调 agentDefaultModel.currentSelection() —— 如果宿主没注册 agentDefaultModel（或
+  //   provider 未配置），create 可能永远不 resolve，导致 POST /ai/start 空白。
+  //   用 ctx.get()（cordis root ctx service registry）依次探测 3 个服务：
+  //     - agentDefaultModel: get currentSelection 是否能拿到 {provider, model}
+  //     - agents: service 是否注册（不能直接创 session，但能探 keys）
+  //     - llm: provider 注册表（不查具体 provider，只查 service 在不在）
+  //   探测结论直接打印到控制台，作为「30s 超时后该告诉用户什么」的依据。
+  ctx.effect(() => {
+    const tag = '[sky-axis:probe:agent-framework]'
+    try {
+      const ctxGet = (ctx as unknown as { get?: (name: string) => unknown }).get
+      if (ctxGet === undefined) {
+        console.info(tag, 'ctx.get() unavailable, skipping agent framework probe')
+        return () => {}
+      }
+      // (a) agentDefaultModel —— create session 真正依赖的服务
+      const adm = ctxGet('agentDefaultModel') as
+        | { currentSelection?: () => { provider?: string; model?: string } }
+        | undefined
+      if (adm === undefined) {
+        console.info(tag, 'ctx.agentDefaultModel = undefined → create session 会挂起（无 model provider）')
+      } else {
+        try {
+          const sel = adm.currentSelection?.()
+          console.info(tag, 'ctx.agentDefaultModel 存在，currentSelection =', sel)
+          if (sel === undefined || (sel.provider === undefined && sel.model === undefined)) {
+            console.info(tag, '⚠️  agentDefaultModel.currentSelection() 返回空 → LLM provider 未配置')
+          }
+        } catch (e) {
+          console.info(tag, 'agentDefaultModel.currentSelection() 抛错:', (e as Error).message)
+        }
+      }
+      // (b) agents —— session 实例的 runtime 容器
+      const agents = ctxGet('agents') as { get?: (id: string) => unknown } | undefined
+      if (agents === undefined) {
+        console.info(tag, 'ctx.agents = undefined → create 会失败 (RemoteError: agents service not registered)')
+      } else {
+        console.info(tag, 'ctx.agents 存在，keys =', Object.keys(agents))
+      }
+      // (c) llm —— provider 注册表
+      const llm = ctxGet('llm') as { list?: () => Promise<unknown> | unknown; resolve?: (id: string) => unknown } | undefined
+      if (llm === undefined) {
+        console.info(tag, 'ctx.llm = undefined → no provider registry')
+      } else {
+        console.info(tag, 'ctx.llm 存在，keys =', Object.keys(llm))
+        try {
+          const list = llm.list?.()
+          if (list instanceof Promise) {
+            void list.then((res) => console.info(tag, 'llm.list() ok →', res)).catch((e: Error) =>
+              console.info(tag, 'llm.list() 失败:', e.message),
+            )
+          } else if (list !== undefined) {
+            console.info(tag, 'llm.list() =', list)
+          }
+        } catch (e) {
+          console.info(tag, 'llm.list() 抛错:', (e as Error).message)
+        }
+      }
+    } catch (e) {
+      console.info(tag, '探测抛错（cordis trap?）:', (e as Error).message)
+    }
+    return () => {}
+  }, 'sky-axis: probe agent framework (one-shot)')
+
   // 业务服务:Sprint 5 起不再依赖 storage domain,数据走 `<workspace>/.sky-axis/mate.yaml`
   //
   // 0.1.2 迁移:`ctx.apiProxy` 已不存在;原 ApiProxy 聚合服务拆为多个 controller,
   // sky-axis 当前只需要 workspace 相关,这里直接传 `ctx.workspaceController`。
   // service 内部 cache 由 `startWorkspaceFollow()` 订阅的 follow 流维护。
-  const reqSvc = new RequirementHostService(ctx, ctx.workspaceController)
+  //
+  // 接入 0-1：第三参数 ctx.sessionController —— ensureSession 用它 create DSH
+  //   session（standard preset）。inject 数组已含 'sessionController'（见文件头）。
+  const reqSvc = new RequirementHostService(ctx, ctx.workspaceController, ctx.sessionController)
   const requirementRoutes = makeRequirementRoutes(reqSvc)
   // Phase 2.5：物料 CRUD 路由（18 个 exact route，6 section × 3 op）
   const materialRoutes = makeMaterialRoutes(reqSvc)
@@ -428,6 +497,36 @@ export const apply = mountOnce('@leizhuang/sky-axis', (ctx: Context): void => {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('[sky-axis] refreshRequirementSnapshots failed:', e)
+      }
+
+      // 5. 接入 0-1：bootstrap 恢复 AI session follow 流。
+      //    场景：host 重启（DSH 升级 / crash 恢复）时，已绑定 aiSessionId 的
+      //    requirement 需要重新挂 follow 流，否则 session 在跑但 sky-axis 收不到
+      //    turn 事件 → aiState 停在 'running' 不再更新。
+      //    幂等：startFollow 内部用 followControllers Map 去重；session 已结束
+      //    的 follow 流会自然 return，consumeSessionFollow 兜底置 idle。
+      //    只恢复 aiState='running' 的 requirement —— idle 的说明上次 turn 已结束，
+      //    无需挂流（下次用户点启动会重新 ensureSession + startFollow）。
+      try {
+        const requirements = await reqSvc.list()
+        const runningReqs = requirements.filter(r => r.aiSessionId !== undefined && r.aiSessionId !== null && r.aiState === 'running')
+        for (const r of runningReqs) {
+          try {
+            reqSvc.startFollow(r.id)
+            // eslint-disable-next-line no-console
+            console.info('[sky-axis] bootstrap: restored follow for requirement', r.id, 'session', r.aiSessionId)
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[sky-axis] bootstrap: startFollow failed for requirement', r.id, ':', (e as Error).message)
+          }
+        }
+        if (runningReqs.length > 0) {
+          // eslint-disable-next-line no-console
+          console.info('[sky-axis] bootstrap: restored follow for', runningReqs.length, 'running AI session(s)')
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[sky-axis] bootstrap: AI session follow restore failed:', e)
       }
     })()
 

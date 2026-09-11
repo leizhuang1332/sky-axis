@@ -340,5 +340,37 @@ export function makeRequirementRoutes(service: RequirementHostService): Route[] 
         }
       },
     },
+
+    /* ── POST /ai/start?requirementId=xxx（接入 0-1）──
+     * 启动 AI session：ensureSession（create + 写回 aiSessionId/aiState）+ startFollow
+     * （follow 事件流 → SSE put 回流）。幂等：已有 aiSessionId 直接返回。
+     * body = AiStartRequest（可选 initialPrompt，接入 0-1 暂不用，保留为后续 prompt 注入）。
+     * 错误：sessionController 未就绪 / preset 未注册 → ai-not-configured（503）。 */
+    {
+      kind: 'exact',
+      path: SkyAxisEndpoints.aiStart,
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          jsonResponse(res, 405, { ok: false, error: 'validation-failed', detail: 'method-not-allowed' } satisfies ApiError)
+          return
+        }
+        try {
+          const idRaw = getQueryParam(req, 'requirementId')
+          if (idRaw === undefined || idRaw === '') {
+            throw new SkyAxisHostError('validation-failed', 'missing required query param: requirementId')
+          }
+          const requirementId = zodParseOrThrow(RequirementIdSchema, idRaw)
+          // 1. ensureSession：create session（幂等）+ 写回 aiSessionId/aiState='running'
+          //    + emitChange put（SSE 推回 client，UI aiState 自动切 running）
+          const item = await service.ensureSession(requirementId)
+          // 2. startFollow：启动 per-requirement follow 流（幂等），follow 帧翻译成
+          //    aiState 变化经 emitChange put 回流。重启恢复由 index.ts bootstrap 负责。
+          service.startFollow(requirementId)
+          jsonResponse(res, 200, { ok: true, item })
+        } catch (error) {
+          translateError(res, error)
+        }
+      },
+    },
   ]
 }

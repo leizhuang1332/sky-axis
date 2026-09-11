@@ -45,6 +45,11 @@ export interface AiConductorPaneProps {
   /** PR-D 迭代 6 #5：「自动推进下一阶段」按钮触发 —— parent 打开 StageGateModal。
    *  未传时按钮保持 disabled（向后兼容）。 */
   onAdvanceStage?: () => void
+  /** 接入 0-1：启动 AI session —— parent 调 controller.startAi（POST /ai/start）。
+   *  未传时按钮保持 disabled（向后兼容）。 */
+  onStartAi?: () => void
+  /** 接入 0-1：启动中（HTTP 请求进行中）—— 启动按钮显示 loading + 禁用。 */
+  aiStarting?: boolean
 }
 
 /** AI 状态 → i18n 文案 key + 图标。
@@ -94,6 +99,8 @@ export function AiConductorPane(props: AiConductorPaneProps): JSX.Element {
     onRerunDrrift,
     driftLoading,
     onAdvanceStage,
+    onStartAi,
+    aiStarting = false,
   } = props
   // 把 LocaleKeysOf 强转为 (k: string) => string —— labelKey/hintKey 是动态字符串，
   // 编译期 SkyAxisKey 联合不允许直接传 string，但运行时 locale 系统会兜底。
@@ -141,16 +148,21 @@ export function AiConductorPane(props: AiConductorPaneProps): JSX.Element {
         <span className={css.metaValue}>{lastActivity}</span>
       </section>
 
-      {/* 操作按钮组 —— Phase 1 全 disabled */}
+      {/* 操作按钮组 —— 接入 0-1：启动按钮接 onStartAi；其余（暂停/恢复/取消/重启）仍 disabled */}
       <section className={css.actions}>
         <button
           type="button"
           className={css.primaryButton}
-          disabled={loading || !isIdle}
-          title={t('requirement.detail.conductor.startHint')}
+          disabled={loading || aiStarting || !isIdle || onStartAi === undefined}
+          onClick={(): void => {
+            if (onStartAi !== undefined) onStartAi()
+          }}
+          title={onStartAi === undefined
+            ? t('requirement.detail.conductor.startHint')
+            : (aiStarting ? t('requirement.detail.conductor.startHint') : t('requirement.detail.conductor.start'))}
         >
           <CheckIcon size={12} className={css.buttonIcon} />
-          <span>{t('requirement.detail.conductor.start')}</span>
+          <span>{aiStarting ? '…' : t('requirement.detail.conductor.start')}</span>
         </button>
         <div className={css.actionsRow}>
           <button
